@@ -21,6 +21,7 @@ not the real engine. Run them from this folder with Python 3.
 | `gpu_split.py schedule_data.json` | share of ladder work on deep (GPU-friendly) rungs | 9.3 |
 | `no_tt.py` | whether small brute forces need a transposition table | 9.4 |
 | `encoding_check.py` | card encoding, incremental move masks and hash updates vs full recomputation | 6.1–6.4 |
+| `endgame_check.py 8` | independent count of winnable suit/rank patterns per pile count, to check `acc endgame build` | 10.5 |
 | `gpu_smoke.py` | CUDA setup check: compiles a kernel with NVRTC, runs the match test for all card pairs on the GPU and compares with the CPU | 9.1 |
 
 `schedule_data.json` is the dataset behind §5.6 and §9.3.

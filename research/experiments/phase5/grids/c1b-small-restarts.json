@@ -1,0 +1,82 @@
+[
+ {
+  "name": "luby-100",
+  "solver": {
+   "luby_unit": 100,
+   "ladder": null,
+   "search": {
+    "sleep_sets": false
+   }
+  }
+ },
+ {
+  "name": "luby-200",
+  "solver": {
+   "luby_unit": 200,
+   "ladder": null,
+   "search": {
+    "sleep_sets": false
+   }
+  }
+ },
+ {
+  "name": "luby-500",
+  "solver": {
+   "luby_unit": 500,
+   "ladder": null,
+   "search": {
+    "sleep_sets": false
+   }
+  }
+ },
+ {
+  "name": "luby-1k",
+  "solver": {
+   "luby_unit": 1000,
+   "ladder": null,
+   "search": {
+    "sleep_sets": false
+   }
+  }
+ },
+ {
+  "name": "luby-2k",
+  "solver": {
+   "luby_unit": 2000,
+   "ladder": null,
+   "search": {
+    "sleep_sets": false
+   }
+  }
+ },
+ {
+  "name": "geometric-500-x1.2",
+  "solver": {
+   "luby_unit": 500,
+   "restarts": {
+    "geometric": {
+     "percent": 120
+    }
+   },
+   "ladder": null,
+   "search": {
+    "sleep_sets": false
+   }
+  }
+ },
+ {
+  "name": "geometric-1k-x1.1",
+  "solver": {
+   "luby_unit": 1000,
+   "restarts": {
+    "geometric": {
+     "percent": 110
+    }
+   },
+   "ladder": null,
+   "search": {
+    "sleep_sets": false
+   }
+  }
+ }
+]

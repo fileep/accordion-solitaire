@@ -1,0 +1,240 @@
+[
+ {
+  "name": "t256-b4000 (best so far)",
+  "solver": {
+   "luby_unit": 1000,
+   "ladder": {
+    "start": 36,
+    "end": 24,
+    "step": 2,
+    "tries": 256,
+    "budget": 4000,
+    "growth": 200
+   },
+   "search": {
+    "sleep_sets": false
+   }
+  }
+ },
+ {
+  "name": "t512-b4000",
+  "solver": {
+   "luby_unit": 1000,
+   "ladder": {
+    "start": 36,
+    "end": 24,
+    "step": 2,
+    "tries": 512,
+    "budget": 4000,
+    "growth": 200
+   },
+   "search": {
+    "sleep_sets": false
+   }
+  }
+ },
+ {
+  "name": "t1024-b4000",
+  "solver": {
+   "luby_unit": 1000,
+   "ladder": {
+    "start": 36,
+    "end": 24,
+    "step": 2,
+    "tries": 1024,
+    "budget": 4000,
+    "growth": 200
+   },
+   "search": {
+    "sleep_sets": false
+   }
+  }
+ },
+ {
+  "name": "t512-b8000",
+  "solver": {
+   "luby_unit": 1000,
+   "ladder": {
+    "start": 36,
+    "end": 24,
+    "step": 2,
+    "tries": 512,
+    "budget": 8000,
+    "growth": 200
+   },
+   "search": {
+    "sleep_sets": false
+   }
+  }
+ },
+ {
+  "name": "t256-b4000-g100",
+  "solver": {
+   "luby_unit": 1000,
+   "ladder": {
+    "start": 36,
+    "end": 24,
+    "step": 2,
+    "tries": 256,
+    "budget": 4000,
+    "growth": 100
+   },
+   "search": {
+    "sleep_sets": false
+   }
+  }
+ },
+ {
+  "name": "t256-b4000-g400",
+  "solver": {
+   "luby_unit": 1000,
+   "ladder": {
+    "start": 36,
+    "end": 24,
+    "step": 2,
+    "tries": 256,
+    "budget": 4000,
+    "growth": 400
+   },
+   "search": {
+    "sleep_sets": false
+   }
+  }
+ },
+ {
+  "name": "t256-36-30",
+  "solver": {
+   "luby_unit": 1000,
+   "ladder": {
+    "start": 36,
+    "end": 30,
+    "step": 2,
+    "tries": 256,
+    "budget": 4000,
+    "growth": 200
+   },
+   "search": {
+    "sleep_sets": false
+   }
+  }
+ },
+ {
+  "name": "t256-36-34",
+  "solver": {
+   "luby_unit": 1000,
+   "ladder": {
+    "start": 36,
+    "end": 34,
+    "step": 2,
+    "tries": 256,
+    "budget": 4000,
+    "growth": 200
+   },
+   "search": {
+    "sleep_sets": false
+   }
+  }
+ },
+ {
+  "name": "t512-36-only",
+  "solver": {
+   "luby_unit": 1000,
+   "ladder": {
+    "start": 36,
+    "end": 36,
+    "step": 0,
+    "tries": 512,
+    "budget": 4000,
+    "growth": 200
+   },
+   "search": {
+    "sleep_sets": false
+   }
+  }
+ },
+ {
+  "name": "t1024-36-only",
+  "solver": {
+   "luby_unit": 1000,
+   "ladder": {
+    "start": 36,
+    "end": 36,
+    "step": 0,
+    "tries": 1024,
+    "budget": 4000,
+    "growth": 200
+   },
+   "search": {
+    "sleep_sets": false
+   }
+  }
+ },
+ {
+  "name": "t256-37-25",
+  "solver": {
+   "luby_unit": 1000,
+   "ladder": {
+    "start": 37,
+    "end": 25,
+    "step": 2,
+    "tries": 256,
+    "budget": 4000,
+    "growth": 200
+   },
+   "search": {
+    "sleep_sets": false
+   }
+  }
+ },
+ {
+  "name": "t256-35-23",
+  "solver": {
+   "luby_unit": 1000,
+   "ladder": {
+    "start": 35,
+    "end": 23,
+    "step": 2,
+    "tries": 256,
+    "budget": 4000,
+    "growth": 200
+   },
+   "search": {
+    "sleep_sets": false
+   }
+  }
+ },
+ {
+  "name": "t256-36-24-s1",
+  "solver": {
+   "luby_unit": 1000,
+   "ladder": {
+    "start": 36,
+    "end": 24,
+    "step": 1,
+    "tries": 128,
+    "budget": 4000,
+    "growth": 200
+   },
+   "search": {
+    "sleep_sets": false
+   }
+  }
+ },
+ {
+  "name": "t256-36-24-s3",
+  "solver": {
+   "luby_unit": 1000,
+   "ladder": {
+    "start": 36,
+    "end": 24,
+    "step": 3,
+    "tries": 256,
+    "budget": 4000,
+    "growth": 200
+   },
+   "search": {
+    "sleep_sets": false
+   }
+  }
+ }
+]

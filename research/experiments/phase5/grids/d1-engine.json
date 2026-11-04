@@ -1,0 +1,178 @@
+[
+ {
+  "name": "base (ladder+sleep)",
+  "solver": {
+   "luby_unit": 1000,
+   "ladder": {
+    "start": 36,
+    "tries": 256,
+    "budget": 4000
+   },
+   "search": {
+    "sleep_sets": true
+   }
+  }
+ },
+ {
+  "name": "probe_first",
+  "solver": {
+   "luby_unit": 1000,
+   "ladder": {
+    "start": 36,
+    "tries": 256,
+    "budget": 4000
+   },
+   "search": {
+    "sleep_sets": true,
+    "probe_first": true
+   }
+  }
+ },
+ {
+  "name": "table_min 4",
+  "solver": {
+   "luby_unit": 1000,
+   "ladder": {
+    "start": 36,
+    "tries": 256,
+    "budget": 4000
+   },
+   "search": {
+    "sleep_sets": true,
+    "table_min_piles": 4
+   }
+  }
+ },
+ {
+  "name": "table_min 6",
+  "solver": {
+   "luby_unit": 1000,
+   "ladder": {
+    "start": 36,
+    "tries": 256,
+    "budget": 4000
+   },
+   "search": {
+    "sleep_sets": true,
+    "table_min_piles": 6
+   }
+  }
+ },
+ {
+  "name": "table_min 8",
+  "solver": {
+   "luby_unit": 1000,
+   "ladder": {
+    "start": 36,
+    "tries": 256,
+    "budget": 4000
+   },
+   "search": {
+    "sleep_sets": true,
+    "table_min_piles": 8
+   }
+  }
+ },
+ {
+  "name": "table_min 10",
+  "solver": {
+   "luby_unit": 1000,
+   "ladder": {
+    "start": 36,
+    "tries": 256,
+    "budget": 4000
+   },
+   "search": {
+    "sleep_sets": true,
+    "table_min_piles": 10
+   }
+  }
+ },
+ {
+  "name": "conn 16",
+  "solver": {
+   "luby_unit": 1000,
+   "ladder": {
+    "start": 36,
+    "tries": 256,
+    "budget": 4000
+   },
+   "search": {
+    "sleep_sets": true,
+    "gates": {
+     "connectivity": 16
+    }
+   }
+  }
+ },
+ {
+  "name": "conn 22",
+  "solver": {
+   "luby_unit": 1000,
+   "ladder": {
+    "start": 36,
+    "tries": 256,
+    "budget": 4000
+   },
+   "search": {
+    "sleep_sets": true,
+    "gates": {
+     "connectivity": 22
+    }
+   }
+  }
+ },
+ {
+  "name": "conn 26",
+  "solver": {
+   "luby_unit": 1000,
+   "ladder": {
+    "start": 36,
+    "tries": 256,
+    "budget": 4000
+   },
+   "search": {
+    "sleep_sets": true,
+    "gates": {
+     "connectivity": 26
+    }
+   }
+  }
+ },
+ {
+  "name": "conn 19 + leftleaf 12",
+  "solver": {
+   "luby_unit": 1000,
+   "ladder": {
+    "start": 36,
+    "tries": 256,
+    "budget": 4000
+   },
+   "search": {
+    "sleep_sets": true,
+    "gates": {
+     "connectivity": 19,
+     "left_leaf": 12
+    }
+   }
+  }
+ },
+ {
+  "name": "conn every node 19",
+  "solver": {
+   "luby_unit": 1000,
+   "ladder": {
+    "start": 36,
+    "tries": 256,
+    "budget": 4000
+   },
+   "search": {
+    "sleep_sets": true,
+    "gates": {
+     "connectivity": 19,
+     "every_node": true
+    }
+   }
+  }
+ }
+]

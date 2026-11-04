@@ -1,0 +1,181 @@
+[
+ {
+  "name": "ladder (uniform)",
+  "solver": {
+   "luby_unit": 1000,
+   "ladder": {
+    "start": 36,
+    "end": 24,
+    "step": 2,
+    "tries": 256,
+    "budget": 4000,
+    "growth": 200,
+    "prefix": "uniform"
+   },
+   "search": {
+    "sleep_sets": false
+   }
+  }
+ },
+ {
+  "name": "search leaps_first",
+  "solver": {
+   "luby_unit": 1000,
+   "ladder": {
+    "start": 36,
+    "end": 24,
+    "step": 2,
+    "tries": 256,
+    "budget": 4000,
+    "growth": 200,
+    "prefix": "uniform"
+   },
+   "search": {
+    "order": "leaps_first",
+    "sleep_sets": false
+   }
+  }
+ },
+ {
+  "name": "search slides_first",
+  "solver": {
+   "luby_unit": 1000,
+   "ladder": {
+    "start": 36,
+    "end": 24,
+    "step": 2,
+    "tries": 256,
+    "budget": 4000,
+    "growth": 200,
+    "prefix": "uniform"
+   },
+   "search": {
+    "order": "slides_first",
+    "sleep_sets": false
+   }
+  }
+ },
+ {
+  "name": "search mobility",
+  "solver": {
+   "luby_unit": 1000,
+   "ladder": {
+    "start": 36,
+    "end": 24,
+    "step": 2,
+    "tries": 256,
+    "budget": 4000,
+    "growth": 200,
+    "prefix": "uniform"
+   },
+   "search": {
+    "order": "mobility",
+    "sleep_sets": false
+   }
+  }
+ },
+ {
+  "name": "prefix mobility",
+  "solver": {
+   "luby_unit": 1000,
+   "ladder": {
+    "start": 36,
+    "end": 24,
+    "step": 2,
+    "tries": 256,
+    "budget": 4000,
+    "growth": 200,
+    "prefix": "mobility"
+   },
+   "search": {
+    "sleep_sets": false
+   }
+  }
+ },
+ {
+  "name": "prefix leaps_first",
+  "solver": {
+   "luby_unit": 1000,
+   "ladder": {
+    "start": 36,
+    "end": 24,
+    "step": 2,
+    "tries": 256,
+    "budget": 4000,
+    "growth": 200,
+    "prefix": "leaps_first"
+   },
+   "search": {
+    "sleep_sets": false
+   }
+  }
+ },
+ {
+  "name": "prefix slides_first",
+  "solver": {
+   "luby_unit": 1000,
+   "ladder": {
+    "start": 36,
+    "end": 24,
+    "step": 2,
+    "tries": 256,
+    "budget": 4000,
+    "growth": 200,
+    "prefix": "slides_first"
+   },
+   "search": {
+    "sleep_sets": false
+   }
+  }
+ },
+ {
+  "name": "sleep sets",
+  "solver": {
+   "luby_unit": 1000,
+   "ladder": {
+    "start": 36,
+    "end": 24,
+    "step": 2,
+    "tries": 256,
+    "budget": 4000,
+    "growth": 200,
+    "prefix": "uniform"
+   },
+   "search": {
+    "sleep_sets": true
+   }
+  }
+ },
+ {
+  "name": "no ladder + sleep sets",
+  "solver": {
+   "luby_unit": 1000,
+   "search": {
+    "sleep_sets": true
+   },
+   "ladder": null
+  }
+ },
+ {
+  "name": "no ladder + mobility",
+  "solver": {
+   "luby_unit": 1000,
+   "search": {
+    "order": "mobility",
+    "sleep_sets": false
+   },
+   "ladder": null
+  }
+ },
+ {
+  "name": "no ladder + leaps_first",
+  "solver": {
+   "luby_unit": 1000,
+   "search": {
+    "order": "leaps_first",
+    "sleep_sets": false
+   },
+   "ladder": null
+  }
+ }
+]

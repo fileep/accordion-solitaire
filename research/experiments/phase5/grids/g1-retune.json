@@ -1,0 +1,542 @@
+[
+ {
+  "name": "eg11 ladder 36 t128 b1000",
+  "solver": {
+   "luby_unit": 1000,
+   "ladder": {
+    "start": 36,
+    "tries": 128,
+    "budget": 1000
+   },
+   "search": {
+    "sleep_sets": true,
+    "endgame_piles": 11
+   }
+  }
+ },
+ {
+  "name": "eg11 ladder 36 t128 b2000",
+  "solver": {
+   "luby_unit": 1000,
+   "ladder": {
+    "start": 36,
+    "tries": 128,
+    "budget": 2000
+   },
+   "search": {
+    "sleep_sets": true,
+    "endgame_piles": 11
+   }
+  }
+ },
+ {
+  "name": "eg11 ladder 36 t128 b4000",
+  "solver": {
+   "luby_unit": 1000,
+   "ladder": {
+    "start": 36,
+    "tries": 128,
+    "budget": 4000
+   },
+   "search": {
+    "sleep_sets": true,
+    "endgame_piles": 11
+   }
+  }
+ },
+ {
+  "name": "eg11 ladder 36 t256 b1000",
+  "solver": {
+   "luby_unit": 1000,
+   "ladder": {
+    "start": 36,
+    "tries": 256,
+    "budget": 1000
+   },
+   "search": {
+    "sleep_sets": true,
+    "endgame_piles": 11
+   }
+  }
+ },
+ {
+  "name": "eg11 ladder 36 t256 b2000",
+  "solver": {
+   "luby_unit": 1000,
+   "ladder": {
+    "start": 36,
+    "tries": 256,
+    "budget": 2000
+   },
+   "search": {
+    "sleep_sets": true,
+    "endgame_piles": 11
+   }
+  }
+ },
+ {
+  "name": "eg11 ladder 36 t256 b4000",
+  "solver": {
+   "luby_unit": 1000,
+   "ladder": {
+    "start": 36,
+    "tries": 256,
+    "budget": 4000
+   },
+   "search": {
+    "sleep_sets": true,
+    "endgame_piles": 11
+   }
+  }
+ },
+ {
+  "name": "eg11 ladder 36 t512 b1000",
+  "solver": {
+   "luby_unit": 1000,
+   "ladder": {
+    "start": 36,
+    "tries": 512,
+    "budget": 1000
+   },
+   "search": {
+    "sleep_sets": true,
+    "endgame_piles": 11
+   }
+  }
+ },
+ {
+  "name": "eg11 ladder 36 t512 b2000",
+  "solver": {
+   "luby_unit": 1000,
+   "ladder": {
+    "start": 36,
+    "tries": 512,
+    "budget": 2000
+   },
+   "search": {
+    "sleep_sets": true,
+    "endgame_piles": 11
+   }
+  }
+ },
+ {
+  "name": "eg11 ladder 36 t512 b4000",
+  "solver": {
+   "luby_unit": 1000,
+   "ladder": {
+    "start": 36,
+    "tries": 512,
+    "budget": 4000
+   },
+   "search": {
+    "sleep_sets": true,
+    "endgame_piles": 11
+   }
+  }
+ },
+ {
+  "name": "eg11 ladder 36 t1024 b1000",
+  "solver": {
+   "luby_unit": 1000,
+   "ladder": {
+    "start": 36,
+    "tries": 1024,
+    "budget": 1000
+   },
+   "search": {
+    "sleep_sets": true,
+    "endgame_piles": 11
+   }
+  }
+ },
+ {
+  "name": "eg11 ladder 36 t1024 b2000",
+  "solver": {
+   "luby_unit": 1000,
+   "ladder": {
+    "start": 36,
+    "tries": 1024,
+    "budget": 2000
+   },
+   "search": {
+    "sleep_sets": true,
+    "endgame_piles": 11
+   }
+  }
+ },
+ {
+  "name": "eg11 ladder 36 t1024 b4000",
+  "solver": {
+   "luby_unit": 1000,
+   "ladder": {
+    "start": 36,
+    "tries": 1024,
+    "budget": 4000
+   },
+   "search": {
+    "sleep_sets": true,
+    "endgame_piles": 11
+   }
+  }
+ },
+ {
+  "name": "eg11 ladder 37 t128 b1000",
+  "solver": {
+   "luby_unit": 1000,
+   "ladder": {
+    "start": 37,
+    "tries": 128,
+    "budget": 1000
+   },
+   "search": {
+    "sleep_sets": true,
+    "endgame_piles": 11
+   }
+  }
+ },
+ {
+  "name": "eg11 ladder 37 t128 b2000",
+  "solver": {
+   "luby_unit": 1000,
+   "ladder": {
+    "start": 37,
+    "tries": 128,
+    "budget": 2000
+   },
+   "search": {
+    "sleep_sets": true,
+    "endgame_piles": 11
+   }
+  }
+ },
+ {
+  "name": "eg11 ladder 37 t128 b4000",
+  "solver": {
+   "luby_unit": 1000,
+   "ladder": {
+    "start": 37,
+    "tries": 128,
+    "budget": 4000
+   },
+   "search": {
+    "sleep_sets": true,
+    "endgame_piles": 11
+   }
+  }
+ },
+ {
+  "name": "eg11 ladder 37 t256 b1000",
+  "solver": {
+   "luby_unit": 1000,
+   "ladder": {
+    "start": 37,
+    "tries": 256,
+    "budget": 1000
+   },
+   "search": {
+    "sleep_sets": true,
+    "endgame_piles": 11
+   }
+  }
+ },
+ {
+  "name": "eg11 ladder 37 t256 b2000",
+  "solver": {
+   "luby_unit": 1000,
+   "ladder": {
+    "start": 37,
+    "tries": 256,
+    "budget": 2000
+   },
+   "search": {
+    "sleep_sets": true,
+    "endgame_piles": 11
+   }
+  }
+ },
+ {
+  "name": "eg11 ladder 37 t256 b4000",
+  "solver": {
+   "luby_unit": 1000,
+   "ladder": {
+    "start": 37,
+    "tries": 256,
+    "budget": 4000
+   },
+   "search": {
+    "sleep_sets": true,
+    "endgame_piles": 11
+   }
+  }
+ },
+ {
+  "name": "eg11 ladder 37 t512 b1000",
+  "solver": {
+   "luby_unit": 1000,
+   "ladder": {
+    "start": 37,
+    "tries": 512,
+    "budget": 1000
+   },
+   "search": {
+    "sleep_sets": true,
+    "endgame_piles": 11
+   }
+  }
+ },
+ {
+  "name": "eg11 ladder 37 t512 b2000",
+  "solver": {
+   "luby_unit": 1000,
+   "ladder": {
+    "start": 37,
+    "tries": 512,
+    "budget": 2000
+   },
+   "search": {
+    "sleep_sets": true,
+    "endgame_piles": 11
+   }
+  }
+ },
+ {
+  "name": "eg11 ladder 37 t512 b4000",
+  "solver": {
+   "luby_unit": 1000,
+   "ladder": {
+    "start": 37,
+    "tries": 512,
+    "budget": 4000
+   },
+   "search": {
+    "sleep_sets": true,
+    "endgame_piles": 11
+   }
+  }
+ },
+ {
+  "name": "eg11 ladder 37 t1024 b1000",
+  "solver": {
+   "luby_unit": 1000,
+   "ladder": {
+    "start": 37,
+    "tries": 1024,
+    "budget": 1000
+   },
+   "search": {
+    "sleep_sets": true,
+    "endgame_piles": 11
+   }
+  }
+ },
+ {
+  "name": "eg11 ladder 37 t1024 b2000",
+  "solver": {
+   "luby_unit": 1000,
+   "ladder": {
+    "start": 37,
+    "tries": 1024,
+    "budget": 2000
+   },
+   "search": {
+    "sleep_sets": true,
+    "endgame_piles": 11
+   }
+  }
+ },
+ {
+  "name": "eg11 ladder 37 t1024 b4000",
+  "solver": {
+   "luby_unit": 1000,
+   "ladder": {
+    "start": 37,
+    "tries": 1024,
+    "budget": 4000
+   },
+   "search": {
+    "sleep_sets": true,
+    "endgame_piles": 11
+   }
+  }
+ },
+ {
+  "name": "eg11 ladder 38 t128 b1000",
+  "solver": {
+   "luby_unit": 1000,
+   "ladder": {
+    "start": 38,
+    "tries": 128,
+    "budget": 1000
+   },
+   "search": {
+    "sleep_sets": true,
+    "endgame_piles": 11
+   }
+  }
+ },
+ {
+  "name": "eg11 ladder 38 t128 b2000",
+  "solver": {
+   "luby_unit": 1000,
+   "ladder": {
+    "start": 38,
+    "tries": 128,
+    "budget": 2000
+   },
+   "search": {
+    "sleep_sets": true,
+    "endgame_piles": 11
+   }
+  }
+ },
+ {
+  "name": "eg11 ladder 38 t128 b4000",
+  "solver": {
+   "luby_unit": 1000,
+   "ladder": {
+    "start": 38,
+    "tries": 128,
+    "budget": 4000
+   },
+   "search": {
+    "sleep_sets": true,
+    "endgame_piles": 11
+   }
+  }
+ },
+ {
+  "name": "eg11 ladder 38 t256 b1000",
+  "solver": {
+   "luby_unit": 1000,
+   "ladder": {
+    "start": 38,
+    "tries": 256,
+    "budget": 1000
+   },
+   "search": {
+    "sleep_sets": true,
+    "endgame_piles": 11
+   }
+  }
+ },
+ {
+  "name": "eg11 ladder 38 t256 b2000",
+  "solver": {
+   "luby_unit": 1000,
+   "ladder": {
+    "start": 38,
+    "tries": 256,
+    "budget": 2000
+   },
+   "search": {
+    "sleep_sets": true,
+    "endgame_piles": 11
+   }
+  }
+ },
+ {
+  "name": "eg11 ladder 38 t256 b4000",
+  "solver": {
+   "luby_unit": 1000,
+   "ladder": {
+    "start": 38,
+    "tries": 256,
+    "budget": 4000
+   },
+   "search": {
+    "sleep_sets": true,
+    "endgame_piles": 11
+   }
+  }
+ },
+ {
+  "name": "eg11 ladder 38 t512 b1000",
+  "solver": {
+   "luby_unit": 1000,
+   "ladder": {
+    "start": 38,
+    "tries": 512,
+    "budget": 1000
+   },
+   "search": {
+    "sleep_sets": true,
+    "endgame_piles": 11
+   }
+  }
+ },
+ {
+  "name": "eg11 ladder 38 t512 b2000",
+  "solver": {
+   "luby_unit": 1000,
+   "ladder": {
+    "start": 38,
+    "tries": 512,
+    "budget": 2000
+   },
+   "search": {
+    "sleep_sets": true,
+    "endgame_piles": 11
+   }
+  }
+ },
+ {
+  "name": "eg11 ladder 38 t512 b4000",
+  "solver": {
+   "luby_unit": 1000,
+   "ladder": {
+    "start": 38,
+    "tries": 512,
+    "budget": 4000
+   },
+   "search": {
+    "sleep_sets": true,
+    "endgame_piles": 11
+   }
+  }
+ },
+ {
+  "name": "eg11 ladder 38 t1024 b1000",
+  "solver": {
+   "luby_unit": 1000,
+   "ladder": {
+    "start": 38,
+    "tries": 1024,
+    "budget": 1000
+   },
+   "search": {
+    "sleep_sets": true,
+    "endgame_piles": 11
+   }
+  }
+ },
+ {
+  "name": "eg11 ladder 38 t1024 b2000",
+  "solver": {
+   "luby_unit": 1000,
+   "ladder": {
+    "start": 38,
+    "tries": 1024,
+    "budget": 2000
+   },
+   "search": {
+    "sleep_sets": true,
+    "endgame_piles": 11
+   }
+  }
+ },
+ {
+  "name": "eg11 ladder 38 t1024 b4000",
+  "solver": {
+   "luby_unit": 1000,
+   "ladder": {
+    "start": 38,
+    "tries": 1024,
+    "budget": 4000
+   },
+   "search": {
+    "sleep_sets": true,
+    "endgame_piles": 11
+   }
+  }
+ }
+]

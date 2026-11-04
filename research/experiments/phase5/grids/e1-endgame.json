@@ -1,0 +1,77 @@
+[
+ {
+  "name": "ladder+sleep",
+  "solver": {
+   "luby_unit": 1000,
+   "ladder": {
+    "start": 36,
+    "tries": 256,
+    "budget": 4000
+   },
+   "search": {
+    "sleep_sets": true,
+    "endgame_piles": 0
+   }
+  }
+ },
+ {
+  "name": "ladder+sleep, endgame 6",
+  "solver": {
+   "luby_unit": 1000,
+   "ladder": {
+    "start": 36,
+    "tries": 256,
+    "budget": 4000
+   },
+   "search": {
+    "sleep_sets": true,
+    "endgame_piles": 6
+   }
+  }
+ },
+ {
+  "name": "ladder+sleep, endgame 8",
+  "solver": {
+   "luby_unit": 1000,
+   "ladder": {
+    "start": 36,
+    "tries": 256,
+    "budget": 4000
+   },
+   "search": {
+    "sleep_sets": true,
+    "endgame_piles": 8
+   }
+  }
+ },
+ {
+  "name": "ladder+sleep, endgame 9",
+  "solver": {
+   "luby_unit": 1000,
+   "ladder": {
+    "start": 36,
+    "tries": 256,
+    "budget": 4000
+   },
+   "search": {
+    "sleep_sets": true,
+    "endgame_piles": 9
+   }
+  }
+ },
+ {
+  "name": "ladder+sleep, endgame 10",
+  "solver": {
+   "luby_unit": 1000,
+   "ladder": {
+    "start": 36,
+    "tries": 256,
+    "budget": 4000
+   },
+   "search": {
+    "sleep_sets": true,
+    "endgame_piles": 10
+   }
+  }
+ }
+]

@@ -6,3 +6,8 @@
 /.tools
 __pycache__/
 *.pyc
+
+# Per-deal experiment rows (large; the summaries in summary.jsonl are kept)
+/research/experiments/phase5/deals
+# Endgame tables built by `acc endgame build` (68 MB to 1.2 GB)
+/endgame

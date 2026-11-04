@@ -32,7 +32,8 @@ enum Command {
         #[arg(long, short)]
         quiet: bool,
     },
-    /// Check the fast engine against the reference engine: lockstep random playouts, then dead-end soundness.
+    /// Check the fast engine against the reference engine (lockstep random playouts), dead-end soundness, and that
+    /// sleep sets and endgame tables never change a verdict.
     Selftest {
         /// Random games played with both engines in lockstep.
         #[arg(long, default_value_t = 100_000)]
@@ -40,6 +41,12 @@ enum Command {
         /// Random small positions on which any dead-end test that fires must be confirmed by reference search.
         #[arg(long, default_value_t = 100_000)]
         positions: u64,
+        /// Random residuals on which sleep sets and endgame tables must agree with plain search.
+        #[arg(long, default_value_t = 100_000)]
+        residuals: u64,
+        /// Endgame tables to check (the largest found here; tables to 8 piles are built if there are none).
+        #[arg(long, default_value = "endgame")]
+        endgame_dir: PathBuf,
     },
     /// Measure search speed (single thread) on fixed residual positions, optionally sweeping the dead-end gates.
     Bench(bench::BenchArgs),
@@ -47,11 +54,18 @@ enum Command {
     Solve(solve::SolveArgs),
     /// Solve a range of seeded deals on every core; report the win rate, effort and throughput.
     Batch(batch::BatchArgs),
+    /// Run solver configurations over a fixed deal set and record what each costs (PLAN.md Phase 5).
+    Experiment(experiment::ExperimentArgs),
+    /// Build the complete endgame tables (one bit per suit/rank pattern) used by `search.endgame_piles`.
+    Endgame(endgame::EndgameArgs),
 }
 
 mod batch;
 mod bench;
 mod dossier;
+mod endgame;
+mod experiment;
+mod runner;
 mod selftest;
 mod solve;
 
@@ -140,10 +154,14 @@ fn main() -> ExitCode {
     let result = match Cli::parse().command {
         Command::Deal { source, json } => deal_command(source, json).map(|()| true),
         Command::Verify { path, quiet } => verify_command(path, quiet),
-        Command::Selftest { playouts, positions } => selftest::run(playouts, positions),
+        Command::Selftest { playouts, positions, residuals, endgame_dir } => {
+            selftest::run(playouts, positions, residuals, &endgame_dir)
+        }
         Command::Bench(args) => bench::run(&args).map(|()| true),
         Command::Solve(args) => solve::run(&args),
         Command::Batch(args) => batch::run(&args),
+        Command::Experiment(args) => experiment::run(&args),
+        Command::Endgame(args) => endgame::run(&args).map(|()| true),
     };
     match result {
         Ok(true) => ExitCode::SUCCESS,

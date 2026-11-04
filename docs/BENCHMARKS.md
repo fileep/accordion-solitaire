@@ -145,3 +145,169 @@ thread-local search took 2,000 deals from 844 to 2,724 deals/s.
 | Seed 7, typed in lowercase on stdin | won (58k positions) |
 | Seed 42 after 40 golden moves (`--position`, 12 piles) | won in 11 moves (923 positions) |
 | Constructed unwinnable deal (`testdata/games/unwinnable_dead_end.json`) | every line searched, no win (12,080 positions); dossier and index written |
+
+## Phase 5 — the fastest strategy, by measurement
+
+**Setup:**
+
+- Same machine and toolchain; NVIDIA T550 Laptop GPU (driver 596.52, NVRTC 12.9).
+- **Code:** working tree on top of commit `f88abcb`.
+- Every run is a line in `research/experiments/phase5/summary.jsonl`; the configuration lists are in
+  `research/experiments/phase5/grids/`.
+
+**How to read the numbers:**
+
+- **Positions per deal** are deterministic for a given seed and configuration, so search changes compare exactly.
+- **Times** on this laptop drift by up to ±25% with heat, between a short burst state and a lower sustained state. Timings
+  below come from one command with `--warmup 40` and configurations interleaved over `--repeat 3` (spread ±1–5%), unless
+  marked otherwise.
+- **Deal sets** (disjoint): train 200,000–209,999 for tuning; validation 300,000–309,999 for choosing; test
+  1,000,000–1,099,999, run once for the report.
+
+### Result
+
+| Measure | Phase 4 | **Phase 5** | Gain |
+|---|---|---|---|
+| Validation: deals/s, 16 threads, sustained | 2,945 | **14,674** | **5.0×** |
+| Validation: positions per deal, mean / p99 / max | 38,074 / 282,305 / 1,054,221 | 5,940 / 46,699 / 241,526 | 6.4× fewer |
+| **Test, 100,000 deals run once:** won | 100,000 | **100,000**, all verified, 95% CI [99.9962%, 100%] | |
+| Test: deals/s | 2,952 | **14,805** | **5.0×** |
+| Test: ms per deal on one core, median / p99 / max | 2.59 / 40.0 / 397 | 0.47 / 8.66 / 137 | 5.5× / 4.6× / 2.9× |
+| One thread pinned to a P-core, no tables (the browser solver's setting): ms per deal | 1.67 | 0.46 | 3.6× |
+| `acc solve` on the 5 hardest Phase 4 deals, 16 threads | 0.03–0.04 s | 0.03 s | both instant |
+
+On the test set, 94.6% of deals were won on the ladder's first rung and the rest on later rungs; the thorough stage was
+not needed. On seeds 0–99,999, `acc batch` with the new defaults won all 100,000, every one verified and re-checked by
+`acc verify`; 1 deal fell through every rung and was won by the thorough stage.
+
+The adopted strategy (the new defaults):
+
+```json
+{"luby_unit": 1000, "ladder": {"start": 36, "end": 24, "step": 2, "tries": 256, "budget": 4000, "growth": 200},
+ "search": {"sleep_sets": true, "endgame_piles": 11}}
+```
+
+- `acc batch` uses the largest endgame tables found in `endgame/`.
+- `acc solve` stops at 10 piles, because loading 1.2 GB would take longer than a solve.
+- The browser solver has no tables.
+- Build the tables with `acc endgame build --piles 11`: 7 minutes, 1.2 GB.
+
+### Leaderboard (training deals; positions are means)
+
+Each block starts from the previous block's winner.
+
+**Track B — threads** (Phase 4 search, deals/s; affinity set with `start /affinity`):
+
+| Threads (cores) | Deals/s | Threads (cores) | Deals/s |
+|---|---|---|---|
+| 1 (P-core) | 593 | 8 (4 P-cores with hyper-threads) | 2,764 |
+| 1 (E-core) | 370 | 8 (E-cores) | 2,494 |
+| 2 (one P-core, hyper-threads) | 776 | 12 (4 P + 8 E) | 4,204 |
+| 4 (one per P-core) | 2,082 | **16 (all)** | **4,519** |
+| | | 24 (oversubscribed) | 4,483 |
+
+The new runner (workers verify their own deals, no chunk barrier) took the 100,000-deal Phase 4 run from 4,110 to 4,539
+deals/s. CPUs are about 98% busy; the rest of the per-thread gap is hardware (RESEARCH.md §10.8).
+
+**Track C — search strategy:**
+
+| Variant | Mean positions | p99 | Kept? |
+|---|---|---|---|
+| Phase 4 (Luby × 10,000) | 38,086 | 258,350 | — |
+| Luby × 1,000 | 27,170 | 205,860 | ✅ (500: 26,204; 100: 29,133; 100,000: 72,535; never restarting: 50 deals not won) |
+| + ladder 38→24, 16 tries, budget 2,000 (the probes' best) | 20,935 | 205,770 | |
+| + ladder 38→24, 64 tries, budget 2,000 | 15,131 | 132,245 | |
+| **+ ladder 36→24, 256 tries, budget 4,000** | **13,257** | 103,336 | ✅ |
+| ladder with 1,024 tries | 12,956 | 94,320 | no gain in time |
+| search order: leaps first / slides first / mobility | 13,193 / 13,169 / 13,872 | | ❌ (mobility is 2× slower) |
+| prefix order: mobility / leaps first / slides first | 17,056 / 14,362 / 47,651 | | ❌ |
+| **+ sleep sets** | **9,652** | 70,844 | ✅ +29% deals/s (8,949 → 11,504) |
+
+**Track D — engine options** (ladder + sleep sets; repeat 3):
+
+| Variant | Deals/s | Mean positions |
+|---|---|---|
+| **base** | **11,536** | 9,652 |
+| probe the table before building the child | 10,844 | 9,652 |
+| skip the table at ≤ 4 / 6 / 8 / 10 piles | 11,035 / 11,313 / 10,744 / 10,765 | 9,963 / 9,882 / 10,390 / 11,377 |
+| connectivity gate 16 / 22 / 26 | 11,376 / 11,493 / 11,531 | 9,675 / 9,703 / 9,703 |
+| + left-leaf at ≤ 12 | 10,064 | 9,387 |
+| connectivity at every node | 10,990 | 9,652 |
+
+**Track E — tables and symmetry** (repeat 3; the two blocks ran at different times, so compare within a block):
+
+| Variant | Deals/s | Mean positions |
+|---|---|---|
+| ladder + sleep sets | 10,493 | 9,652 |
+| + endgame tables to 6 / 8 / 9 / 10 piles | 10,420 / 10,453 / 11,311 / 11,461 | 9,856 / 9,155 / 8,191 / 7,429 |
+| tables to 10 piles | 12,229 | 7,429 |
+| **tables to 11 piles** | **13,845** | **5,943** |
+| 10 + pattern cache for 12–16 piles, 4 / 16 / 64 MB, kept across deals | 7,454 / 6,801 / 6,694 | 6,828 / 6,970 / 6,916 |
+| 11 + pattern cache, 16 MB | 8,197 | 5,718 |
+| pattern cache alone, 16 MB | 5,120 | 8,771 |
+
+On validation, the 11-pile tables add 26% (11,600 → 14,674 deals/s).
+
+| Endgame table | Patterns | Winnable | Size | Build, 16 threads |
+|---|---|---|---|---|
+| 9 piles | 34,260,563 | 9,264,631 | 4.3 MB | 0.8 s |
+| 10 piles | 546,727,587 | 167,848,803 | 68 MB | 20 s |
+| 11 piles | 9,212,838,075 | 3,228,523,525 | 1.15 GB | 418 s |
+
+**Track G — the ladder re-tuned with sleep sets and 11-pile tables:** the optimum is flat, so the setting was left as it was.
+
+| Ladder | Mean positions |
+|---|---|
+| 36 start, 256 tries, budget 1,000–4,000 | 5,943–5,960 |
+| 36 start, 1,024 tries | 6,002–6,034 |
+| 37 start | 7,364 |
+| 38 start | 9,517–10,571 |
+
+### Track F — GPU (`accgpu`, crates/gpu)
+
+One ladder attempt per GPU thread: a random prefix, then a first-win search of the ≤16 piles left, with sleep sets and the
+connectivity test.
+
+| Kernel / runner | Positions/s | Deals/s | Notes |
+|---|---|---|---|
+| v1: positions copied through local memory | 10M | 39 (512 deals) | memory-bound |
+| v2: residual in registers, make/undo, shared-memory stack, 32-thread blocks | 214M | 15,992 | 99.46% won on the GPU (prefix 36, 1,024 tries) |
+| v2, two rungs (38 then 36) in one launch, two launches in flight | **255M** | **18,840** | 99.44% won on the GPU; GPU 98–100% busy |
+
+The CPU verified every GPU win: about 2.4 million lines over these runs, none failed.
+
+**The gate: CPU and GPU together against the CPU alone.**
+
+- **Setup:** 1M deals per run (seeds 2,000,000–2,999,999), 60 s of rest before each run, 15 CPU workers alongside the GPU
+  feeder.
+- **How the hybrid shares work:** the CPU verifies every GPU line, then takes GPU leftovers, then fresh deals.
+
+```bash
+target/release/accgpu --mode hybrid --cpu-threads 15 --from 2000000 --count 1000000
+```
+
+| Run | CPU only (16 threads) | CPU + GPU |
+|---|---|---|
+| 1 | 19,705 deals/s | 30,675 deals/s (GPU won 58%) |
+| 2 | 16,085 deals/s | 30,220 deals/s |
+
+- **Result: 1.56–1.88×, about 1.7×. The 2× gate is not met.** All 4M deals were won, with no verification failures.
+- **Why:** inside the hybrid the GPU keeps about its solo rate, but the CPU slows from about 18,000 to about 12,800 deals/s.
+  They share this laptop's cooling, and the CPU-only rate itself falls from 19,705 to 16,085 between runs as the laptop
+  heats.
+
+Two lessons came out of the runner:
+
+- **Feed the GPU from a free thread.** With 16 CPU workers on 16 hardware threads, the GPU sat idle 60–90% of the time
+  waiting for its feeder thread to be scheduled.
+- **Hand verification to the CPU workers.** The feeder should only launch and collect.
+
+### Correctness gates (Phase 5)
+
+| Check | Result |
+|---|---|
+| `acc selftest --residuals 1000000` | **1,000,000** random residuals of 10–24 piles. Sleep sets, gated tests and endgame tables (to 11 piles) agree with plain search on every one: 149,244 won (every line replayed on the reference engine), 848,528 lost, 2,228 too large for 5M positions |
+| Sleep sets | A tree search with sleep sets and no cache reaches exactly the positions of a plain exhaustive search (60 residuals). Verdicts are unchanged across 6 option sets × 40 residuals, fixed and random order |
+| Endgame tables | Pattern counts match the independent Python DP for 1–12 piles. Winnable counts for 1–8 piles match an independent Python enumeration (`research/probes/endgame_check.py`). Verdicts match plain search on 3,000 random positions; won lines replay |
+| Gate tests (`crates/solver/tests/gates.rs`) | Golden positions and unwinnable deals give the right verdict under the default strategy, with endgame tables, and with the Phase 4 solver. **With every ladder search starved (budget 0), the thorough stage wins all of the first 100 deals**, every line verified |
+| Visualizer (`npm test`) | The in-page WASM solver wins seeded deals and a mid-game position, and reports both unwinnable golden deals as exhausted |

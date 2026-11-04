@@ -1,0 +1,118 @@
+[
+ {
+  "name": "luby-1k",
+  "solver": {
+   "luby_unit": 1000,
+   "ladder": null,
+   "search": {
+    "sleep_sets": false
+   }
+  }
+ },
+ {
+  "name": "luby-3k",
+  "solver": {
+   "luby_unit": 3000,
+   "ladder": null,
+   "search": {
+    "sleep_sets": false
+   }
+  }
+ },
+ {
+  "name": "luby-10k (phase 4)",
+  "solver": {
+   "luby_unit": 10000,
+   "ladder": null,
+   "search": {
+    "sleep_sets": false
+   }
+  }
+ },
+ {
+  "name": "luby-30k",
+  "solver": {
+   "luby_unit": 30000,
+   "ladder": null,
+   "search": {
+    "sleep_sets": false
+   }
+  }
+ },
+ {
+  "name": "luby-100k",
+  "solver": {
+   "luby_unit": 100000,
+   "ladder": null,
+   "search": {
+    "sleep_sets": false
+   }
+  }
+ },
+ {
+  "name": "luby-1M",
+  "solver": {
+   "luby_unit": 1000000,
+   "ladder": null,
+   "search": {
+    "sleep_sets": false
+   }
+  }
+ },
+ {
+  "name": "geometric-10k-x1.5",
+  "solver": {
+   "luby_unit": 10000,
+   "restarts": {
+    "geometric": {
+     "percent": 150
+    }
+   },
+   "ladder": null,
+   "search": {
+    "sleep_sets": false
+   }
+  }
+ },
+ {
+  "name": "geometric-10k-x2",
+  "solver": {
+   "luby_unit": 10000,
+   "restarts": {
+    "geometric": {
+     "percent": 200
+    }
+   },
+   "ladder": null,
+   "search": {
+    "sleep_sets": false
+   }
+  }
+ },
+ {
+  "name": "geometric-3k-x1.5",
+  "solver": {
+   "luby_unit": 3000,
+   "restarts": {
+    "geometric": {
+     "percent": 150
+    }
+   },
+   "ladder": null,
+   "search": {
+    "sleep_sets": false
+   }
+  }
+ },
+ {
+  "name": "never-restart",
+  "solver": {
+   "restarts": "never",
+   "luby_unit": 10000,
+   "ladder": null,
+   "search": {
+    "sleep_sets": false
+   }
+  }
+ }
+]

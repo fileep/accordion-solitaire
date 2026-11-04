@@ -58,6 +58,16 @@ All probe numbers come from a deliberately naive Python engine (~220k nodes/s). 
    - **This machine's GPU:** an entry-level NVIDIA T550, so expect a modest gain. The plan gates GPU work on a measured prototype.
 10. **Language:** Rust for the engine and solver, compiled to WASM for a TypeScript visualizer. C++ is the
     equivalent-speed alternative.
+11. **Measured in Rust (Phase 5, §10):** the solver needs **6.4× fewer positions per deal** than in Phase 4 (5,943 against
+    38,086 on the training deals) and runs **5.0× faster**: 14,805 against 2,952 deals/s on the 100,000 held-out test deals,
+    all won. Four things did it:
+    - a random-prefix ladder with many cheap tries at 36 random moves;
+    - short Luby restarts;
+    - sleep sets that skip move orders differing only by commuting moves;
+    - endgame tables up to 11 piles.
+
+    A cache keyed by suit/rank pattern and carried across deals did not pay. The GPU works, and a CPU+GPU hybrid is about
+    1.7× the CPU alone on this laptop, short of the 2× gate.
 
 ---
 
@@ -823,8 +833,158 @@ The no-cache means leave out capped runs, so they understate the cost.
   - It needs the CUDA Toolkit.
   - Portable `wgpu`/WGSL was considered and rejected for now: WGSL has no 64-bit integers, so the 52-bit masks would have to be split, and its subgroup support is limited.
 - **Gate:** start only if the tuned CPU profile shows deep-rung attempts are ≥50% of time, and a ≤1-week prototype kernel gives ≥2× end-to-end deals/s.
+- **Measured in Phase 5 (§10.8):** the prototype works and its wins all verify. The GPU alone matches the 16 CPU threads.
+  Together they reach about 1.7× the CPU alone, short of the 2× gate, because the GPU and CPU share this laptop's cooling.
 
 ---
+
+## 10. Phase 5 in Rust: what made the solver faster
+
+All numbers are in docs/BENCHMARKS.md (Phase 5); every run is a line in `research/experiments/phase5/summary.jsonl`.
+Position counts below are means over the 10,000 training deals and are deterministic.
+
+### 10.1 Restarts: much shorter than Phase 4's
+
+| Thorough-search restarts | Mean positions | p99 |
+|---|---|---|
+| Luby × 10,000 (Phase 4) | 38,086 | 258,350 |
+| Luby × 1,000 | **27,170** | 205,860 |
+| Luby × 500 | 26,204 | 205,057 |
+| Geometric, ×1.5 from 10,000 | 45,037 | 356,766 |
+| Never restart | 1.14M (50 deals not won at 100M) | 37.8M |
+
+Short restarts work because the dead-position table persists across them, so each fresh random dive is cheap and
+learns from the last. The optimum is broad, from 200 to 1,000.
+
+### 10.2 The ladder: many more tries at a deep switch point than the probes suggested
+
+An attempt plays 36 random moves (16 piles left), then a first-win search with a small budget. The probes' best ladder
+used 16 tries per rung (§5.6). In Rust, with the dead table shared across attempts, more tries kept paying:
+
+| Ladder (rungs 36→24 or 38→24, step 2) | Mean positions | p99 |
+|---|---|---|
+| none (Luby × 1,000 only) | 27,170 | 205,860 |
+| 38 start, 16 tries, budget 2,000 | 20,935 | 205,770 |
+| 38 start, 64 tries, budget 2,000 | 15,131 | 132,245 |
+| **36 start, 256 tries, budget 4,000** | **13,257** | 103,336 |
+| 36 start, 1,024 tries, budget 4,000 | 12,956 | 94,320 |
+
+- The adopted ladder (36 start, 256 tries) wins 94.7% of deals on its first rung.
+- One rung alone (36, 1,024 tries) wins 99.4% of deals before the thorough search starts.
+- Starting at 34 or less is worse, and so is 40 or more.
+- Budgets from 1,000 to 4,000 and budget growth per rung barely matter.
+
+### 10.3 Move order: uniform random is best
+
+Biased orders were tried inside the search and for the prefix. All lost or tied:
+
+| Policy | Inside the search | For the prefix |
+|---|---|---|
+| leaps first / slides first | 13,193 / 13,169 (tie) | 14,362 / 47,651 |
+| most moves left afterwards (mobility) | 13,872, and 2× the cost per position | 17,056 |
+
+Even without the ladder, mobility ordering saved positions (20,814 against 27,170), but each position cost about 2.5× more.
+
+### 10.4 Commutation: sleep sets
+
+**The fact.** Two moves commute whenever the left move's pile lies strictly left of the right move's target. Both stay legal,
+and either order reaches the same position: neither reads the piles the other changes, and the gap the left one closes
+shifts the right one's mover and target together.
+
+**The method.** After a node has searched move *a*, a later sibling *b* that commutes with *a* need not try *a* again. *b*
+then *a* reaches a position already searched under *a* then *b*. Each frame carries its asleep moves as two bitmasks, and
+the child's set is a mask and a shift (`dfs::asleep_after`).
+
+**Why it is sound here.** The table stores only positions proven dead, and a frame is marked dead only when every move was
+searched or is asleep. An asleep move is covered by an earlier sibling's completed search.
+
+**How it was checked:**
+- A tree search with sleep sets (no cache) reaches exactly the positions a plain exhaustive search reaches.
+- Verdicts match plain search on 1,000,000 random residuals (`acc selftest --residuals`).
+
+**Effect:**
+- **Positions:** with the ladder, 13,257 → **9,652 (−27%)**, and p99 103,336 → 70,844. Without it, 27,170 → 18,684 (−31%).
+- **Time: +29%.** The repeats it removes were mostly cheap table hits, so time gains less than positions.
+
+### 10.5 Endgame tables
+
+One bit per suit/rank pattern, built from the table one pile below (`acc endgame build`). The winnable counts for 1–8 piles
+match an independent Python enumeration exactly (`research/probes/endgame_check.py`).
+
+| Tables to | Patterns at the top | Winnable | Size | Build (16 threads) | Mean positions | Time vs none |
+|---|---|---|---|---|---|---|
+| none | — | — | — | — | 9,652 | — |
+| 9 piles | 34.3M | 27.0% | 4.3 MB | 0.8 s | 8,191 | +8% |
+| 10 piles | 547M | 30.7% | 68 MB | 21 s | 7,429 | +9% |
+| **11 piles** | 9.21B | 35.0% | 1.15 GB | 7 min | **5,943** | **+26%** (validation: 11,600 → 14,674 deals/s) |
+
+Time gains less than positions because each lookup computes the pattern's index, about one table step per card, and the
+10- and 11-pile tables live in main memory. A win found in the table ends the search with up to 10 moves still to play;
+those moves come from walking the table, and the reference engine replays the whole line as always.
+
+A 12-pile table (163 billion patterns, 20 GB, several hours to build) was not built. Gains are already shrinking, and every
+lookup into 20 GB would be a memory and TLB miss.
+
+### 10.6 Symmetry-keyed cache across deals: does not pay
+
+Dead positions of 12–16 piles were keyed by their exact pattern index (collision-free up to 16 piles) in a per-thread table
+kept from deal to deal.
+
+| Variant | Mean positions | Time |
+|---|---|---|
+| tables to 10 piles | 7,429 | — |
+| 10 + pattern cache (4 to 64 MB) | 6,828–6,970 | **−39%** |
+| tables to 11 piles | 5,943 | — |
+| 11 + pattern cache (16 MB) | 5,718 | −41% |
+
+- It saves only 4–8% of positions.
+- Table size makes no difference, so little carries from one deal to the next, as the probe found (§5.11).
+- Computing a pattern key at every 11–16-pile position costs far more than that saves.
+
+### 10.7 Engine options
+
+- **Probing the table before building the child** is 6% slower than prefetching and probing after: the build hides the
+  memory latency.
+- **Skipping the table at low pile counts** loses at every threshold.
+- **The connectivity gate** at 16–26 piles is within noise of 19.
+- **The left-leaf test** is still not worth its cost.
+
+### 10.8 Parallel games: CPU threads and the GPU
+
+**CPU.** One deal per thread scales to 4,519 deals/s on 16 threads (training deals, Phase 4 search). The ~3× per-thread
+gap against one idle thread is hardware:
+
+| Effect | Size |
+|---|---|
+| Hyper-threads | 1.31× per P-core |
+| E-cores | 62% of a P-core |
+| Shared laptop power budget | ~14% |
+
+The new runner removed the remaining overhead: workers verify their own deals, and there is no chunk barrier. That alone
+took Phase 4's 100,000-deal run from 4,110 to 4,539 deals/s.
+
+**GPU (NVIDIA T550, `accgpu`).** One ladder attempt per thread.
+
+- **First version: 10M positions/s.** Positions were copied through local memory and shifted a byte at a time, which
+  saturated the memory bus.
+- **Second version: 255M positions/s and 18,840 deals/s alone, 99.4% of deals won on the GPU.**
+  - The ≤16-card residual lives in two 64-bit registers.
+  - Moves are made and undone in place.
+  - Legal moves are recomputed with byte-parallel bit tricks.
+  - Per-depth state lives in shared memory.
+  - Two rungs (38 and 36 random moves) run in one launch.
+  - Two launches are kept in flight.
+  - The CPU verifies every GPU win: 2.4 million lines, none failed.
+- **Hybrid** (GPU and CPU on one stream of deals; the CPU verifies GPU lines and takes GPU leftovers first):
+
+  | Run (1M deals each, rested before) | Deals/s |
+  |---|---|
+  | CPU only | 19,705, then 16,085 |
+  | CPU + GPU | 30,675, then 30,220 |
+
+  That is **1.56–1.88×, about 1.7×**, short of the 2× gate.
+- **Why not 2×:** inside the hybrid the GPU keeps about its solo rate, but the CPU slows to about 12,800 deals/s. The T550
+  at 30 W and the CPU share one cooling system. On a desktop with separate power budgets the two rates would add up.
 
 ## Sources
 

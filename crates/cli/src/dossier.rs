@@ -15,7 +15,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 pub struct Attempt<'a> {
     /// `batch`, `solve`, `escalate-1`, …
     pub stage: &'a str,
-    /// Per-thread settings; thread `i` used move-order seed `config.seed + i`.
+    /// Per-thread settings (recorded in full); thread `i` used move-order seed `config.seed + i`.
     pub config: &'a Config,
     pub threads: usize,
     pub report: &'a Report,
@@ -117,9 +117,8 @@ pub fn record(dir: &Path, deal: &Deal, seed: Option<u64>, attempt: &Attempt) -> 
         "solver": format!("acc {}", env!("CARGO_PKG_VERSION")),
         "threads": attempt.threads,
         "max_nodes_per_thread": c.max_nodes,
-        "luby_unit": c.luby_unit,
-        "gates": { "connectivity": c.gates.connectivity, "left_leaf": c.gates.left_leaf },
         "move_order_seed": c.seed,
+        "config": c,
         "nodes": r.nodes,
         "attempts": r.attempts,
         "table_hits": r.stats.table_hits,

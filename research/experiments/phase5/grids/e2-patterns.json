@@ -1,0 +1,133 @@
+[
+ {
+  "name": "endgame 10",
+  "solver": {
+   "luby_unit": 1000,
+   "ladder": {
+    "start": 36,
+    "tries": 256,
+    "budget": 4000
+   },
+   "search": {
+    "sleep_sets": true,
+    "endgame_piles": 10
+   }
+  }
+ },
+ {
+  "name": "endgame 11",
+  "solver": {
+   "luby_unit": 1000,
+   "ladder": {
+    "start": 36,
+    "tries": 256,
+    "budget": 4000
+   },
+   "search": {
+    "sleep_sets": true,
+    "endgame_piles": 11
+   }
+  }
+ },
+ {
+  "name": "eg10 + patterns 14 (4 MB)",
+  "solver": {
+   "luby_unit": 1000,
+   "ladder": {
+    "start": 36,
+    "tries": 256,
+    "budget": 4000
+   },
+   "search": {
+    "sleep_sets": true,
+    "endgame_piles": 10,
+    "pattern_piles": 14,
+    "pattern_table": 16
+   }
+  }
+ },
+ {
+  "name": "eg10 + patterns 16 (4 MB)",
+  "solver": {
+   "luby_unit": 1000,
+   "ladder": {
+    "start": 36,
+    "tries": 256,
+    "budget": 4000
+   },
+   "search": {
+    "sleep_sets": true,
+    "endgame_piles": 10,
+    "pattern_piles": 16,
+    "pattern_table": 16
+   }
+  }
+ },
+ {
+  "name": "eg10 + patterns 16 (16 MB)",
+  "solver": {
+   "luby_unit": 1000,
+   "ladder": {
+    "start": 36,
+    "tries": 256,
+    "budget": 4000
+   },
+   "search": {
+    "sleep_sets": true,
+    "endgame_piles": 10,
+    "pattern_piles": 16,
+    "pattern_table": 18
+   }
+  }
+ },
+ {
+  "name": "eg10 + patterns 16 (64 MB)",
+  "solver": {
+   "luby_unit": 1000,
+   "ladder": {
+    "start": 36,
+    "tries": 256,
+    "budget": 4000
+   },
+   "search": {
+    "sleep_sets": true,
+    "endgame_piles": 10,
+    "pattern_piles": 16,
+    "pattern_table": 20
+   }
+  }
+ },
+ {
+  "name": "eg11 + patterns 16 (16 MB)",
+  "solver": {
+   "luby_unit": 1000,
+   "ladder": {
+    "start": 36,
+    "tries": 256,
+    "budget": 4000
+   },
+   "search": {
+    "sleep_sets": true,
+    "endgame_piles": 11,
+    "pattern_piles": 16,
+    "pattern_table": 18
+   }
+  }
+ },
+ {
+  "name": "no eg + patterns 16 (16 MB)",
+  "solver": {
+   "luby_unit": 1000,
+   "ladder": {
+    "start": 36,
+    "tries": 256,
+    "budget": 4000
+   },
+   "search": {
+    "sleep_sets": true,
+    "pattern_piles": 16,
+    "pattern_table": 18
+   }
+  }
+ }
+]

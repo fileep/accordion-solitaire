@@ -1,0 +1,306 @@
+// Ladder attempts on the GPU (PLAN.md Phase 5 track F): one attempt per thread. An attempt plays `prefix` random
+// moves on its deal, then a first-win depth-first search of what is left (at most 16 piles) with sleep sets and the
+// connectivity dead-end test, up to `budget` positions. The rules are the Rust fast engine's (crates/core/src/fast.rs);
+// every win is replayed by the CPU's reference engine before it counts.
+//
+// Everything stays on chip. The prefix plays on a 64-byte row in shared memory (stored byte-major, so a warp's 32
+// threads touch 32 different banks). The search keeps its at most 16 cards in two 64-bit registers, recomputes the
+// legal-move masks with byte-parallel bit tricks, and undoes moves instead of copying positions; the only per-depth
+// state (untried and asleep moves, the move, the covered card) lives in shared memory.
+//
+// Threads are persistent: each keeps taking the next attempt from a global counter. Attempt i is try i / deals of
+// deal i % deals, so a deal's tries are spread over the run; once some thread has won a deal, its later tries are
+// skipped. Two rungs share one launch: the first `tries` tries of a deal use `prefix` random moves, the next
+// `tries2` use `prefix2`.
+
+typedef unsigned char u8;
+typedef unsigned short u16;
+typedef unsigned int u32;
+typedef unsigned long long u64;
+
+#ifndef BLOCK
+#define BLOCK 64
+#endif
+#define SENTINEL 0x7F
+#define OFF 3
+#define ROW 0x1FFFull
+#define RES 16            // residual piles a search can hold (two 64-bit registers)
+#define MAX_PREFIX 48
+
+#define ONES 0x0101010101010101ull
+#define HIGHS 0x8080808080808080ull
+
+__device__ __forceinline__ bool codes_match(u32 a, u32 b) {
+    u32 x = a ^ b;
+    return ((x & 0x0F) == 0) | ((x & 0x70) == 0);
+}
+
+// xorshift64*: fast and good enough for move choice (the CPU checks every result).
+__device__ __forceinline__ u64 next_u64(u64& s) {
+    s ^= s >> 12; s ^= s << 25; s ^= s >> 27;
+    return s * 0x2545F4914F6CDD1DULL;
+}
+__device__ __forceinline__ u32 below(u64& s, u32 n) {
+    return (u32)(((next_u64(s) >> 32) * (u64)n) >> 32);
+}
+__device__ __forceinline__ int select_bit64(u64 m, u32 k) {
+    for (u32 i = 0; i < k; i++) m &= m - 1;
+    return __ffsll((long long)m) - 1;
+}
+__device__ __forceinline__ int select_bit32(u32 m, u32 k) {
+    for (u32 i = 0; i < k; i++) m &= m - 1;
+    return __ffs((int)m) - 1;
+}
+
+// Covering `covered` broke the last rank its suit shared with another suit (fast.rs breaks_link).
+__device__ __forceinline__ bool breaks_link(u64 present, u32 covered) {
+    u32 s = covered >> 4, r = covered & 0x0F;
+    u64 row = (present >> (16 * s)) & ROW;
+    bool broken = false;
+    #pragma unroll
+    for (u32 s2 = 0; s2 < 4; s2++) {
+        u64 other = (present >> (16 * s2)) & ROW;
+        broken |= (s2 != s) & (((other >> r) & 1) == 1) & ((other & row) == 0);
+    }
+    return broken & (row != 0);
+}
+
+__device__ bool connected(u64 present) {
+    u64 rows[4] = {present & ROW, (present >> 16) & ROW, (present >> 32) & ROW, (present >> 48) & ROW};
+    u32 nonempty = 0;
+    #pragma unroll
+    for (int s = 0; s < 4; s++) if (rows[s]) nonempty |= 1u << s;
+    if (!nonempty) return true;
+    u32 reached = 1u << (__ffs(nonempty) - 1);
+    for (;;) {
+        u64 ranks = 0;
+        #pragma unroll
+        for (int s = 0; s < 4; s++) if ((reached >> s) & 1) ranks |= rows[s];
+        u32 next = reached;
+        #pragma unroll
+        for (int s = 0; s < 4; s++) if (rows[s] & ranks) next |= 1u << s;
+        if (next == reached) return reached == nonempty;
+        reached = next;
+    }
+}
+
+// ---- The residual: card i is byte i of (lo, hi); bytes at and above len hold SENTINEL.
+
+__device__ __forceinline__ u32 card_at(u64 lo, u64 hi, int i) {
+    return (u32)((i < 8 ? lo >> (8 * i) : hi >> (8 * (i - 8))) & 0xFF);
+}
+__device__ __forceinline__ u64 below_bytes(int i) { return i <= 0 ? 0 : (i >= 8 ? ~0ull : (1ull << (8 * i)) - 1); }
+
+__device__ __forceinline__ void set_card(u64& lo, u64& hi, int i, u32 c) {
+    if (i < 8) { int s = 8 * i; lo = (lo & ~(0xFFull << s)) | ((u64)c << s); }
+    else { int s = 8 * (i - 8); hi = (hi & ~(0xFFull << s)) | ((u64)c << s); }
+}
+// Removes card i: the cards above it move down one place and a sentinel enters at the top.
+__device__ __forceinline__ void delete_card(u64& lo, u64& hi, int i) {
+    if (i < 8) {
+        u64 keep = below_bytes(i);
+        lo = (lo & keep) | ((lo >> 8) & ~keep) | (hi << 56);
+        hi = (hi >> 8) | (0x7Full << 56);
+    } else {
+        u64 keep = below_bytes(i - 8);
+        hi = (hi & keep) | ((hi >> 8) & ~keep) | (0x7Full << 56);
+    }
+}
+// Puts card c back at i: the cards from i up move up one place.
+__device__ __forceinline__ void insert_card(u64& lo, u64& hi, int i, u32 c) {
+    if (i < 8) {
+        u64 keep = below_bytes(i);
+        hi = (hi << 8) | (lo >> 56);
+        lo = (lo & keep) | ((lo << 8) & ~keep & ~(0xFFull << (8 * i))) | ((u64)c << (8 * i));
+    } else {
+        int j = i - 8;
+        u64 keep = below_bytes(j);
+        hi = (hi & keep) | ((hi << 8) & ~keep & ~(0xFFull << (8 * j))) | ((u64)c << (8 * j));
+    }
+}
+// 0x80 in every byte of t (bytes <= 0x7F) that is zero.
+__device__ __forceinline__ u64 zero_bytes(u64 t) { return ~((t + 0x7F7F7F7F7F7F7F7Full) | t) & HIGHS; }
+// Bit j set for every byte j of m that has 0x80 set.
+__device__ __forceinline__ u32 gather(u64 m) { return (u32)((((m >> 7) & ONES) * 0x0102040810204080ull) >> 56); }
+__device__ __forceinline__ u32 match_mask(u64 a_lo, u64 a_hi, u64 b_lo, u64 b_hi) {
+    u64 d_lo = a_lo ^ b_lo, d_hi = a_hi ^ b_hi;
+    u64 m_lo = zero_bytes(d_lo & 0x0F0F0F0F0F0F0F0Full) | zero_bytes(d_lo & 0x7070707070707070ull);
+    u64 m_hi = zero_bytes(d_hi & 0x0F0F0F0F0F0F0F0Full) | zero_bytes(d_hi & 0x7070707070707070ull);
+    return gather(m_lo) | (gather(m_hi) << 8);
+}
+// Legal-move masks of the residual: bit i of s, pile i may slide; of l, leap.
+__device__ __forceinline__ void masks(u64 lo, u64 hi, int len, u32& s, u32& l) {
+    u64 p1_lo = (lo << 8) | 0x7Full, p1_hi = (hi << 8) | (lo >> 56);
+    u64 p3_lo = (lo << 24) | 0x7F7F7Full, p3_hi = (hi << 24) | (lo >> 40);
+    u32 valid = (1u << len) - 1;
+    s = match_mask(lo, hi, p1_lo, p1_hi) & valid & ~1u;
+    l = match_mask(lo, hi, p3_lo, p3_hi) & valid & ~7u;
+}
+
+// dfs.rs asleep_after: the moves asleep in the child after `pile` moves.
+__device__ __forceinline__ void asleep_after(u32 ds, u32 dl, int pile, bool leap, u32& s, u32& l) {
+    int target = pile - (leap ? 3 : 1);
+    u32 left = (1u << target) - 1;
+    s = (ds & left) | ((ds >> 1) & ~((1u << (pile + 1)) - 1));
+    l = (dl & left) | ((dl >> 1) & ~((1u << (pile + 3)) - 1));
+}
+
+// Results per deal: won flag (0/1) and the winning line (51 bytes: pile << 1 | leap); plus totals.
+extern "C" __global__ void __launch_bounds__(BLOCK) attempts(
+    const u8* __restrict__ deals,      // 52 bytes per deal (engine codes)
+    u32 n_deals, u32 tries, u32 prefix, u32 tries2, u32 prefix2, u32 budget, u32 conn_gate, u64 seed,
+    u32* next_attempt,                 // global work counter, starts at 0
+    u32* won,                          // per deal: 0, or 1 once some attempt has won it
+    u8* lines,                         // 51 bytes per deal
+    u64* nodes_total, u32* attempts_run, u32* attempts_won)
+{
+    __shared__ u8 s_row[64][BLOCK];        // the prefix's row, byte-major
+    __shared__ u8 s_line[MAX_PREFIX][BLOCK];
+    __shared__ u16 s_us[RES][BLOCK], s_ul[RES][BLOCK], s_ds[RES][BLOCK], s_dl[RES][BLOCK];
+    __shared__ u8 s_via[RES][BLOCK], s_cov[RES][BLOCK];
+    const int t = threadIdx.x;
+    const u64 total = n_deals * (u64)(tries + tries2);
+    if (prefix > MAX_PREFIX) prefix = MAX_PREFIX;
+    if (prefix2 > MAX_PREFIX) prefix2 = MAX_PREFIX;
+    u64 my_nodes = 0;
+    u32 my_runs = 0, my_wins = 0;
+    for (;;) {
+        u32 a = atomicAdd(next_attempt, 1u);
+        if (a >= total) break;
+        u32 deal = a % n_deals;
+        const u32 k_moves = (a / n_deals < tries) ? prefix : prefix2;
+        if (*((volatile u32*)&won[deal])) continue;
+        my_runs++;
+        u64 rng = seed ^ (0x9E3779B97F4A7C15ull * (a + 1));
+        for (int i = 0; i < 3; i++) next_u64(rng);
+
+        // The deal and its random prefix (fast.rs apply, on the shared row).
+        for (int i = 0; i < 64; i++) s_row[i][t] = SENTINEL;
+        u64 present = 0;
+        for (int i = 0; i < 52; i++) {
+            u8 c = deals[deal * 52 + i];
+            s_row[OFF + i][t] = c;
+            present |= 1ull << c;
+        }
+        int len = 52;
+        u64 l1 = 0, l3 = 0;
+        for (int i = 1; i < 52; i++) {
+            u32 c = s_row[OFF + i][t];
+            l1 |= (u64)codes_match(c, s_row[OFF + i - 1][t]) << i;
+            l3 |= (u64)codes_match(c, s_row[OFF + i - 3][t]) << i;
+        }
+        int moves = 0;
+        bool link_broken = false;
+        while (moves < (int)k_moves) {
+            u32 n1 = __popcll(l1), n3 = __popcll(l3);
+            if (n1 + n3 == 0) break;
+            u32 k = below(rng, n1 + n3);
+            bool leap = k >= n1;
+            int pile = leap ? select_bit64(l3, k - n1) : select_bit64(l1, k);
+            int d = leap ? 3 : 1;
+            u32 mover = s_row[OFF + pile][t], covered = s_row[OFF + pile - d][t];
+            s_row[OFF + pile - d][t] = mover;
+            for (int i = OFF + pile; i < OFF + len; i++) s_row[i][t] = s_row[i + 1][t];
+            len--;
+            present &= ~(1ull << covered);
+            link_broken = breaks_link(present, covered);
+            #define SB(j) ((u64)codes_match(s_row[OFF + (j)][t], s_row[OFF + (j) - 1][t]) << (j))
+            #define LB(j) ((u64)codes_match(s_row[OFF + (j)][t], s_row[OFF + (j) - 3][t]) << (j))
+            u64 low = (1ull << pile) - 1;
+            u64 m1 = (l1 & low) | ((l1 >> 1) & ~low), m3 = (l3 & low) | ((l3 >> 1) & ~low);
+            u64 w1, b1, w3, b3;
+            if (leap) {
+                w1 = 0b1011ull << (pile - 3); b1 = SB(pile - 3) | SB(pile - 2) | SB(pile);
+                w3 = 0b111001ull << (pile - 3); b3 = LB(pile - 3) | LB(pile) | LB(pile + 1) | LB(pile + 2);
+            } else {
+                w1 = 1ull << (pile - 1); b1 = SB(pile - 1);
+                w3 = 0b111ull << (pile - 1); b3 = LB(pile - 1) | LB(pile) | LB(pile + 1);
+            }
+            #undef SB
+            #undef LB
+            u64 valid = (1ull << len) - 1;
+            l1 = ((m1 & ~w1) | b1) & valid & ~1ull;
+            l3 = ((m3 & ~w3) | b3) & valid & ~7ull;
+            s_line[moves][t] = (u8)(pile << 1 | (leap ? 1 : 0));
+            moves++;
+        }
+        my_nodes += moves;
+        if (len > RES) continue;              // stuck before the residual got small: lost anyway
+        if (len > 1 && len <= (int)conn_gate && !connected(present)) continue;
+
+        // The residual into registers.
+        u64 lo = 0x7F7F7F7F7F7F7F7Full, hi = 0x7F7F7F7F7F7F7F7Full;
+        for (int i = 0; i < len; i++) set_card(lo, hi, i, s_row[OFF + i][t]);
+        bool win = len == 1;
+        int depth = 0;
+        u32 used = 0;
+        if (!win) {
+            u32 ms, ml;
+            masks(lo, hi, len, ms, ml);
+            s_us[0][t] = (u16)ms; s_ul[0][t] = (u16)ml; s_ds[0][t] = 0; s_dl[0][t] = 0;
+        }
+        // Depth-first search with undo: level d is the position after d search moves.
+        while (!win) {
+            u32 us = s_us[depth][t], ul = s_ul[depth][t];
+            if ((us | ul) == 0) {
+                if (depth == 0) break;        // the residual is lost
+                depth--;
+                u32 via = s_via[depth][t], cov = s_cov[depth][t];
+                int pile = via >> 1, dd = (via & 1) ? 3 : 1;
+                u32 mover = card_at(lo, hi, pile - dd);
+                insert_card(lo, hi, pile, mover);
+                set_card(lo, hi, pile - dd, cov);
+                present |= 1ull << cov;
+                len++;
+                continue;
+            }
+            if (used >= budget) break;
+            u32 n1 = __popc(us), n3 = __popc(ul);
+            u32 k = below(rng, n1 + n3);
+            bool leap = k >= n1;
+            int pile = leap ? select_bit32(ul, k - n1) : select_bit32(us, k);
+            u32 ds = s_ds[depth][t], dl = s_dl[depth][t];
+            u32 sleep_s, sleep_l;
+            asleep_after(ds, dl, pile, leap, sleep_s, sleep_l);
+            u32 bit = 1u << pile;
+            if (leap) { ul &= ~bit; dl |= bit; } else { us &= ~bit; ds |= bit; }
+            s_us[depth][t] = (u16)us; s_ul[depth][t] = (u16)ul; s_ds[depth][t] = (u16)ds; s_dl[depth][t] = (u16)dl;
+            // Make the move.
+            int dd = leap ? 3 : 1;
+            u32 mover = card_at(lo, hi, pile), cov = card_at(lo, hi, pile - dd);
+            set_card(lo, hi, pile - dd, mover);
+            delete_card(lo, hi, pile);
+            int parent_len = len;
+            len--;
+            present &= ~(1ull << cov);
+            s_via[depth][t] = (u8)(pile << 1 | (leap ? 1 : 0));
+            s_cov[depth][t] = (u8)cov;
+            used++;
+            if (len == 1) { win = true; depth++; break; }
+            bool dead = len <= (int)conn_gate && (breaks_link(present, cov) || parent_len > (int)conn_gate)
+                        && !connected(present);
+            if (dead) {                       // undo at once
+                insert_card(lo, hi, pile, mover);
+                set_card(lo, hi, pile - dd, cov);
+                present |= 1ull << cov;
+                len++;
+                continue;
+            }
+            depth++;
+            u32 ms, ml;
+            masks(lo, hi, len, ms, ml);
+            s_us[depth][t] = (u16)(ms & ~sleep_s); s_ul[depth][t] = (u16)(ml & ~sleep_l);
+            s_ds[depth][t] = (u16)sleep_s; s_dl[depth][t] = (u16)sleep_l;
+        }
+        my_nodes += used;
+        if (win && atomicCAS(&won[deal], 0u, 1u) == 0u) {
+            my_wins++;
+            u8* out = lines + deal * 51;
+            for (int i = 0; i < moves; i++) out[i] = s_line[i][t];
+            for (int d = 0; d < depth; d++) out[moves + d] = s_via[d][t];
+        }
+    }
+    atomicAdd(nodes_total, my_nodes);
+    atomicAdd(attempts_run, my_runs);
+    atomicAdd(attempts_won, my_wins);
+}

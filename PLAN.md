@@ -365,7 +365,52 @@ or one entry picked by seed from a batch or `hard-deals/` file. It has no batch 
 - `acc solve` and the visualizer's Solve / Solve-from-here both solve user-entered decks. Hand-typed decks with deliberate typos must be
   rejected with clear errors.
 
-### Phase 5 — Speed: find the fastest strategy, by measurement
+### Phase 5 — Speed: find the fastest strategy, by measurement ✅ done
+
+**Outcome** (numbers in docs/BENCHMARKS.md, findings in RESEARCH.md §10):
+
+- **5.0× faster than Phase 4, with every deal still won.**
+  - **Held-out test** (100,000 deals, seeds 1,000,000–1,099,999, run once): 14,805 against 2,952 deals/s. All 100,000 won and
+    verified, 95% CI [99.9962%, 100%].
+  - **Validation:** 14,674 against 2,945 deals/s.
+  - **Positions per deal:** 6.4× fewer (mean 5,940, p99 46,699).
+  - **Single thread** (the browser solver): 3.6× faster per deal.
+- **What did it** (each measured on its own):
+  - short Luby restarts (1,000 positions instead of 10,000);
+  - a random-prefix ladder in front of the thorough search: 36 random moves, then 256 tries per rung, each a search with a
+    4,000-position budget;
+  - sleep sets, which skip move orders that differ only by commuting moves;
+  - endgame tables to 11 piles (`acc endgame build`).
+- **Tried and dropped, with numbers:**
+  - biased move orders, in the search and in the prefix;
+  - probing the table before building;
+  - skipping the table near the end;
+  - new gate values and the left-leaf test;
+  - a suit/rank pattern cache for 12–16 piles kept across deals: −39% time.
+- **Parallel games:**
+  - **CPU:** the new runner removed the chunk barrier and the main-thread verification (+10%). The rest of the per-thread gap
+    is hardware.
+  - **GPU** (`accgpu`, crates/gpu):
+    - The kernel reaches 255M positions/s and 18,840 deals/s alone.
+    - CPU + GPU is about 1.7× the CPU alone. **The 2× gate is not met** on this laptop, where both share one cooling system,
+      so Phase 8 is not started.
+- **Every strategy falls back to the thorough search.** The ladder is a stage in front of it.
+  - A test starves every ladder search and checks that the thorough stage still wins every deal.
+  - On the 100,000 regression deals, one deal fell through every rung and was won by the thorough stage.
+- **Correctness:** 1,000,000 random residuals give the same verdict with and without sleep sets and tables
+  (`acc selftest --residuals`). The gate tests run under three strategies. The visualizer's solver has its own test.
+- **Tools:**
+  - `acc experiment`: deal sets, JSON configurations, warm-up, interleaved repeats, `summary.jsonl`;
+  - `acc endgame build`;
+  - `--config` and `--endgame` on `acc batch` and `acc solve`;
+  - `--threads` on `acc batch`;
+  - `accgpu`.
+- **Deviations:**
+  - NRPA and nested Monte Carlo prefix policies were not built, since the mobility-guided prefix already lost to uniform
+    random.
+  - Make/unmake for the CPU engine and profile-guided optimization were not tried.
+  - The adaptive per-deal ladder was not built, because the tuned fixed ladder's optimum is flat.
+  - Timing needed a warm-up protocol: this laptop's clocks drift up to ±25% with heat.
 
 **Goal:** more deals per second in batch runs and less time per deal for a single solve (`acc solve`, the visualizer), without ever
 winning fewer deals. This phase also takes in the old Phase 6 (symmetry, endgame tables and caches) and the GPU prototype that
@@ -580,6 +625,11 @@ Its symmetry work (endgame tables, the symmetry-keyed cache and canonical deal I
 
 ### Phase 8 (only if the Phase 5 GPU gate passes) — GPU deep-rung lottery
 
+**Status: not started.** The Phase 5 prototype (`accgpu`, crates/gpu) works and all its wins verify. CPU + GPU measured
+about 1.7× the CPU alone on this laptop, short of the 2× gate (docs/BENCHMARKS.md, Phase 5 track F). The design below was
+validated by the prototype. Its kernel keeps the residual in registers instead of a per-attempt table, and relies on sleep
+sets instead of a cache. On a machine where CPU and GPU don't share cooling, re-run the gate first.
+
 **Why it might pay.** The probe data (RESEARCH §9) shows that **deep rungs** do almost all the useful work if we can afford many more tries there.
 A deep rung is a long random prefix plus a small brute force on ≤20 piles. With 64 tries per deep rung, **99.1% of deals were won without ever
 brute-forcing more than 20 piles**. That workload is GPU-friendly:
@@ -734,7 +784,7 @@ The unwinnable cases:
 | M2 ✅ | Fast engine + dead-end tests | 10M differential playouts and 1M soundness checks pass; exhaustive counts match; ≥20M DFS nodes/s/thread (measured 26.9–28.3M) |
 | M3 ✅ | Visualizer | enter/validate a deck (paste or card picker); human play with undo; replays solver files with slider/speeds; continue-by-hand |
 | M4 ✅ | Baseline solver + solve-a-deck | ≥99.9% on 100k deals, all verified, every unknown has a dossier; never `win` on the unwinnable golden deals; `acc solve` and visualizer Solve / Solve-from-here work on user-entered decks |
-| M5 | Fastest strategy | every track measured on the leaderboard; adopted pipeline beats Phase 4 on held-out mean and p99 and on deals/s (target 2×); 100% on 100k held-out + regression set; pruning checked sound; GPU gate decided |
+| M5 ✅ | Fastest strategy | every track measured on the leaderboard; adopted pipeline beats Phase 4 on held-out mean and p99 and on deals/s (target 2×, measured 5.0×); 100% on 100k held-out + regression set; pruning checked sound (1M residuals); GPU gate decided (1.7×, not met) |
 | M6 | (merged into M5) | — |
 | M7 | Big run | 10M+ deals, Wilson CI, results write-up, hard-deal gallery; exhaustive mode proves the golden unwinnable cases lost |
 | M8 | GPU runner | only if the Phase 5 gate passed: hybrid runner built into `acc batch`, faster end to end, every GPU win verified |

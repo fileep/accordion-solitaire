@@ -1,0 +1,614 @@
+[
+ {
+  "name": "ladder-38-24-s2-t16-b500",
+  "solver": {
+   "luby_unit": 1000,
+   "ladder": {
+    "start": 38,
+    "end": 24,
+    "step": 2,
+    "tries": 16,
+    "budget": 500,
+    "growth": 200
+   },
+   "search": {
+    "sleep_sets": false
+   }
+  }
+ },
+ {
+  "name": "ladder-38-24-s2-t16-b1000",
+  "solver": {
+   "luby_unit": 1000,
+   "ladder": {
+    "start": 38,
+    "end": 24,
+    "step": 2,
+    "tries": 16,
+    "budget": 1000,
+    "growth": 200
+   },
+   "search": {
+    "sleep_sets": false
+   }
+  }
+ },
+ {
+  "name": "ladder-38-24-s2-t16-b2000",
+  "solver": {
+   "luby_unit": 1000,
+   "ladder": {
+    "start": 38,
+    "end": 24,
+    "step": 2,
+    "tries": 16,
+    "budget": 2000,
+    "growth": 200
+   },
+   "search": {
+    "sleep_sets": false
+   }
+  }
+ },
+ {
+  "name": "ladder-38-24-s2-t32-b500",
+  "solver": {
+   "luby_unit": 1000,
+   "ladder": {
+    "start": 38,
+    "end": 24,
+    "step": 2,
+    "tries": 32,
+    "budget": 500,
+    "growth": 200
+   },
+   "search": {
+    "sleep_sets": false
+   }
+  }
+ },
+ {
+  "name": "ladder-38-24-s2-t32-b1000",
+  "solver": {
+   "luby_unit": 1000,
+   "ladder": {
+    "start": 38,
+    "end": 24,
+    "step": 2,
+    "tries": 32,
+    "budget": 1000,
+    "growth": 200
+   },
+   "search": {
+    "sleep_sets": false
+   }
+  }
+ },
+ {
+  "name": "ladder-38-24-s2-t32-b2000",
+  "solver": {
+   "luby_unit": 1000,
+   "ladder": {
+    "start": 38,
+    "end": 24,
+    "step": 2,
+    "tries": 32,
+    "budget": 2000,
+    "growth": 200
+   },
+   "search": {
+    "sleep_sets": false
+   }
+  }
+ },
+ {
+  "name": "ladder-38-24-s2-t64-b500",
+  "solver": {
+   "luby_unit": 1000,
+   "ladder": {
+    "start": 38,
+    "end": 24,
+    "step": 2,
+    "tries": 64,
+    "budget": 500,
+    "growth": 200
+   },
+   "search": {
+    "sleep_sets": false
+   }
+  }
+ },
+ {
+  "name": "ladder-38-24-s2-t64-b1000",
+  "solver": {
+   "luby_unit": 1000,
+   "ladder": {
+    "start": 38,
+    "end": 24,
+    "step": 2,
+    "tries": 64,
+    "budget": 1000,
+    "growth": 200
+   },
+   "search": {
+    "sleep_sets": false
+   }
+  }
+ },
+ {
+  "name": "ladder-38-24-s2-t64-b2000",
+  "solver": {
+   "luby_unit": 1000,
+   "ladder": {
+    "start": 38,
+    "end": 24,
+    "step": 2,
+    "tries": 64,
+    "budget": 2000,
+    "growth": 200
+   },
+   "search": {
+    "sleep_sets": false
+   }
+  }
+ },
+ {
+  "name": "ladder-40-24-s2-t16-b500",
+  "solver": {
+   "luby_unit": 1000,
+   "ladder": {
+    "start": 40,
+    "end": 24,
+    "step": 2,
+    "tries": 16,
+    "budget": 500,
+    "growth": 200
+   },
+   "search": {
+    "sleep_sets": false
+   }
+  }
+ },
+ {
+  "name": "ladder-40-24-s2-t16-b1000",
+  "solver": {
+   "luby_unit": 1000,
+   "ladder": {
+    "start": 40,
+    "end": 24,
+    "step": 2,
+    "tries": 16,
+    "budget": 1000,
+    "growth": 200
+   },
+   "search": {
+    "sleep_sets": false
+   }
+  }
+ },
+ {
+  "name": "ladder-40-24-s2-t16-b2000",
+  "solver": {
+   "luby_unit": 1000,
+   "ladder": {
+    "start": 40,
+    "end": 24,
+    "step": 2,
+    "tries": 16,
+    "budget": 2000,
+    "growth": 200
+   },
+   "search": {
+    "sleep_sets": false
+   }
+  }
+ },
+ {
+  "name": "ladder-40-24-s2-t32-b500",
+  "solver": {
+   "luby_unit": 1000,
+   "ladder": {
+    "start": 40,
+    "end": 24,
+    "step": 2,
+    "tries": 32,
+    "budget": 500,
+    "growth": 200
+   },
+   "search": {
+    "sleep_sets": false
+   }
+  }
+ },
+ {
+  "name": "ladder-40-24-s2-t32-b1000",
+  "solver": {
+   "luby_unit": 1000,
+   "ladder": {
+    "start": 40,
+    "end": 24,
+    "step": 2,
+    "tries": 32,
+    "budget": 1000,
+    "growth": 200
+   },
+   "search": {
+    "sleep_sets": false
+   }
+  }
+ },
+ {
+  "name": "ladder-40-24-s2-t32-b2000",
+  "solver": {
+   "luby_unit": 1000,
+   "ladder": {
+    "start": 40,
+    "end": 24,
+    "step": 2,
+    "tries": 32,
+    "budget": 2000,
+    "growth": 200
+   },
+   "search": {
+    "sleep_sets": false
+   }
+  }
+ },
+ {
+  "name": "ladder-40-24-s2-t64-b500",
+  "solver": {
+   "luby_unit": 1000,
+   "ladder": {
+    "start": 40,
+    "end": 24,
+    "step": 2,
+    "tries": 64,
+    "budget": 500,
+    "growth": 200
+   },
+   "search": {
+    "sleep_sets": false
+   }
+  }
+ },
+ {
+  "name": "ladder-40-24-s2-t64-b1000",
+  "solver": {
+   "luby_unit": 1000,
+   "ladder": {
+    "start": 40,
+    "end": 24,
+    "step": 2,
+    "tries": 64,
+    "budget": 1000,
+    "growth": 200
+   },
+   "search": {
+    "sleep_sets": false
+   }
+  }
+ },
+ {
+  "name": "ladder-40-24-s2-t64-b2000",
+  "solver": {
+   "luby_unit": 1000,
+   "ladder": {
+    "start": 40,
+    "end": 24,
+    "step": 2,
+    "tries": 64,
+    "budget": 2000,
+    "growth": 200
+   },
+   "search": {
+    "sleep_sets": false
+   }
+  }
+ },
+ {
+  "name": "ladder-42-24-s2-t16-b500",
+  "solver": {
+   "luby_unit": 1000,
+   "ladder": {
+    "start": 42,
+    "end": 24,
+    "step": 2,
+    "tries": 16,
+    "budget": 500,
+    "growth": 200
+   },
+   "search": {
+    "sleep_sets": false
+   }
+  }
+ },
+ {
+  "name": "ladder-42-24-s2-t16-b1000",
+  "solver": {
+   "luby_unit": 1000,
+   "ladder": {
+    "start": 42,
+    "end": 24,
+    "step": 2,
+    "tries": 16,
+    "budget": 1000,
+    "growth": 200
+   },
+   "search": {
+    "sleep_sets": false
+   }
+  }
+ },
+ {
+  "name": "ladder-42-24-s2-t16-b2000",
+  "solver": {
+   "luby_unit": 1000,
+   "ladder": {
+    "start": 42,
+    "end": 24,
+    "step": 2,
+    "tries": 16,
+    "budget": 2000,
+    "growth": 200
+   },
+   "search": {
+    "sleep_sets": false
+   }
+  }
+ },
+ {
+  "name": "ladder-42-24-s2-t32-b500",
+  "solver": {
+   "luby_unit": 1000,
+   "ladder": {
+    "start": 42,
+    "end": 24,
+    "step": 2,
+    "tries": 32,
+    "budget": 500,
+    "growth": 200
+   },
+   "search": {
+    "sleep_sets": false
+   }
+  }
+ },
+ {
+  "name": "ladder-42-24-s2-t32-b1000",
+  "solver": {
+   "luby_unit": 1000,
+   "ladder": {
+    "start": 42,
+    "end": 24,
+    "step": 2,
+    "tries": 32,
+    "budget": 1000,
+    "growth": 200
+   },
+   "search": {
+    "sleep_sets": false
+   }
+  }
+ },
+ {
+  "name": "ladder-42-24-s2-t32-b2000",
+  "solver": {
+   "luby_unit": 1000,
+   "ladder": {
+    "start": 42,
+    "end": 24,
+    "step": 2,
+    "tries": 32,
+    "budget": 2000,
+    "growth": 200
+   },
+   "search": {
+    "sleep_sets": false
+   }
+  }
+ },
+ {
+  "name": "ladder-42-24-s2-t64-b500",
+  "solver": {
+   "luby_unit": 1000,
+   "ladder": {
+    "start": 42,
+    "end": 24,
+    "step": 2,
+    "tries": 64,
+    "budget": 500,
+    "growth": 200
+   },
+   "search": {
+    "sleep_sets": false
+   }
+  }
+ },
+ {
+  "name": "ladder-42-24-s2-t64-b1000",
+  "solver": {
+   "luby_unit": 1000,
+   "ladder": {
+    "start": 42,
+    "end": 24,
+    "step": 2,
+    "tries": 64,
+    "budget": 1000,
+    "growth": 200
+   },
+   "search": {
+    "sleep_sets": false
+   }
+  }
+ },
+ {
+  "name": "ladder-42-24-s2-t64-b2000",
+  "solver": {
+   "luby_unit": 1000,
+   "ladder": {
+    "start": 42,
+    "end": 24,
+    "step": 2,
+    "tries": 64,
+    "budget": 2000,
+    "growth": 200
+   },
+   "search": {
+    "sleep_sets": false
+   }
+  }
+ },
+ {
+  "name": "ladder-44-24-s2-t16-b500",
+  "solver": {
+   "luby_unit": 1000,
+   "ladder": {
+    "start": 44,
+    "end": 24,
+    "step": 2,
+    "tries": 16,
+    "budget": 500,
+    "growth": 200
+   },
+   "search": {
+    "sleep_sets": false
+   }
+  }
+ },
+ {
+  "name": "ladder-44-24-s2-t16-b1000",
+  "solver": {
+   "luby_unit": 1000,
+   "ladder": {
+    "start": 44,
+    "end": 24,
+    "step": 2,
+    "tries": 16,
+    "budget": 1000,
+    "growth": 200
+   },
+   "search": {
+    "sleep_sets": false
+   }
+  }
+ },
+ {
+  "name": "ladder-44-24-s2-t16-b2000",
+  "solver": {
+   "luby_unit": 1000,
+   "ladder": {
+    "start": 44,
+    "end": 24,
+    "step": 2,
+    "tries": 16,
+    "budget": 2000,
+    "growth": 200
+   },
+   "search": {
+    "sleep_sets": false
+   }
+  }
+ },
+ {
+  "name": "ladder-44-24-s2-t32-b500",
+  "solver": {
+   "luby_unit": 1000,
+   "ladder": {
+    "start": 44,
+    "end": 24,
+    "step": 2,
+    "tries": 32,
+    "budget": 500,
+    "growth": 200
+   },
+   "search": {
+    "sleep_sets": false
+   }
+  }
+ },
+ {
+  "name": "ladder-44-24-s2-t32-b1000",
+  "solver": {
+   "luby_unit": 1000,
+   "ladder": {
+    "start": 44,
+    "end": 24,
+    "step": 2,
+    "tries": 32,
+    "budget": 1000,
+    "growth": 200
+   },
+   "search": {
+    "sleep_sets": false
+   }
+  }
+ },
+ {
+  "name": "ladder-44-24-s2-t32-b2000",
+  "solver": {
+   "luby_unit": 1000,
+   "ladder": {
+    "start": 44,
+    "end": 24,
+    "step": 2,
+    "tries": 32,
+    "budget": 2000,
+    "growth": 200
+   },
+   "search": {
+    "sleep_sets": false
+   }
+  }
+ },
+ {
+  "name": "ladder-44-24-s2-t64-b500",
+  "solver": {
+   "luby_unit": 1000,
+   "ladder": {
+    "start": 44,
+    "end": 24,
+    "step": 2,
+    "tries": 64,
+    "budget": 500,
+    "growth": 200
+   },
+   "search": {
+    "sleep_sets": false
+   }
+  }
+ },
+ {
+  "name": "ladder-44-24-s2-t64-b1000",
+  "solver": {
+   "luby_unit": 1000,
+   "ladder": {
+    "start": 44,
+    "end": 24,
+    "step": 2,
+    "tries": 64,
+    "budget": 1000,
+    "growth": 200
+   },
+   "search": {
+    "sleep_sets": false
+   }
+  }
+ },
+ {
+  "name": "ladder-44-24-s2-t64-b2000",
+  "solver": {
+   "luby_unit": 1000,
+   "ladder": {
+    "start": 44,
+    "end": 24,
+    "step": 2,
+    "tries": 64,
+    "budget": 2000,
+    "growth": 200
+   },
+   "search": {
+    "sleep_sets": false
+   }
+  }
+ }
+]

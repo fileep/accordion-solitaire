@@ -1,0 +1,4 @@
+[
+ {"name": "1 thread: phase 4", "solver": {"luby_unit": 10000, "ladder": null, "search": {"sleep_sets": false}}},
+ {"name": "1 thread: phase 5, no tables", "solver": {}}
+]

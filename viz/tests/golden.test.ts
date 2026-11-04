@@ -10,6 +10,7 @@ import {
   openSolveFile,
   parseDeck,
   replay,
+  solve,
   verifySolveFile,
 } from '../src/wasm/accordion.js';
 
@@ -78,4 +79,26 @@ test('a game exported from the page verifies as a win', () => {
   assert.deepEqual([check.ok, check.result, check.moves], [true, 'win', 51]);
   const partial = JSON.parse(exportRecord(entry.cards, undefined, Uint8Array.from(entry.moves.slice(0, 20))));
   assert.equal(JSON.parse(verifySolveFile(partial.ok))[0].result, 'unknown');
+});
+
+test('the in-page solver wins deals and from mid-game, and never wins the unwinnable golden deals', () => {
+  for (const seed of [0n, 7n, 42n, 1234567n]) {
+    const cards = dealFromSeed(seed);
+    const out = JSON.parse(solve(cards, new Uint8Array(), 50_000_000, 1));
+    assert.equal(out.result, 'win', `seed ${seed}`);
+    const [check] = JSON.parse(verifySolveFile(JSON.parse(exportRecord(cards, seed, Uint8Array.from(out.moves))).ok));
+    assert.deepEqual([check.ok, check.result, check.moves], [true, 'win', 51], `seed ${seed}`);
+  }
+  // From the position after 20 moves of the seed-42 golden win.
+  const [entry] = JSON.parse(openSolveFile(testdata('games/seed_42_win.json')));
+  const prefix = entry.moves.slice(0, 20);
+  const rest = JSON.parse(solve(entry.cards, Uint8Array.from(prefix), 50_000_000, 3));
+  assert.equal(rest.result, 'win');
+  const full = JSON.parse(exportRecord(entry.cards, 42n, Uint8Array.from([...prefix, ...rest.moves])));
+  assert.equal(JSON.parse(verifySolveFile(full.ok))[0].result, 'win');
+  for (const file of ['unwinnable_no_moves.json', 'unwinnable_dead_end.json']) {
+    const [game] = JSON.parse(openSolveFile(testdata(`games/${file}`)));
+    const out = JSON.parse(solve(game.cards, new Uint8Array(), 50_000_000, 1));
+    assert.equal(out.result, 'exhausted', file);
+  }
 });

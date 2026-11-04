@@ -123,6 +123,24 @@ impl Position {
         pos
     }
 
+    /// A position from engine bytes, left to right (distinct card codes, 1–52 of them), without allocating.
+    pub fn from_codes(codes: &[u8]) -> Position {
+        debug_assert!(!codes.is_empty() && codes.len() <= 52, "1 to 52 piles");
+        let mut buf = [SENTINEL; 64];
+        let mut present = 0u64;
+        for (i, &c) in codes.iter().enumerate() {
+            debug_assert!(Card::from_code(c).is_some(), "not a card code: {c:#x}");
+            buf[OFF + i] = c;
+            present |= 1 << c;
+        }
+        debug_assert_eq!(present.count_ones() as usize, codes.len(), "top cards must be distinct");
+        let mut pos =
+            Position { buf, len: codes.len() as u8, link_broken: false, present, l1: 0, l3: 0, hash: 0 };
+        (pos.l1, pos.l3) = pos.full_masks();
+        pos.hash = pos.full_hash();
+        pos
+    }
+
     pub fn len(&self) -> usize {
         self.len as usize
     }

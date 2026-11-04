@@ -9,11 +9,12 @@ use accordion_core::fast::Position;
 use accordion_core::notation::CardMove;
 use accordion_core::verify::verify;
 use accordion_core::{Deal, Game, Outcome, SolveRecord};
-use accordion_solver::{Config, Report, Shared, Verdict, portfolio};
+use accordion_solver::{Config, Endgame, Report, Shared, Verdict, portfolio};
 use clap::Args;
 use serde_json::json;
 use std::io::Write;
 use std::path::PathBuf;
+use std::sync::Arc;
 use std::sync::atomic::Ordering;
 use std::time::{Duration, Instant};
 
@@ -39,6 +40,15 @@ pub struct SolveArgs {
     /// Where a deal that isn't won gets its dossier.
     #[arg(long, default_value = "hard-deals")]
     dossiers: PathBuf,
+    /// Solver settings as JSON (see `accordion_solver::Config`); --max-nodes and --rng-seed override theirs.
+    #[arg(long)]
+    config: Option<String>,
+    /// Directory holding endgame tables (`acc endgame build`).
+    #[arg(long, default_value = "endgame")]
+    endgame_dir: PathBuf,
+    /// Endgame tables to use: a pile count, `off`, or `auto` (the largest found in --endgame-dir, up to 10 piles).
+    #[arg(long, default_value = "auto")]
+    endgame: String,
 }
 
 #[derive(Args)]
@@ -59,12 +69,18 @@ struct SolveSource {
 }
 
 /// Runs the portfolio, printing progress to standard error twice a second once it has run for a moment.
-fn run_stage(root: &Position, config: &Config, threads: usize, label: &str) -> (Report, f64) {
+fn run_stage(
+    root: &Position,
+    config: &Config,
+    threads: usize,
+    endgame: Option<Arc<Endgame>>,
+    label: &str,
+) -> (Report, f64) {
     let shared = Shared::default();
     let start = Instant::now();
     let mut printed = false;
     let report = std::thread::scope(|scope| {
-        let worker = scope.spawn(|| portfolio(root, config, threads, 18, &shared));
+        let worker = scope.spawn(|| portfolio(root, config, threads, 18, endgame, &shared));
         let mut next = Duration::from_millis(500);
         while !worker.is_finished() {
             std::thread::sleep(Duration::from_millis(10));
@@ -121,6 +137,14 @@ pub fn run(args: &SolveArgs) -> Result<bool, String> {
     } else {
         &[(1, "solve")]
     };
+    let mut base: Config = match &args.config {
+        Some(text) => serde_json::from_str(text).map_err(|e| format!("--config: {e}"))?,
+        None => Config::default(),
+    };
+    // A single solve takes milliseconds; loading the 1.2 GB 11-pile table would take longer than that, so `auto`
+    // stops at 10 piles (68 MB) here.
+    crate::runner::choose_endgame(&mut base, &args.endgame, &args.endgame_dir, 10)?;
+    let endgame = crate::runner::load_endgame(&args.endgame_dir, base.search.endgame_piles)?;
     eprintln!("{} piles, {threads} threads, up to {} positions", root.len(), args.max_nodes);
 
     let mut last = None;
@@ -128,9 +152,9 @@ pub fn run(args: &SolveArgs) -> Result<bool, String> {
         let config = Config {
             max_nodes: (args.max_nodes.saturating_mul(factor) / threads as u64).max(1),
             seed: args.rng_seed.wrapping_add(1_000_003 * i as u64),
-            ..Config::default()
+            ..base
         };
-        let (report, seconds) = run_stage(&root, &config, threads, stage);
+        let (report, seconds) = run_stage(&root, &config, threads, endgame.clone(), stage);
         if let Some(deal) = &deal
             && !matches!(report.verdict, Verdict::Win(_))
         {

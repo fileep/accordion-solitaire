@@ -1,0 +1,20 @@
+[package]
+name = "accordion-gpu"
+description = "GPU ladder attempts (CUDA via NVRTC) for the Phase 5 go/no-go measurement"
+version.workspace = true
+edition.workspace = true
+publish.workspace = true
+
+[[bin]]
+name = "accgpu"
+path = "src/main.rs"
+
+[dependencies]
+accordion-core.workspace = true
+accordion-solver.workspace = true
+clap.workspace = true
+serde_json.workspace = true
+cudarc = { version = "=0.19.10", default-features = false, features = ["std", "driver", "nvrtc", "dynamic-loading", "cuda-12090"] }
+
+[lints]
+workspace = true

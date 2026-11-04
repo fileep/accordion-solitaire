@@ -1,4 +1,7 @@
 # Experiments
 
-Configs, JSONL results and analysis notebooks from `acc experiment` runs (PLAN.md Phase 5 onwards).
-Tuning uses the `train` deal set only; final numbers come from `test`.
+Configurations, JSONL results and analysis scripts from `acc experiment` runs (PLAN.md Phase 5 onwards). Tuning uses the
+`train` deal set; finalists are chosen on `validation`; final numbers come from `test`, run once.
+
+- [phase5/](phase5/README.md): the speed study: restarts, the random-prefix ladder, move order, sleep sets, engine options,
+  endgame tables, the symmetry cache, and the GPU gate.
