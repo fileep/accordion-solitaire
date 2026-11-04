@@ -1,0 +1,17 @@
+[package]
+name = "accordion-cli"
+description = "acc: command-line front end for dealing, verifying, solving and batch runs"
+version.workspace = true
+edition.workspace = true
+publish.workspace = true
+
+[[bin]]
+name = "acc"
+path = "src/main.rs"
+
+[dependencies]
+accordion-core.workspace = true
+accordion-solver.workspace = true
+
+[lints]
+workspace = true

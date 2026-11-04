@@ -1,0 +1,6 @@
+/target
+/viz/node_modules
+/viz/dist
+/viz/src/wasm
+__pycache__/
+*.pyc

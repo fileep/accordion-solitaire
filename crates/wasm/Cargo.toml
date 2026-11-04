@@ -1,0 +1,21 @@
+[package]
+name = "accordion-wasm"
+description = "WebAssembly bindings of accordion-core for the visualizer"
+version.workspace = true
+edition.workspace = true
+publish.workspace = true
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+accordion-core.workspace = true
+wasm-bindgen = "0.2"
+
+[lints]
+workspace = true
+
+# wasm-opt only shrinks the binary (LLVM has already optimized it); its binaryen download
+# currently fails on Windows, so skip it until there's a reason to re-enable it.
+[package.metadata.wasm-pack.profile.release]
+wasm-opt = false

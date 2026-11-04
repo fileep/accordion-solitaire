@@ -1,0 +1,9 @@
+[package]
+name = "accordion-core"
+description = "Accordion solitaire rules, cards, deals, engines and file formats"
+version.workspace = true
+edition.workspace = true
+publish.workspace = true
+
+[lints]
+workspace = true

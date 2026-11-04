@@ -1,0 +1,7 @@
+# Native builds use every instruction this CPU has (AVX2, BMI2, POPCNT on the i7-1260P).
+# Binaries built this way are not portable to older CPUs; WASM is unaffected.
+[target.x86_64-pc-windows-gnu]
+rustflags = ["-C", "target-cpu=native"]
+
+[target.x86_64-pc-windows-msvc]
+rustflags = ["-C", "target-cpu=native"]
