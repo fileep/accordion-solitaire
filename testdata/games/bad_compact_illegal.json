@@ -1,0 +1,21 @@
+{
+  "format": "accordion-solve/1",
+  "rules": {
+    "deal": "open",
+    "leaps": [
+      1,
+      3
+    ],
+    "match": "suit-or-rank",
+    "win": "one-pile"
+  },
+  "deal": {
+    "seed": 42,
+    "cards": "2S 2C KS TH 6H 4C 6D 9D 4S QH 8C 8D 8S 7C AC 4D 6S 2D 5S 3S AH TC 5H 3D QS JC JS 9C 5D AD 6C 3C JD QD 4H TD AS 2H KC 7H QC 3H KD TS KH 8H JH 9S 7S 9H 7D 5C"
+  },
+  "result": "win",
+  "moves_b64": "BAYHBgYHAggIBwgJDhoYGxQXGhsUFB8rJR8fISQpJychGhkbFhQVDhENBwkECwkEAgIC",
+  "stats": {
+    "source": "testdata/tools/make_golden.py"
+  }
+}

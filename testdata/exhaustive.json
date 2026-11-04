@@ -1,0 +1,29 @@
+{
+  "about": "Distinct top-card sequences reachable from each start (including it), and whether any is a win.",
+  "cases": [
+    {
+      "name": "no legal moves",
+      "position": "AC | 2D | AH | 2S | 3C | 4D | 3H | AS | 2C | AD | 2H | 3S | 4C | 3D | 4H | 5S | 6C | 5D | 6H | 4S | 7C | 8D | 5H | 6S | 5C | 6D | 7H | 8S | 9C | TD | 9H | 7S | 8C | 7D | 8H | 9S | TC | 9D | TH | JS | QC | KD | QH | TS | JC | KS | JD | KH | QD | KC | QS | JH",
+      "reachable": 1,
+      "winnable": false
+    },
+    {
+      "name": "dead end",
+      "position": "AD | 2C | 3D | 4C | 5D | 6C | 7D | AS | 4D | 5C | 2H | 3S | 6D | 7C | AH | 2S | 8D | 9C | 3H | 9S | TD | 8C | TH | 8S | 9D | JC | 9H | TS | QD | KC | JH | KS | QH | KD | QC | JS | TC | JD | KH | QS | AC | 2D | 3C | 4H | 4S | 5H | 5S | 6H | 6S | 7H | 7S | 8H",
+      "reachable": 353,
+      "winnable": false
+    },
+    {
+      "name": "seed 42 after 40 moves",
+      "position": "2S 2C 4C 4S KS 8C 8D 8S | TH 6H 6D 9D 4D | QH | 7C AC | 6S | 2D | 5S 3S AH AS | TC 9C | 5H 3D 5D QS JC JS JD AD 4H 2H KC 3H KH 7H TD KD TS 7S 7D 6C 3C QC QD | 8H JH 9H | 9S | 5C",
+      "reachable": 946,
+      "winnable": true
+    },
+    {
+      "name": "seed 42 after 36 random moves (dead end)",
+      "position": "2S 2C 6D 9D 8D 4D 2D | KS 4C 4S | TH 6H 8C 7C AC AH QH 5H | 8S 5S 3S 6S JC JS AS | TC 3D 9C 6C 3C | QS QD | 5D AD JD TD | 4H 2H | KC | 7H | QC | 3H KH 8H JH 9H | KD | TS | 9S 7S 7D | 5C",
+      "reachable": 71,
+      "winnable": false
+    }
+  ]
+}

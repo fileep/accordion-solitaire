@@ -1,0 +1,276 @@
+{
+  "about": "Deal::parse / parse_position results; issue kinds and positions as in docs/FORMATS.md.",
+  "decks": [
+    {
+      "name": "canonical",
+      "input": "TC KD 9H TS 8D 6H 5H KS AD 4D QD 9S 8S 5S KC 7S 5C 2H 8C 9C 4S AC 2S 4H 9D JS 6C QC JC 6D 3D 2D TH 2C 6S 3C 7H TD QS QH 3S AS JD KH 5D 4C 7C 8H 7D 3H AH JH",
+      "ok": "TC KD 9H TS 8D 6H 5H KS AD 4D QD 9S 8S 5S KC 7S 5C 2H 8C 9C 4S AC 2S 4H 9D JS 6C QC JC 6D 3D 2D TH 2C 6S 3C 7H TD QS QH 3S AS JD KH 5D 4C 7C 8H 7D 3H AH JH"
+    },
+    {
+      "name": "lowercase, commas, newlines, 10, suit symbols, emoji selector",
+      "input": "tc,\nkd,\n9h,\nts,\n8d,\n6h,\n5h,\nK♠,\nA♦️,\n4d,\nqd,\n9s,\n8s,\n5s,\nkc,\n7s,\n5c,\n2h,\n8c,\n9c,\n4s,\nac,\n2s,\n4h,\n9d,\njs,\n6c,\nq♧,\njc,\n6d,\n3d,\n2d,\n10h,\n2c,\n6s,\n3c,\n7h,\ntd,\nqs,\nqh,\n3s,\nas,\njd,\nkh,\n5d,\n4c,\n7c,\n8h,\n7d,\n3h,\nah,\njh",
+      "ok": "TC KD 9H TS 8D 6H 5H KS AD 4D QD 9S 8S 5S KC 7S 5C 2H 8C 9C 4S AC 2S 4H 9D JS 6C QC JC 6D 3D 2D TH 2C 6S 3C 7H TD QS QH 3S AS JD KH 5D 4C 7C 8H 7D 3H AH JH"
+    },
+    {
+      "name": "unknown token and duplicate",
+      "input": "TC KD 9H TS 1H 6H 5H KS AD 4D QD 9S 8S 5S KC 7S 5C 2H 8C 9C 4S AC 2S 4H 9D JS 6C QC JC 6D 3D 2D TH 2C 6S 3C 7H TD QS 9H 3S AS JD KH 5D 4C 7C 8H 7D 3H AH JH",
+      "issues": [
+        {
+          "kind": "unknown_token",
+          "position": 5,
+          "token": "1H"
+        },
+        {
+          "kind": "duplicate",
+          "card": "9H",
+          "first": 3,
+          "second": 40
+        },
+        {
+          "kind": "missing",
+          "cards": [
+            "8D",
+            "QH"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "51 cards",
+      "input": "TC KD 9H TS 8D 6H 5H KS AD 4D QD 9S 8S 5S KC 7S 5C 2H 8C 9C 4S AC 2S 4H 9D JS 6C QC JC 6D 3D 2D TH 2C 6S 3C 7H TD QS QH 3S AS JD KH 5D 4C 7C 8H 7D 3H AH",
+      "issues": [
+        {
+          "kind": "missing",
+          "cards": [
+            "JH"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "53 cards (one repeated)",
+      "input": "TC KD 9H TS 8D 6H 5H KS AD 4D QD 9S 8S 5S KC 7S 5C 2H 8C 9C 4S AC 2S 4H 9D JS 6C QC JC 6D 3D 2D TH 2C 6S 3C 7H TD QS QH 3S AS JD KH 5D 4C 7C 8H 7D 3H AH JH KS",
+      "issues": [
+        {
+          "kind": "duplicate",
+          "card": "KS",
+          "first": 8,
+          "second": 53
+        }
+      ]
+    },
+    {
+      "name": "empty",
+      "input": "",
+      "issues": [
+        {
+          "kind": "missing",
+          "cards": [
+            "AC",
+            "2C",
+            "3C",
+            "4C",
+            "5C",
+            "6C",
+            "7C",
+            "8C",
+            "9C",
+            "TC",
+            "JC",
+            "QC",
+            "KC",
+            "AD",
+            "2D",
+            "3D",
+            "4D",
+            "5D",
+            "6D",
+            "7D",
+            "8D",
+            "9D",
+            "TD",
+            "JD",
+            "QD",
+            "KD",
+            "AH",
+            "2H",
+            "3H",
+            "4H",
+            "5H",
+            "6H",
+            "7H",
+            "8H",
+            "9H",
+            "TH",
+            "JH",
+            "QH",
+            "KH",
+            "AS",
+            "2S",
+            "3S",
+            "4S",
+            "5S",
+            "6S",
+            "7S",
+            "8S",
+            "9S",
+            "TS",
+            "JS",
+            "QS",
+            "KS"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "junk around valid cards",
+      "input": "deck: TC KD 9H TS 8D 6H 5H KS AD 4D QD 9S 8S 5S KC 7S 5C 2H 8C 9C 4S AC 2S 4H 9D JS 6C QC JC 6D 3D 2D TH 2C 6S 3C 7H TD QS QH 3S AS JD KH 5D 4C 7C 8H 7D 3H AH JH ;",
+      "issues": [
+        {
+          "kind": "unknown_token",
+          "position": 1,
+          "token": "deck:"
+        },
+        {
+          "kind": "unknown_token",
+          "position": 54,
+          "token": ";"
+        }
+      ]
+    }
+  ],
+  "positions": [
+    {
+      "name": "two piles",
+      "input": "TC KD | 9H TS 8D 6H 5H KS AD 4D QD 9S 8S 5S KC 7S 5C 2H 8C 9C 4S AC 2S 4H 9D JS 6C QC JC 6D 3D 2D TH 2C 6S 3C 7H TD QS QH 3S AS JD KH 5D 4C 7C 8H 7D 3H AH JH",
+      "ok": [
+        [
+          "TC",
+          "KD"
+        ],
+        [
+          "9H",
+          "TS",
+          "8D",
+          "6H",
+          "5H",
+          "KS",
+          "AD",
+          "4D",
+          "QD",
+          "9S",
+          "8S",
+          "5S",
+          "KC",
+          "7S",
+          "5C",
+          "2H",
+          "8C",
+          "9C",
+          "4S",
+          "AC",
+          "2S",
+          "4H",
+          "9D",
+          "JS",
+          "6C",
+          "QC",
+          "JC",
+          "6D",
+          "3D",
+          "2D",
+          "TH",
+          "2C",
+          "6S",
+          "3C",
+          "7H",
+          "TD",
+          "QS",
+          "QH",
+          "3S",
+          "AS",
+          "JD",
+          "KH",
+          "5D",
+          "4C",
+          "7C",
+          "8H",
+          "7D",
+          "3H",
+          "AH",
+          "JH"
+        ]
+      ]
+    },
+    {
+      "name": "empty pile",
+      "input": "TC | | KD 9H TS 8D 6H 5H KS AD 4D QD 9S 8S 5S KC 7S 5C 2H 8C 9C 4S AC 2S 4H 9D JS 6C QC JC 6D 3D 2D TH 2C 6S 3C 7H TD QS QH 3S AS JD KH 5D 4C 7C 8H 7D 3H AH JH",
+      "issues": [
+        {
+          "kind": "empty_pile",
+          "pile": 2
+        }
+      ]
+    },
+    {
+      "name": "one pile",
+      "input": "TC KD 9H TS 8D 6H 5H KS AD 4D QD 9S 8S 5S KC 7S 5C 2H 8C 9C 4S AC 2S 4H 9D JS 6C QC JC 6D 3D 2D TH 2C 6S 3C 7H TD QS QH 3S AS JD KH 5D 4C 7C 8H 7D 3H AH JH",
+      "ok": [
+        [
+          "TC",
+          "KD",
+          "9H",
+          "TS",
+          "8D",
+          "6H",
+          "5H",
+          "KS",
+          "AD",
+          "4D",
+          "QD",
+          "9S",
+          "8S",
+          "5S",
+          "KC",
+          "7S",
+          "5C",
+          "2H",
+          "8C",
+          "9C",
+          "4S",
+          "AC",
+          "2S",
+          "4H",
+          "9D",
+          "JS",
+          "6C",
+          "QC",
+          "JC",
+          "6D",
+          "3D",
+          "2D",
+          "TH",
+          "2C",
+          "6S",
+          "3C",
+          "7H",
+          "TD",
+          "QS",
+          "QH",
+          "3S",
+          "AS",
+          "JD",
+          "KH",
+          "5D",
+          "4C",
+          "7C",
+          "8H",
+          "7D",
+          "3H",
+          "AH",
+          "JH"
+        ]
+      ]
+    }
+  ]
+}
