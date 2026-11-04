@@ -616,7 +616,35 @@ for 5.7×10^16 sequences.
 
 Its symmetry work (endgame tables, the symmetry-keyed cache and canonical deal IDs) is Phase 5 track E, so Phase 5 now goes straight to Phase 7.
 
-### Phase 7 — Scale-up and hard-deal pipeline
+### Phase 7 — Scale-up and hard-deal pipeline ✅ done
+
+**Outcome** (docs/RESULTS.md):
+
+- **30,000,000 deals (seeds 0–29,999,999), every one won and verified. 95% Wilson CI [99.999987%, 100%]**, matching
+  Masten's 30M/30M.
+  - **Runs:** 1M deals in 51 s, 10M in 11 min, then the next 20M in 25 min.
+  - **Speed:** 13,400–19,500 deals/s on the laptop (lower on longer runs, as it heats up).
+  - **10M run:** median 0.45 ms and 2,755 positions per deal. The hardest deal took 1.62M positions and 272 ms.
+- **No deal ended `unknown`**, so the §5 escalation had nothing to do. Its tools are in place:
+  - dossiers;
+  - `acc solve --escalate`;
+  - `acc prove`.
+- **Hard-deal gallery:** `acc batch --gallery 20` keeps a run's hardest deals as verified solve files in
+  `hard-deals/gallery/`, listed in `hard-deals/INDEX.md` and loadable in the visualizer.
+- **Exhaustive mode** (`acc prove`, `accordion_solver::prove`):
+  - **How:** two independent exhaustive searches, each with an exact (lossless) set of dead positions. One is plain; the
+    other uses random order, tests, sleep sets and tables.
+  - **Golden cases:** it proves the three unwinnable golden cases lost, and the plain run's dead sets equal the reference
+    reachable counts (1, 353, 71). A test in `crates/solver/tests/gates.rs` checks this.
+  - **Records:** a proven loss writes a `loss` record (it verifies) and marks the dossier `loss (proven)`.
+  - **Safety:** if the two runs disagree, it stops as a bug.
+- **Deviations:**
+  - **No checkpointing:** the 10M run took 11 minutes, so it wasn't needed.
+  - **No disk-backed exhaustive search:** proving a whole random deal is out of reach anyway (about 10^17 positions).
+  - **Python re-verification:** the plan asked for any proven loss of a random deal to be re-verified in Python. There
+    were none to check.
+
+**Plan:**
 
 - Run 1M deals, then 10M+. Every `unknown` goes through §5.
 - Report: win rate with a Wilson 95% CI (unknowns counted both ways), throughput, cost percentiles. Compare with Masten (30M/30M) and
@@ -786,7 +814,7 @@ The unwinnable cases:
 | M4 ✅ | Baseline solver + solve-a-deck | ≥99.9% on 100k deals, all verified, every unknown has a dossier; never `win` on the unwinnable golden deals; `acc solve` and visualizer Solve / Solve-from-here work on user-entered decks |
 | M5 ✅ | Fastest strategy | every track measured on the leaderboard; adopted pipeline beats Phase 4 on held-out mean and p99 and on deals/s (target 2×, measured 5.0×); 100% on 100k held-out + regression set; pruning checked sound (1M residuals); GPU gate decided (1.7×, not met) |
 | M6 | (merged into M5) | — |
-| M7 | Big run | 10M+ deals, Wilson CI, results write-up, hard-deal gallery; exhaustive mode proves the golden unwinnable cases lost |
+| M7 ✅ | Big run | 10M+ deals, Wilson CI, results write-up, hard-deal gallery; exhaustive mode proves the golden unwinnable cases lost (30M/30M won, CI [99.999987%, 100%]) |
 | M8 | GPU runner | only if the Phase 5 gate passed: hybrid runner built into `acc batch`, faster end to end, every GPU win verified |
 
 ## 8. Risks

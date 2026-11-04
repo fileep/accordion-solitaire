@@ -58,6 +58,8 @@ enum Command {
     Experiment(experiment::ExperimentArgs),
     /// Build the complete endgame tables (one bit per suit/rank pattern) used by `search.endgame_piles`.
     Endgame(endgame::EndgameArgs),
+    /// Prove a deal or position lost by two independent exhaustive searches (small or nearly stuck positions only).
+    Prove(prove::ProveArgs),
 }
 
 mod batch;
@@ -65,6 +67,7 @@ mod bench;
 mod dossier;
 mod endgame;
 mod experiment;
+mod prove;
 mod runner;
 mod selftest;
 mod solve;
@@ -162,6 +165,7 @@ fn main() -> ExitCode {
         Command::Batch(args) => batch::run(&args),
         Command::Experiment(args) => experiment::run(&args),
         Command::Endgame(args) => endgame::run(&args).map(|()| true),
+        Command::Prove(args) => prove::run(&args),
     };
     match result {
         Ok(true) => ExitCode::SUCCESS,

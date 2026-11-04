@@ -95,7 +95,7 @@ fn read_seeds(path: &Path) -> Result<Vec<u64>, String> {
 }
 
 /// `git describe`-like identity of the code being measured.
-fn commit() -> String {
+pub fn commit() -> String {
     let git = |args: &[&str]| {
         std::process::Command::new("git")
             .args(args)

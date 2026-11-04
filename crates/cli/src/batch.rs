@@ -5,9 +5,11 @@
 use crate::dossier;
 use crate::runner::{self, Options, percentile, wilson};
 use accordion_core::Deal;
-use accordion_solver::{Config, Verdict};
+use accordion_core::fast::Position;
+use accordion_solver::{Config, Search, Verdict, solve};
 use clap::Args;
-use std::collections::{BTreeMap, HashMap};
+use std::cmp::Reverse;
+use std::collections::{BTreeMap, BinaryHeap, HashMap};
 use std::io::{BufWriter, Write};
 use std::path::PathBuf;
 use std::time::Instant;
@@ -49,6 +51,10 @@ pub struct BatchArgs {
     /// Endgame tables to use: a pile count, `off`, or `auto` (the largest found in --endgame-dir).
     #[arg(long, default_value = "auto")]
     endgame: String,
+    /// Keep this run's N hardest deals (most positions) as verified solve files in <dossiers>/gallery/, replacing
+    /// the gallery there, and list them in its INDEX.md.
+    #[arg(long, default_value_t = 0)]
+    gallery: usize,
 }
 
 pub fn run(args: &BatchArgs) -> Result<bool, String> {
@@ -85,6 +91,7 @@ pub fn run(args: &BatchArgs) -> Result<bool, String> {
     let mut pending: BTreeMap<usize, Option<String>> = BTreeMap::new();
     let mut written = 0usize;
     let mut any_dossier = false;
+    let mut hardest: BinaryHeap<Reverse<(u64, u64)>> = BinaryHeap::new();
     runner::run(
         &seeds,
         &config,
@@ -92,6 +99,12 @@ pub fn run(args: &BatchArgs) -> Result<bool, String> {
         |s| {
             nodes.push(s.report.nodes);
             micros.push(s.us);
+            if args.gallery > 0 {
+                hardest.push(Reverse((s.report.nodes, s.seed)));
+                if hardest.len() > args.gallery {
+                    hardest.pop();
+                }
+            }
             total_nodes += s.report.nodes;
             if let Err(e) = &s.verified {
                 failed += 1;
@@ -140,6 +153,47 @@ pub fn run(args: &BatchArgs) -> Result<bool, String> {
     if any_dossier {
         dossier::write_index(&args.dossiers)?;
     }
+    if args.gallery > 0 {
+        // Re-solve the hardest deals with the same settings (deterministic, so the same lines) to keep their wins.
+        let mut top: Vec<(u64, u64)> = hardest.into_iter().map(|Reverse(x)| x).collect();
+        top.sort_unstable_by(|a, b| b.cmp(a));
+        let mut search = Search::with_options(args.table, config.search);
+        search.set_endgame(opts.endgame.clone());
+        let mut reports = Vec::new();
+        for &(n, seed) in &top {
+            search.clear_table();
+            let report = solve(
+                &Position::from_deal(&Deal::from_seed(seed)),
+                &Config { seed, ..config },
+                &mut search,
+                None,
+            );
+            if report.nodes != n {
+                eprintln!(
+                    "note: seed {seed} took {} positions when re-solved for the gallery, {n} in the run",
+                    report.nodes
+                );
+            }
+            reports.push((seed, report));
+        }
+        let entries: Vec<dossier::GalleryEntry> = reports
+            .iter()
+            .map(|(seed, report)| dossier::GalleryEntry { deal: Deal::from_seed(*seed), seed: *seed, report })
+            .collect();
+        let run = format!(
+            "`acc batch` over seeds {}–{} ({} deals, commit {})",
+            args.from,
+            args.from + args.count - 1,
+            args.count,
+            crate::experiment::commit()
+        );
+        dossier::write_gallery(&args.dossiers, &entries, &run)?;
+        eprintln!(
+            "gallery: the {} hardest deals in {}",
+            entries.len(),
+            args.dossiers.join("gallery").display()
+        );
+    }
 
     let elapsed = start.elapsed().as_secs_f64();
     let n = args.count;
@@ -167,7 +221,7 @@ pub fn run(args: &BatchArgs) -> Result<bool, String> {
     );
     println!("failed to verify {failed}");
     println!(
-        "win rate         {:.4}%   95% CI [{:.4}%, {:.4}%] (Wilson; not-won deals counted as losses for the lower bound, wins for the upper)",
+        "win rate         {:.6}%   95% CI [{:.6}%, {:.6}%] (Wilson; not-won deals counted as losses for the lower bound, wins for the upper)",
         100.0 * won as f64 / n as f64,
         100.0 * lo,
         100.0 * hi

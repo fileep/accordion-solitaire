@@ -8,7 +8,9 @@ use accordion_core::fast::Position;
 use accordion_core::solve_file::parse_records;
 use accordion_core::verify::verify;
 use accordion_core::{Deal, Game, Outcome, SolveRecord};
-use accordion_solver::{Config, Endgame, Gates, Ladder, Search, Stage, Verdict, solve};
+use accordion_solver::{
+    Config, Endgame, Gates, Ladder, Proof, ProveOptions, Search, Stage, Verdict, prove, solve,
+};
 use std::path::PathBuf;
 use std::sync::{Arc, OnceLock};
 
@@ -110,5 +112,39 @@ fn the_thorough_search_wins_when_every_fast_stage_fails() {
         assert_eq!(report.stage, Stage::Thorough, "seed {seed}");
         let record = SolveRecord::new(&deal, Some(seed), Outcome::Win, &line).unwrap();
         assert_eq!(verify(&record).map(|v| v.moves), Ok(51), "seed {seed}");
+    }
+}
+
+#[test]
+fn exhaustive_mode_proves_the_golden_losses() {
+    // PLAN.md §6.3 Phase 7: both independent exhaustive runs must prove every unwinnable golden case lost, and the
+    // plain run's dead set must be exactly the reachable positions the Python reference counted.
+    let golden: serde_json::Value = serde_json::from_str(&testdata("exhaustive.json")).unwrap();
+    for case in golden["cases"].as_array().unwrap() {
+        let name = case["name"].as_str().unwrap();
+        let game = Game::from_piles(parse_position(case["position"].as_str().unwrap()).unwrap());
+        let root = Position::from_tops(&game.tops());
+        let plain = prove(&root, &ProveOptions::plain(u64::MAX), None);
+        let independent = prove(&root, &ProveOptions::independent(3, u64::MAX), Some(&tables()));
+        if case["winnable"].as_bool().unwrap() {
+            for p in [&plain.proof, &independent.proof] {
+                let Proof::Won(line) = p else { panic!("{name}: {p:?}") };
+                assert!(line.iter().fold(root, |q, &m| q.play(m)).is_won(), "{name}");
+            }
+        } else {
+            assert_eq!(plain.proof, Proof::Lost, "{name}");
+            assert_eq!(independent.proof, Proof::Lost, "{name}");
+            assert_eq!(plain.dead as u64, case["reachable"].as_u64().unwrap(), "{name}: reachable positions");
+        }
+    }
+    for file in ["unwinnable_no_moves.json", "unwinnable_dead_end.json"] {
+        let (_, record) = parse_records(&testdata(&format!("games/{file}"))).remove(0);
+        let root = Position::from_deal(&Deal::parse(&record.unwrap().deal.cards).unwrap());
+        assert_eq!(prove(&root, &ProveOptions::plain(u64::MAX), None).proof, Proof::Lost, "{file}");
+        assert_eq!(
+            prove(&root, &ProveOptions::independent(9, u64::MAX), Some(&tables())).proof,
+            Proof::Lost,
+            "{file}"
+        );
     }
 }

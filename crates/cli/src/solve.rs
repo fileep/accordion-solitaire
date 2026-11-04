@@ -53,7 +53,7 @@ pub struct SolveArgs {
 
 #[derive(Args)]
 #[group(required = true, multiple = false)]
-struct SolveSource {
+pub struct SolveSource {
     /// The deal for this seed.
     #[arg(long)]
     seed: Option<u64>,
@@ -108,24 +108,40 @@ fn piles(n: usize) -> String {
     format!("{n} pile{}", if n == 1 { "" } else { "s" })
 }
 
+/// What to solve: a deal (with its seed, if it came from one), or a position in progress (no deal).
+pub struct Source {
+    pub deal: Option<Deal>,
+    pub seed: Option<u64>,
+    /// The game to start from: the deal's opening, or the position.
+    pub game: Game,
+}
+
+impl SolveSource {
+    pub fn load(&self) -> Result<Source, String> {
+        let (deal, seed, game) = match (&self.seed, &self.cards, &self.file, &self.position) {
+            (Some(seed), ..) => (Some(Deal::from_seed(*seed)), Some(*seed), None),
+            (_, Some(text), ..) => {
+                (Some(Deal::parse(text).map_err(|e| format!("invalid deck:\n{e}"))?), None, None)
+            }
+            (_, _, Some(path), _) => (
+                Some(Deal::parse(&read_input(path)?).map_err(|e| format!("invalid deck:\n{e}"))?),
+                None,
+                None,
+            ),
+            (_, _, _, Some(text)) => (
+                None,
+                None,
+                Some(Game::from_piles(parse_position(text).map_err(|e| format!("invalid position:\n{e}"))?)),
+            ),
+            _ => unreachable!("clap requires one source"),
+        };
+        let game = game.unwrap_or_else(|| Game::new(deal.as_ref().expect("deal or position")));
+        Ok(Source { deal, seed, game })
+    }
+}
+
 pub fn run(args: &SolveArgs) -> Result<bool, String> {
-    let s = &args.source;
-    let (deal, seed, game) = match (&s.seed, &s.cards, &s.file, &s.position) {
-        (Some(seed), ..) => (Some(Deal::from_seed(*seed)), Some(*seed), None),
-        (_, Some(text), ..) => {
-            (Some(Deal::parse(text).map_err(|e| format!("invalid deck:\n{e}"))?), None, None)
-        }
-        (_, _, Some(path), _) => {
-            (Some(Deal::parse(&read_input(path)?).map_err(|e| format!("invalid deck:\n{e}"))?), None, None)
-        }
-        (_, _, _, Some(text)) => (
-            None,
-            None,
-            Some(Game::from_piles(parse_position(text).map_err(|e| format!("invalid position:\n{e}"))?)),
-        ),
-        _ => unreachable!("clap requires one source"),
-    };
-    let start_game = game.clone().unwrap_or_else(|| Game::new(deal.as_ref().expect("deal or position")));
+    let Source { deal, seed, game: start_game } = args.source.load()?;
     let root = Position::from_tops(&start_game.tops());
     let threads = if args.threads == 0 {
         std::thread::available_parallelism().map_or(1, |n| n.get())

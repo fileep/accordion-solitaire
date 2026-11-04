@@ -68,6 +68,17 @@ Solve a range of deals and report the win rate with a confidence interval (`--co
 cargo run --release -p accordion-cli -- batch --from 0 --count 100000 --out results.jsonl
 ```
 
+Add `--gallery 20` to keep a run's 20 hardest deals as verified solve files in `hard-deals/gallery/`, listed in
+`hard-deals/INDEX.md` and loadable in the visualizer. Results of the big runs are in [docs/RESULTS.md](docs/RESULTS.md).
+
+Prove a deal or position lost by two independent exhaustive searches, each with an exact (lossless) set of dead
+positions. This is for small or nearly stuck positions; a whole random deal is far out of reach. A proven loss is written
+as a `loss` record, and the deal's dossier says `loss (proven)`:
+
+```bash
+cargo run --release -p accordion-cli -- prove --cards "KS 7H 10d ..."
+```
+
 Compare solver configurations on a fixed deal set (results append to `research/experiments/phase5/summary.jsonl`; see
 [research/experiments/phase5/README.md](research/experiments/phase5/README.md)):
 
