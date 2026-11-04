@@ -2,5 +2,7 @@
 /viz/node_modules
 /viz/dist
 /viz/src/wasm
+# Downloaded tools (CUDA's NVRTC compiler), see PLAN.md Phase 5 track F
+/.tools
 __pycache__/
 *.pyc

@@ -808,7 +808,7 @@ The no-cache means leave out capped runs, so they understate the cost.
 
 ### 9.5 Verdict
 
-- **Do it later, behind a gate (PLAN Phase 8), not first.**
+- **Do it later, behind a gate (PLAN Phase 5 track F, then Phase 8), not first.**
   - The CPU solver is required anyway as the reference, for hard deals, and for verification.
   - A tuned CPU solver is projected at a few thousand deals/s on this laptop, already about 100× Masten's rate.
 - **The GPU's natural job is the deep-rung lottery:**

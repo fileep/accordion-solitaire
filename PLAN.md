@@ -46,7 +46,7 @@ for it (an optional "required final card" in the rules config); no other work is
 |---|---|---|
 | Engine + solver | **Rust** (stable, `std::arch` AVX2/BMI2, rayon) | C-level speed, safe concurrency, easy on Windows, and it compiles to **WebAssembly** |
 | Visualizer | **TypeScript + Vite** web app, engine via **WASM** | One rules implementation for solver and UI |
-| GPU (optional, Phase 8) | **CUDA** kernels via NVRTC, launched from Rust with `cudarc` | NVIDIA T550 on this machine; decided by a measured go/no-go gate |
+| GPU (prototype in Phase 5, runner in Phase 8) | **CUDA** kernels via NVRTC, launched from Rust with `cudarc` | NVIDIA T550 on this machine; decided by a measured go/no-go gate |
 | Analysis | Python (numpy/pandas/matplotlib) on solver JSONL output | Plotting and stats only, never in the hot path |
 
 ---
@@ -88,7 +88,7 @@ crates/core/               accordion-core
 crates/solver/             accordion-solver
 crates/cli/                acc binary
 crates/wasm/               accordion-wasm
-crates/gpu/                accordion-gpu (Phase 8, only if the gate passes)
+crates/gpu/                accordion-gpu (Phase 5 prototype; Phase 8 runner only if the gate passes)
 viz/                       Vite + TypeScript app
 research/probes/           Python probes behind RESEARCH.md (reproducible)
 research/experiments/      experiment configs + result JSONL + notebooks
@@ -144,7 +144,7 @@ Batch files also allow a compact form: one byte per move (index·2 + leap flag),
 ## 4. Phases
 
 Phases run in order:
-`0 → 1 → 2 → 3 → 4 → 5 → 6 → 7`, with `8` (GPU) optional after a measured gate.
+`0 → 1 → 2 → 3 → 4 → 5 → 7`. Phase 6 was merged into Phase 5. Phase `8` (the GPU runner) follows only if the Phase 5 GPU gate passes.
 
 ### Phase 0 — Toolchain and scaffold ✅ done
 
@@ -157,7 +157,15 @@ Phases run in order:
 - **Node.js** 26.13 LTS, with Vite 8 and TypeScript 7.
   - **wasm-pack** 0.15 comes from npm; its install script is approved in `viz/package.json`.
   - `wasm-opt` is off because its binaryen download fails on Windows. It only shrinks the file.
-- **Not yet:** the CUDA Toolkit, until Phase 8 passes its gate.
+- **CUDA (added for Phase 5):** NVRTC 12.9.86, the CUDA runtime compiler, unpacked into `.tools/cuda-nvrtc-12.9.86/` (git-ignored).
+  - It comes from NVIDIA's PyPI package `nvidia-cuda-nvrtc-cu12`: 76 MB, against 315 MB for NVIDIA's redist zip of the same version.
+    The package was unpacked as a plain zip, without pip.
+  - The download matched PyPI's SHA-256. The DLLs are not code-signed, but their sizes and CRCs match NVIDIA's official archive
+    on developer.download.nvidia.com.
+  - The driver (596.52) supports CUDA up to 13.2, and the T550 is compute capability 7.5. Nothing else from the CUDA Toolkit is needed: kernels are
+    compiled at run time and launched through the driver.
+  - NVRTC finds its `nvrtc-builtins` DLL through `PATH`, so its `bin` folder must be on `PATH`.
+  - `research/probes/gpu_smoke.py` checks the setup by compiling a kernel and checking its output against the CPU.
 - **Repo:** `git init` on `main`, with the workspace layout from §2.
 - **Release profile:** `lto="fat"`, `codegen-units=1`, `panic="abort"`, line-table debug info. `target-cpu=native` applies only to native
   targets (`.cargo/config.toml`), so WASM stays portable.
@@ -237,7 +245,7 @@ Design from RESEARCH §6:
     | ≥ 20 | None (measured firing rate ≤0.1%); TT only |
     | ≤ 19 | Connectivity on trigger (on entering the zone and after any move that removes the last rank two suits share) |
     | any | Left-leaf off by default (not worth its cost); available via `Gates` |
-    | ≤ 10 | Endgame table lookup instead (Phase 6) |
+    | ≤ 10 | Endgame table lookup instead (Phase 5, track E) |
 
   - **Random-prefix moves run no tests at all.** Filtering every random move gave no higher win rate and cost ~450–500 test
     evaluations per attempt. The brute force's first node, under the same gates, is the end-of-random-moves check.
@@ -357,74 +365,211 @@ or one entry picked by seed from a batch or `hard-deals/` file. It has no batch 
 - `acc solve` and the visualizer's Solve / Solve-from-here both solve user-entered decks. Hand-typed decks with deliberate typos must be
   rejected with clear errors.
 
-### Phase 5 — Random-prefix / brute-force trade-off and restart schedules (core research)
+### Phase 5 — Speed: find the fastest strategy, by measurement
 
-**Attempt** = play *k* prefix moves sampled from a policy (plain moves, no tests; the brute force's first node is the dead-end check), then first-win DFS on
-the residual (52−*k* piles) with node budget *B*. Each attempt ends in one of three ways, and each is a signal:
+**Goal:** more deals per second in batch runs and less time per deal for a single solve (`acc solve`, the visualizer), without ever
+winning fewer deals. This phase also takes in the old Phase 6 (symmetry, endgame tables and caches) and the GPU prototype that
+decides Phase 8. Every idea is measured against the Phase 4 solver on the same deals, and kept only if it wins on deals it wasn't tuned on.
 
-- **win;**
-- **refuted:** the residual is proved dead, so *k* was too deep or the prefix bad;
-- **budget-out:** the residual is too big for *B*.
+**Starting point** (Phase 4, docs/BENCHMARKS.md). Batch time is roughly deals × positions per deal × time per position ÷ threads, so each
+track below attacks one factor:
 
-For one deal, expected cost to first win is
+| Factor | Phase 4 | Track |
+|---|---|---|
+| Positions per deal | mean ≈ 37,900 · median 19,573 · p99 266,452 · max 2.5M | C (search), E (tables) |
+| Time per position, one thread on an idle machine | 35–37 ns (`acc bench`) | D (engine) |
+| Time per position per thread, 16-thread batch | ≈ 103 ns (16 threads × 24.3 s ÷ 3.79B positions) | B (parallelism) |
+| Deals/s, 16 threads | 4,110 | all of them; F (GPU) adds to it |
 
-```
-T(k, B) = E[nodes per attempt | k, B] / P(win per attempt | k, B)
-```
+The 3× gap between the middle two rows is the first lead.
+- **Hardware:** two hyper-threads share a core, 8 of the 12 cores are slower E-cores, and all-core clocks are lower.
+- **Our pipeline:** verification and output run on the main thread between chunks of 4,096 deals, and each chunk waits for its slowest deal.
 
-The probes already confirm this (RESEARCH §5.5–5.6):
+Track B measures how much of the gap each cause accounts for.
 
-- the best **fixed** switch point (*k*=28) averages about 49k nodes per deal;
-- fixed *k* ≥ 32 leaves some deals never won;
-- an **escalation ladder** averages about 27k nodes and won every deal. It makes up to 16 attempts at *k*=38, then 36, 34 and so on down to 24.
+**Every fast strategy runs first; none replaces the thorough search.**
 
-Steps:
+- The solver becomes a chain of stages:
+  - fast stages go first, each with its own budget: a tuned ladder, table-backed search, GPU attempts;
+  - the **last stage is always the Phase 4 solver**: complete randomized DFS from the start of the deal, with Luby restarts;
+  - after that come `acc solve --escalate` and the §5 protocol.
+- A deal a stage doesn't win passes to the next one, along with what was learned (its dead-position table). Nothing is dropped.
+- Batch summaries count wins by stage. They show what each stage contributes, and that the fallback still catches the rest.
+- **Forced-fallback test:**
+  - every fast stage is made to fail (budget 0), and the test deals must still be won;
+  - the unwinnable golden deals must still never be won.
+- Anything that prunes must first give the same verdict as plain search, on the golden cases and on 1M random residuals (§6.3). That covers
+  commutation, endgame tables and caches, and new dead-end tests.
+- Whatever finds a win, it counts only after the reference engine replays it.
 
-1. **Measurement harness** (`acc experiment`). Over a training set of deals (e.g. 2,000) × grid of *k* (or residual size) × *B*,
-   log every attempt's outcome and node count.
-2. **Schedule optimizer** (Python). Compute each schedule's exact expected cost per deal from per-rung (*p*, mean cost), as in
-   `research/probes/schedule_eval.py`, with bootstrap CIs. Minimize mean cost subject to p99/worst-deal limits and 100% coverage. Candidates:
-   - fixed (*k*, *B*);
-   - **escalation ladder:** tune start *k₀*, tries per rung *m*, step *s*, and *B* growth;
-   - Luby over rungs;
-   - **adaptive per deal:** a bandit over rungs. A refuted attempt pushes toward a smaller *k*; a budget-out pushes toward a bigger *B*.
-3. **Switch point by residual shape** (pile count or an estimated subtree size) versus a fixed move count.
-4. **Prefix policies:**
-   - uniform random moves, no tests (current best);
-   - softmax over cheap features (mobility, connectivity margin, Keller's sweepers, slide vs leap);
-   - NRPA-style adaptation within a deal.
-5. **Cache reuse across attempts:** measure how the persistent dead-state TT shifts the optimum.
-6. Validate on **held-out** deals only.
+#### Track A — measure first
 
-**Done when:** the tuned schedule beats the Phase 4 baseline on held-out mean and p99 cost, with 100% wins on 100k held-out deals.
+- **`acc experiment`** runs a grid of configurations over a deal set.
+  - It writes one JSONL row per (configuration, deal): result, stage, positions, attempts and µs.
+  - A header records machine, commit and threads.
+  - Output goes to `research/experiments/phase5/`.
+- **Deal sets**, kept disjoint (§6.4):
 
-### Phase 6 — Symmetry: endgame table, endgame cache, canonical deals (the "backward" side)
+  | Set | Seeds | Use |
+  |---|---|---|
+  | train | 200,000–209,999 | tuning |
+  | hard | the 1,000 deals of seeds 0–99,999 that took the most positions in Phase 4 | tuning the slow tail |
+  | validation | 300,000–309,999 | choosing between finalists |
+  | test | 1,000,000–1,099,999 | the final report only, run once |
+  | regression | 0–99,999 | must stay at 100% |
 
-Suits and ranks are arbitrary labels, so a position's future depends only on which piles match which (RESEARCH §4.4, §5.11).
-The search spends most nodes at **10–14 piles** (RESEARCH §5.9). We exploit the symmetry in four ways:
+- **Metrics:**
+  - for search changes, positions per deal (mean, p99, max). These are deterministic for a given seed, so even small differences are real;
+  - for engine changes, ns per position;
+  - end to end: deals/s on 16 threads, and wall time per deal for `acc solve` and the WASM solver.
+- **Timing:** every timing runs 3 times on mains power, interleaving configurations (A B A B) so laptop heat and clock drift hit them
+  equally. Report the median and the spread.
+- **Decision rule:**
+  - keep a change only if validation is faster by more than the run-to-run spread, p99 is no worse, and wins stay at 100%;
+  - a change that shifts where the search spends its positions (tables, ordering) triggers a re-tune of the schedule.
+- **Profile counters** (experiment builds only):
+  - positions, table hits, dead-end cuts and time, by piles left;
+  - the batch runner's split between solving, verifying, writing and waiting.
+- **Leaderboard:** one table in docs/BENCHMARKS.md lists every variant tried, kept or dropped, with its numbers and the reason.
 
-- **Canonical key.** Relabel suits and ranks in order of first appearance, in one pass.
-  The ordered match matrix is the coarsest exact key; in the probe it performed the same as relabelling. So relabelling is the default and the matrix is a
-  benchmark variant.
-- **Complete 1-bit endgame table for ≤10 piles,** indexed by a perfect ranking of canonical patterns (DP over position, suits used, ranks used).
-  - 547M patterns, 68 MB, against 5.7×10^16 raw sequences.
-  - Precomputed once and valid for every deal.
-  - At ≤10 piles it replaces all dead-end tests and removes 5–44% of nodes.
-  - Build *k*=11 (1.15 GB) only if measured worthwhile; it is a GPU candidate.
-- **Symmetry-keyed endgame cache for 11–16 piles,** per thread, kept across attempts of a deal:
-  - each entry is DEAD, or WIN plus the winning move as (position, distance). That move is label-free, so one entry answers every equivalent
-    position, effectively a cached endgame policy;
-  - the probe measured **16% fewer nodes and 28% fewer entries** than exact-card keys, which saved nothing;
-  - **no global cross-deal cache.** Cross-deal hits were only 2–3%, too little to pay for synchronization. Re-measure at 1M-deal scale before reconsidering.
-- **Canonical deal ID.** Relabel the whole deck.
-  - A user-entered deck that is a relabelled copy of a known deal (solved, or in `hard-deals/`) is recognized at once, and the stored solution is
-    relabelled back to the user's cards.
-  - It also dedupes the hard-deal registry.
-- **Raw Zobrist keys above 16 piles,** where symmetric repeats are rare and a canonical key isn't worth computing.
-- Re-tune Phase 5, since cheaper leaves move the optimum deeper.
+#### Track B — use all 16 threads (parallel games on the CPU)
 
-**Done when:** table and cache answers match plain search on 1M random residuals, and the end-to-end speed-up is measured (or there is a
-documented reason to drop a piece).
+- **Scaling curve:** 1, 2, 4, 8, 12 and 16 threads; P-cores only against all cores; one or two threads per P-core.
+- **No serial work:** workers take seeds from a shared counter, then solve, verify and serialize each deal themselves. One writer thread
+  collects the output, so the chunk barrier and the main-thread verification go away.
+- **Per-deal overhead:** dealing, result allocation and the table reset, measured on a stream of easy deals.
+- **Single deals:** compare all threads on one deal (portfolio) with one thread, by deal difficulty. This sets when `acc solve` should split.
+- **Estimate:** 1.1–1.3×. The measurement decides how much of the gap is ours to remove.
+
+#### Track C — fewer positions per win (search strategy)
+
+The solver is already depth-first and stops at its first win. These are ways to reach that win sooner.
+
+1. **Restart schedule** for today's DFS: Luby unit from 1k to 1M positions, no restarts, and geometric growth.
+2. **Random prefix + brute force** (Masten-style, RESEARCH §5.5–5.6). An attempt plays *k* random moves with no tests and no table, then
+   runs first-win DFS on what is left with budget *B*.
+   - **Ladder:** start at *k₀* with *m* tries. Then step *s* moves earlier and grow *B*. The thorough DFS from the start is the last rung.
+   - **Grid:** *k₀* 30–40, *s* ∈ {2, 4}, *m* ∈ {4, 8, 16, 32}, and *B* per rung. It runs on the train and hard sets, with the
+     dead-position table kept across attempts.
+   - **Adaptive per deal:** a refuted attempt moves *k* earlier, and a budget-out raises *B*.
+   - **Switch point by shape:** start the brute force at a pile count or an estimated subtree size, instead of after a fixed number of moves.
+   - **Rough prior:**
+     - Python probes on 40 deals put the best ladder at about 27k positions per deal, about 1.4× fewer than Phase 4's ≈38k mean.
+     - This step measures it in Rust at 10,000 deals.
+3. **Move ordering**, in the DFS and in the prefix. Candidates:
+   - uniform random (today);
+   - leaps first, or slides first;
+   - most moves left afterwards (mobility);
+   - a softmax over cheap features;
+   - nested Monte Carlo or NRPA as a prefix policy.
+
+   Ties are broken at random, so restarts stay diverse.
+4. **Skip repeated move orders (commutation).**
+   - Two moves **commute** whenever the left move's pile lies strictly left of the right move's target. Both stay legal, and either order
+     gives the same position.
+   - Far-apart moves are the common case, so most positions are reached in many orders.
+   - Today the table catches the repeats, but each one costs a full child build and a probe. A 1 MB table also forgets many, which are then
+     searched again.
+   - **Sleep sets** explore each group of commuting moves in one order only. They are safe with our table because it stores only positions
+     proven dead.
+   - **Test:** measure positions and time with and without, and check by exhaustive search that verdicts are unchanged.
+   - **Upper bound:** the share of positions that are table hits today.
+
+#### Track D — cheaper positions (engine cost)
+
+- **Check the table before building the child.** The child's hash is known first, so a table hit could skip the 16 ns build; today every
+  hit pays for it.
+- **Copy-make against make/unmake:** today each step copies a 128-byte position.
+- **Table use by depth:** probe and store only above some pile count, since for a tiny subtree a lookup can cost more than re-searching it.
+  Re-check the prefetch.
+- **Re-tune the dead-end gates** (connectivity gate, left-leaf) for the new search mix.
+- **Profile-guided optimization**, which needs rustup's `llvm-tools` component (a small download).
+- **Two searches interleaved per thread** to hide memory stalls, only if profiling shows stalls.
+- **Estimate:** 1.2–1.5×.
+
+#### Track E — caches and symmetry
+
+A position's future depends only on its **pattern**: which piles share a suit or a rank, not which suits and ranks they are (RESEARCH §4.4).
+So anything learned about a pattern holds in every deal, and patterns are far fewer than card sequences. At 10 piles, 547M patterns stand
+for 5.7×10^16 sequences.
+
+1. **Table size.**
+   - Sweep 256 KB to 256 MB per thread on the train and hard sets.
+   - Phase 4 found small tables that stay in cache fastest for typical deals; a big one may pay on hard deals.
+   - Then try growing the table once a deal passes about 1M positions.
+2. **Complete endgame tables:** one bit per pattern (winnable or not), built once and valid for every deal.
+
+   | Piles | Patterns | Size | Lives in | Build time (estimate, 16 threads) |
+   |---|---|---|---|---|
+   | 8 (and fewer) | 2.28M | 0.3 MB | L2 cache | under a second |
+   | 9 | 34.3M | 4.3 MB | L3 cache | seconds |
+   | 10 | 547M | 68 MB | RAM | minutes |
+   | 11 | 9.21B | 1.15 GB | RAM | about half an hour |
+   | 12 | 163B | 20 GB | RAM (48 GB) | hours; only if 11 pays well |
+
+   - **One lookup at *K* piles settles the rest of the game.**
+     - A **loss** prunes the subtree.
+     - A **win** means the deal is won with *K*−1 moves still to play. The remaining moves come from walking the table: at each step,
+       take a child it marks winnable. The whole line is then replayed by the reference engine, as always.
+   - RESEARCH §5.9: 5–44% of brute-force positions sit below 10 piles, and 22–79% below 12.
+   - `acc endgame build` writes the tables to a file kept out of git. They are checked against plain search on 1M random residuals.
+   - The browser solver can use the small tables (8 or 9 piles).
+3. **Symmetry-keyed endgame cache, 11–16 piles.**
+   - It is per thread and keyed by the relabelled pattern. Each entry is DEAD, or WIN plus the winning move.
+   - The move (pile, slide or leap) carries no card labels, so one entry serves every equivalent position.
+   - The probe measured 16% fewer positions and 28% fewer entries than exact-card keys.
+   - **WIN entries pay only across deals.** Within one deal a stored WIN is never reused, because the first win ends the search.
+     - Pattern keys don't depend on the deal, so each thread can simply keep its cache from one deal to the next, with no locking.
+     - Measure cross-deal hits at 10k–100k deals per thread; the probe saw 2–3% after 60 deals.
+     - Try a cache shared between threads only if those numbers justify the synchronization.
+4. **Canonical deal ID:** relabel the whole deck.
+   - A user-entered deck that is a relabelled copy of a known deal is answered at once.
+   - The hard-deal registry has no duplicates.
+
+#### Track F — GPU feasibility (NVIDIA T550, RESEARCH §9)
+
+- **Installed:** the NVIDIA driver (596.52, CUDA ≤ 13.2) and NVRTC 12.9 in `.tools/` (Phase 0 notes). `research/probes/gpu_smoke.py`
+  compiled a kernel and ran it on the T550, and its output matched the CPU.
+- **The work that fits a GPU:**
+  - **Deep-rung attempts:** a long random prefix plus a small DFS on ≤18–20 piles, with a small dead-position table in shared memory.
+    RESEARCH §9.3–9.4: with 64 tries per deep rung, 99.1% of deals were won without brute-forcing more than 20 piles.
+  - **Building the 11-pile endgame table** is the other candidate.
+- **Steps:**
+  1. Model it on the CPU first. Run the deep-rung-only strategy in Rust, count attempts and positions per deal, and from those get the
+     attempt rate the GPU would need. Stop here if that rate is out of reach.
+  2. Build a prototype kernel, differential-tested against the Rust engine on the golden files.
+  3. Hybrid run: the GPU takes deep rungs for a batch. Meanwhile the CPU verifies every GPU win and runs everything else through the normal
+     stage chain.
+- **Gate:**
+  - if the hybrid reaches **≥2× the tuned CPU solver's deals/s end to end**, Phase 8 builds it into `acc batch`;
+  - if not, the numbers go into RESEARCH §9 and the GPU work stops.
+
+#### Track G — combine and confirm
+
+- Combine the winners, then **re-tune the schedule last**: tables and cheaper positions move the best switch point deeper.
+- Pick the final configuration on validation, then run it once on the 100k test seeds and on the regression set.
+- Make it the default for `acc batch`, `acc solve` and the visualizer.
+- Write the leaderboard into docs/BENCHMARKS.md and the findings into RESEARCH.md.
+
+**Order:** A → B → C → D → E → F → G.
+1. Measure first.
+2. Then take the cheap, certain gains.
+3. Then search changes before engine tuning, because the best engine depends on where the search spends its positions.
+4. Then the tables, which shift the schedule.
+5. The GPU comes last, because it must beat the tuned CPU.
+
+**Done when:**
+
+- every track has a measured result on the leaderboard, kept or dropped with its numbers;
+- the adopted pipeline beats Phase 4 on held-out mean and p99 time per deal, and on deals/s. The target is **2× deals/s**, a goal rather
+  than a gate;
+- all 100k test deals and the whole regression set are won and verified, with wins counted by stage, and the forced-fallback test passes;
+- every pruning method has passed its soundness check;
+- the GPU gate is decided, with numbers.
+
+### Phase 6 — merged into Phase 5
+
+Its symmetry work (endgame tables, the symmetry-keyed cache and canonical deal IDs) is Phase 5 track E, so Phase 5 now goes straight to Phase 7.
 
 ### Phase 7 — Scale-up and hard-deal pipeline
 
@@ -433,7 +578,7 @@ documented reason to drop a piece).
   Solvitaire (99.99948 ± 0.00052%).
 - Results in `docs/RESULTS.md`. A hard-deal gallery lives in `hard-deals/INDEX.md`, with every entry loadable in the visualizer.
 
-### Phase 8 (optional) — GPU deep-rung lottery
+### Phase 8 (only if the Phase 5 GPU gate passes) — GPU deep-rung lottery
 
 **Why it might pay.** The probe data (RESEARCH §9) shows that **deep rungs** do almost all the useful work if we can afford many more tries there.
 A deep rung is a long random prefix plus a small brute force on ≤20 piles. With 64 tries per deep rung, **99.1% of deals were won without ever
@@ -463,11 +608,8 @@ The large DFS with a big TT stays on the CPU, which is poor GPU territory: publi
 - **Correctness:** CUDA rules code is tested against the Rust engine with the same differential tests and golden files as Phase 2.
 - **Also a GPU candidate:** building the *k*=11 endgame table (1.15 GB fits in the T550's 4 GB). This kind of bit-table BFS is a known GPU strength (27× in Edelkamp et al.).
 
-**Go/no-go gate.** Start Phase 8 only if all of these hold:
-
-- (a) Phase 5 is tuned;
-- (b) profiling shows deep-rung attempts are ≥50% of CPU time;
-- (c) a prototype kernel (≤1 week) shows **≥2× end-to-end deals/s** on the T550 against the 16-thread CPU solver.
+**Go/no-go gate (decided in Phase 5, track F).** Build this only if the prototype hybrid (GPU deep rungs plus the CPU stage chain) reaches
+**≥2× the end-to-end deals/s** of the tuned 16-thread CPU solver.
 
 The T550 is entry-level (1,024 CUDA cores, 4 GB). Expect a modest gain here; larger NVIDIA GPUs scale the same kernel much further.
 
@@ -564,7 +706,12 @@ The unwinnable cases:
   - solver output is written as `win` only after it verifies, and batch summaries count verified wins only;
   - the solver's test suite runs the unwinnable golden deals and must **never** report `win` on them; they end `unknown`, or `loss` once exhaustive mode exists;
   - it must still win the winnable controls.
-- **Phase 6:** endgame table and cache answers are checked against plain search, and the unwinnable golden positions must read as dead.
+- **Phase 5:**
+  - before any pruning method is adopted, its verdicts must match plain search on the golden cases and on 1M random residuals. That covers commutation (sleep sets),
+    endgame tables, symmetry caches and new dead-end tests;
+  - the unwinnable golden positions must read as dead;
+  - the forced-fallback test (every fast stage fails) must still win the test deals and never win the unwinnable ones;
+  - GPU prototype wins are verified on the CPU, and its rules code runs the same golden files.
 - **Phase 7:**
   - exhaustive mode must prove all three unwinnable golden cases lost;
   - any real deal it marks `loss` gets the independent second run of §5.
@@ -587,10 +734,10 @@ The unwinnable cases:
 | M2 ✅ | Fast engine + dead-end tests | 10M differential playouts and 1M soundness checks pass; exhaustive counts match; ≥20M DFS nodes/s/thread (measured 26.9–28.3M) |
 | M3 ✅ | Visualizer | enter/validate a deck (paste or card picker); human play with undo; replays solver files with slider/speeds; continue-by-hand |
 | M4 ✅ | Baseline solver + solve-a-deck | ≥99.9% on 100k deals, all verified, every unknown has a dossier; never `win` on the unwinnable golden deals; `acc solve` and visualizer Solve / Solve-from-here work on user-entered decks |
-| M5 | Tuned schedule | beats baseline on held-out mean and p99; 100% on 100k held-out |
-| M6 | Endgame table + cache | verified; measured speed-up |
+| M5 | Fastest strategy | every track measured on the leaderboard; adopted pipeline beats Phase 4 on held-out mean and p99 and on deals/s (target 2×); 100% on 100k held-out + regression set; pruning checked sound; GPU gate decided |
+| M6 | (merged into M5) | — |
 | M7 | Big run | 10M+ deals, Wilson CI, results write-up, hard-deal gallery; exhaustive mode proves the golden unwinnable cases lost |
-| M8 | GPU gate | gate result documented; if passed, hybrid runner faster end to end |
+| M8 | GPU runner | only if the Phase 5 gate passed: hybrid runner built into `acc batch`, faster end to end, every GPU win verified |
 
 ## 8. Risks
 
@@ -607,11 +754,11 @@ The unwinnable cases:
 ## 9. Decided
 
 - **Rules:** open Accordion, moves 1 or 3 left, suit-or-rank match, **win = one pile only**. Accordion's Revenge maybe later.
-- **Stack:** Rust engine/solver, TypeScript + WASM visualizer for selected deals, Python for analysis. CUDA only if the Phase 8 gate passes.
+- **Stack:** Rust engine/solver, TypeScript + WASM visualizer for selected deals, Python for analysis. CUDA prototype in Phase 5, built into the runner (Phase 8) only if it passes its gate.
 - **Strategy:** Masten-style random prefix + brute force with a tuned escalation ladder.
   - Dead-end tests run only where they pay: none during random moves, then gated by piles left and event-triggered.
   - Suit/rank symmetry powers the endgame table, the endgame cache and canonical deal IDs.
   - Every unwon deal is documented and escalated.
 - **User decks:** any entered 52-card deck (or in-progress position) can be validated and solved, from the CLI (`acc solve`) or the visualizer (WASM solver).
 
-**Installed (Phase 0–1):** Rust (MSVC target) with Visual Studio 2022 Build Tools, and Node.js LTS. The CUDA Toolkit comes only at Phase 8.
+**Installed (Phase 0–1):** Rust (MSVC target) with Visual Studio 2022 Build Tools, and Node.js LTS. NVRTC 12.9, the CUDA runtime compiler, was added in `.tools/` for the Phase 5 GPU prototype (Phase 0 notes).
