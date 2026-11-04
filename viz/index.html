@@ -6,7 +6,93 @@
     <title>Accordion</title>
   </head>
   <body>
-    <main id="app"></main>
+    <header class="top">
+      <h1>Accordion</h1>
+      <nav class="tabs" role="tablist">
+        <button role="tab" id="tab-play" data-mode="play" aria-selected="true">Play</button>
+        <button role="tab" id="tab-replay" data-mode="replay" aria-selected="false">Replay a solve file</button>
+      </nav>
+      <span id="engine" class="muted"></span>
+    </header>
+
+    <section id="play-bar" class="bar">
+      <div class="group">
+        <button id="new-random">New random deal</button>
+        <label class="seed">Seed <input id="seed-input" inputmode="numeric" placeholder="e.g. 42" /></label>
+        <button id="new-seed">Deal</button>
+        <button id="enter-deck">Enter a deck…</button>
+      </div>
+      <div class="group">
+        <button id="undo" title="Undo (Ctrl+Z)">Undo</button>
+        <button id="redo" title="Redo (Ctrl+Y)">Redo</button>
+        <button id="restart">Restart</button>
+        <button id="export" title="Download this game as a solve file">Export</button>
+      </div>
+    </section>
+
+    <section id="replay-bar" class="bar" hidden>
+      <div class="group">
+        <label class="file">Open file <input id="file-input" type="file" accept=".json,.jsonl,application/json" /></label>
+        <details id="paste-box">
+          <summary>…or paste</summary>
+          <textarea id="paste-text" rows="4" placeholder="Paste a solve file (.json or .jsonl text)"></textarea>
+          <button id="paste-open">Open pasted text</button>
+        </details>
+        <select id="entry-select" aria-label="Game in file" hidden></select>
+      </div>
+      <div class="group transport">
+        <button id="r-first" title="Start (Home)" aria-label="Start">⏮</button>
+        <button id="r-back" title="Step back (←)" aria-label="Step back">◀</button>
+        <button id="r-play" title="Play / pause (Space)" aria-label="Play">▶</button>
+        <button id="r-fwd" title="Step forward (→)" aria-label="Step forward">▶|</button>
+        <button id="r-last" title="End (End)" aria-label="End">⏭</button>
+        <input id="r-slider" type="range" min="0" max="0" value="0" aria-label="Move" />
+        <span id="r-count" class="muted">0 / 0</span>
+        <label>Speed
+          <select id="r-speed">
+            <option value="0.25">0.25×</option><option value="0.5">0.5×</option><option value="1">1×</option>
+            <option value="2" selected>2×</option><option value="4">4×</option><option value="8">8×</option>
+            <option value="16">16×</option><option value="32">32×</option>
+          </select>
+        </label>
+        <button id="r-continue" title="Leave the replay here and play on by hand">Continue from here</button>
+      </div>
+    </section>
+
+    <p id="status" class="status" aria-live="polite"></p>
+    <p id="deal-label" class="muted small"></p>
+    <p id="pile-info" class="small pile-info" aria-live="polite"></p>
+
+    <main id="board" class="board" aria-label="Piles, left to right"></main>
+
+    <section class="history-wrap">
+      <h2>Moves</h2>
+      <ol id="history" class="history"></ol>
+    </section>
+
+    <dialog id="deck-dialog">
+      <form method="dialog" class="deck-form">
+        <h2>Enter a deck</h2>
+        <p class="muted small">52 cards, left to right as dealt. Ranks A 2–9 T (or 10) J Q K; suits C D H S or ♣ ♦ ♥ ♠; separated by
+          spaces or commas.</p>
+        <textarea id="deck-text" rows="5" placeholder="KS 7H 10d ♣A …"></textarea>
+        <div id="deck-check" class="deck-check" aria-live="polite"></div>
+        <h3>…or pick the cards in order</h3>
+        <div id="picker" class="picker"></div>
+        <div class="picked-wrap">
+          <span class="muted small">Picked (<span id="picked-count">0</span>/52):</span>
+          <div id="picked" class="picked"></div>
+        </div>
+        <div class="dialog-actions">
+          <button type="button" id="pick-undo">Undo last pick</button>
+          <button type="button" id="pick-clear">Clear</button>
+          <span class="spacer"></span>
+          <button value="cancel">Cancel</button>
+          <button type="button" id="deck-play" class="primary" disabled>Play this deck</button>
+        </div>
+      </form>
+    </dialog>
+
     <script type="module" src="/src/main.ts"></script>
   </body>
 </html>

@@ -6,9 +6,11 @@
 pub mod card;
 pub mod deal;
 pub mod deck_input;
+pub mod fast;
 pub mod game;
 pub mod notation;
 pub mod rng;
+pub mod selfcheck;
 pub mod solve_file;
 pub mod verify;
 

@@ -2,6 +2,8 @@
 //! docs/FORMATS.md (testdata/tools/make_golden.py). The Rust code must agree with every one of them.
 
 use accordion_core::deck_input::{DeckIssue, parse_position};
+use accordion_core::fast::Position;
+use accordion_core::selfcheck::explore_fast;
 use accordion_core::solve_file::parse_records;
 use accordion_core::verify::verify;
 use accordion_core::{Card, Deal, Game, Outcome};
@@ -120,7 +122,10 @@ fn exhaustive_search_agrees_including_unwinnable_deals() {
     assert!(golden.cases.iter().any(|c| c.winnable), "need a winnable control");
     for case in golden.cases {
         let piles = parse_position(&case.position).unwrap_or_else(|e| panic!("{}: {e}", case.name));
-        assert_eq!(explore(Game::from_piles(piles)), (case.reachable, case.winnable), "{}", case.name);
+        let game = Game::from_piles(piles);
+        let fast = Position::from_tops(&game.tops());
+        assert_eq!(explore(game), (case.reachable, case.winnable), "{} (reference engine)", case.name);
+        assert_eq!(explore_fast(fast), (case.reachable, case.winnable), "{} (fast engine)", case.name);
     }
 }
 

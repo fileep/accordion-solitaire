@@ -1,37 +1,426 @@
 :root {
-  --bg: #f7f6f2;
+  --bg: #f4f3ee;
+  --surface: #ffffff;
   --fg: #1d1d1b;
-  --muted: #5f5e5a;
-  --error: #b3261e;
-  color-scheme: light dark;
-  font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+  --muted: #64625b;
+  --line: #d9d6cc;
+  --accent: #2f6f5e;
+  --accent-soft: #d5ebe3;
+  --target: #c98a1b;
+  --target-soft: #f8e7c4;
+  --red: #b3261e;
+  --black: #1d1d1b;
+  --good: #2f6f5e;
+  --bad: #b3261e;
+  --card: #fffdf8;
+  --card-edge: #cfcabb;
+  --shadow: 0 1px 2px rgb(0 0 0 / 0.12);
+  color-scheme: light;
+  font-family: system-ui, -apple-system, 'Segoe UI', sans-serif;
 }
 
 @media (prefers-color-scheme: dark) {
   :root {
-    --bg: #1b1b1a;
+    --bg: #171716;
+    --surface: #222220;
     --fg: #ecebe6;
     --muted: #a5a39b;
-    --error: #f2b8b5;
+    --line: #3a3935;
+    --accent: #7cc7b0;
+    --accent-soft: #23423a;
+    --target: #e6b04f;
+    --target-soft: #4a3a1a;
+    --red: #ff8a80;
+    --black: #ecebe6;
+    --good: #7cc7b0;
+    --bad: #ff8a80;
+    --card: #2b2a27;
+    --card-edge: #4a4842;
+    --shadow: 0 1px 2px rgb(0 0 0 / 0.5);
+    color-scheme: dark;
   }
 }
 
+* {
+  box-sizing: border-box;
+}
+
 body {
-  margin: 0;
+  margin: 0 auto;
+  max-width: 1040px;
+  padding: 16px;
   background: var(--bg);
   color: var(--fg);
 }
 
-main {
-  max-width: 960px;
-  margin: 0 auto;
-  padding: 24px 16px;
+h1 {
+  font-size: 1.4rem;
+  margin: 0;
 }
 
-p {
+h2 {
+  font-size: 1rem;
+  margin: 0 0 8px;
+}
+
+h3 {
+  font-size: 0.9rem;
+  margin: 16px 0 8px;
+}
+
+.muted {
   color: var(--muted);
 }
 
-.error {
-  color: var(--error);
+.small {
+  font-size: 0.8rem;
+}
+
+button,
+select,
+input,
+textarea {
+  font: inherit;
+  color: inherit;
+}
+
+button,
+select {
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 5px 10px;
+  cursor: pointer;
+}
+
+button:hover:not(:disabled) {
+  border-color: var(--accent);
+}
+
+button:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+button.primary {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--surface);
+}
+
+input,
+textarea {
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 5px 8px;
+}
+
+.top {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 12px 20px;
+  margin-bottom: 12px;
+}
+
+.top #engine {
+  margin-left: auto;
+  font-size: 0.8rem;
+}
+
+.tabs {
+  display: flex;
+  gap: 4px;
+}
+
+.tabs button[aria-selected='true'] {
+  background: var(--accent-soft);
+  border-color: var(--accent);
+}
+
+.bar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 24px;
+  padding: 10px 12px;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+}
+
+.bar[hidden] {
+  display: none;
+}
+
+.group {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+
+.seed input {
+  width: 11ch;
+}
+
+.file input {
+  max-width: 220px;
+}
+
+#paste-box summary {
+  cursor: pointer;
+  color: var(--muted);
+}
+
+#paste-box[open] {
+  flex-basis: 100%;
+}
+
+#paste-box textarea {
+  display: block;
+  width: 100%;
+  margin: 6px 0;
+}
+
+.transport #r-slider {
+  width: min(320px, 60vw);
+}
+
+.status {
+  min-height: 1.4em;
+  margin: 12px 0 2px;
+  font-weight: 500;
+}
+
+.status.bad {
+  color: var(--bad);
+}
+
+#deal-label {
+  margin: 0 0 10px;
+  word-break: break-word;
+}
+
+/* ---- board ---------------------------------------------------------------------------------------------- */
+
+.board {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(54px, 1fr));
+  gap: 14px 6px;
+  padding: 12px;
+  min-height: 120px;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+}
+
+.pile {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  padding: 2px;
+  border-radius: 8px;
+  outline: none;
+}
+
+.pile .pos {
+  font-size: 0.65rem;
+  color: var(--muted);
+}
+
+.card {
+  width: 46px;
+  height: 64px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid var(--card-edge);
+  border-radius: 6px;
+  background: var(--card);
+  box-shadow: var(--shadow);
+  line-height: 1.05;
+  user-select: none;
+}
+
+.card .rank {
+  font-size: 1.05rem;
+  font-weight: 650;
+}
+
+.card .suit {
+  font-size: 1.15rem;
+}
+
+.card.red {
+  color: var(--red);
+}
+
+.card.black {
+  color: var(--black);
+}
+
+.depth {
+  position: absolute;
+  right: 0;
+  bottom: 0;
+  min-width: 18px;
+  padding: 0 4px;
+  border-radius: 9px;
+  background: var(--accent);
+  color: var(--surface);
+  font-size: 0.7rem;
+  font-weight: 600;
+  text-align: center;
+}
+
+.pile-info {
+  min-height: 1.3em;
+  margin: 0 0 6px;
+}
+
+.pile.movable {
+  cursor: grab;
+}
+
+.pile.movable .card {
+  border-color: var(--accent);
+}
+
+.pile.selected .card {
+  outline: 3px solid var(--accent);
+  outline-offset: 1px;
+}
+
+.pile.target {
+  background: var(--target-soft);
+  cursor: pointer;
+}
+
+.pile.target .card {
+  outline: 3px dashed var(--target);
+  outline-offset: 1px;
+}
+
+.pile:focus-visible .card {
+  outline: 3px solid var(--fg);
+}
+
+/* ---- history ------------------------------------------------------------------------------------------- */
+
+.history-wrap {
+  margin-top: 16px;
+}
+
+.history {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 6px;
+  max-height: 140px;
+  overflow-y: auto;
+  margin: 0;
+  padding: 0 0 0 2.2em;
+  font-size: 0.8rem;
+}
+
+.history li::marker {
+  color: var(--muted);
+}
+
+.history li {
+  min-width: 7.5em;
+}
+
+.history button {
+  padding: 1px 6px;
+  font-variant-numeric: tabular-nums;
+}
+
+.history button.ahead {
+  opacity: 0.45;
+}
+
+/* ---- deck dialog --------------------------------------------------------------------------------------- */
+
+dialog {
+  width: min(720px, calc(100vw - 32px));
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--surface);
+  color: var(--fg);
+  padding: 16px 20px;
+}
+
+dialog::backdrop {
+  background: rgb(0 0 0 / 0.4);
+}
+
+#deck-text {
+  width: 100%;
+  font-family: ui-monospace, Consolas, monospace;
+  font-size: 0.85rem;
+}
+
+.deck-check {
+  min-height: 1.4em;
+  margin: 6px 0;
+  white-space: pre-wrap;
+  font-size: 0.8rem;
+}
+
+.deck-check.good {
+  color: var(--good);
+}
+
+.deck-check.bad {
+  color: var(--bad);
+}
+
+.picker {
+  display: grid;
+  grid-template-columns: repeat(13, 1fr);
+  gap: 4px;
+}
+
+.pick {
+  padding: 4px 0;
+  font-size: 0.8rem;
+}
+
+.pick.red {
+  color: var(--red);
+}
+
+.picked-wrap {
+  margin-top: 8px;
+}
+
+.dialog-actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 16px;
+}
+
+.spacer {
+  flex: 1;
+}
+
+@media (max-width: 560px) {
+  .board {
+    grid-template-columns: repeat(auto-fill, minmax(44px, 1fr));
+    gap: 10px 4px;
+    padding: 8px;
+  }
+
+  .card {
+    width: 38px;
+    height: 54px;
+  }
+
+  .picker {
+    grid-template-columns: repeat(7, 1fr);
+  }
 }

@@ -13,6 +13,7 @@ path = "src/main.rs"
 accordion-core.workspace = true
 accordion-solver.workspace = true
 clap.workspace = true
+rayon.workspace = true
 
 [lints]
 workspace = true

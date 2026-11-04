@@ -32,7 +32,21 @@ enum Command {
         #[arg(long, short)]
         quiet: bool,
     },
+    /// Check the fast engine against the reference engine: lockstep random playouts, then dead-end soundness.
+    Selftest {
+        /// Random games played with both engines in lockstep.
+        #[arg(long, default_value_t = 100_000)]
+        playouts: u64,
+        /// Random small positions on which any dead-end test that fires must be confirmed by reference search.
+        #[arg(long, default_value_t = 100_000)]
+        positions: u64,
+    },
+    /// Measure search speed (single thread) on fixed residual positions, optionally sweeping the dead-end gates.
+    Bench(bench::BenchArgs),
 }
+
+mod bench;
+mod selftest;
 
 #[derive(Args)]
 #[group(required = true, multiple = false)]
@@ -119,6 +133,8 @@ fn main() -> ExitCode {
     let result = match Cli::parse().command {
         Command::Deal { source, json } => deal_command(source, json).map(|()| true),
         Command::Verify { path, quiet } => verify_command(path, quiet),
+        Command::Selftest { playouts, positions } => selftest::run(playouts, positions),
+        Command::Bench(args) => bench::run(&args).map(|()| true),
     };
     match result {
         Ok(true) => ExitCode::SUCCESS,

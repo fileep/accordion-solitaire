@@ -183,7 +183,28 @@ Phases run in order:
 
 **Done when:** format round-trip tests pass, the §6.2 catalogue passes against the Python implementation, and `acc verify` runs on it.
 
-### Phase 2 — Fast engine and dead-end tests (the hot path)
+### Phase 2 — Fast engine and dead-end tests (the hot path) ✅ done
+
+**Outcome** (measurements in docs/BENCHMARKS.md):
+
+- **Code:**
+  - `accordion-core::fast` is the engine;
+  - `accordion-core::selfcheck` holds the fast-vs-reference checks;
+  - `accordion-solver::{dfs, table}` is the first-win search and the epoch-tagged dead-position table;
+  - `acc selftest` and `acc bench` are the CLI commands.
+- **Correctness:**
+  - 10,000,000 lockstep games (409M moves) with no disagreement;
+  - 1,000,000 soundness positions with no test firing on a winnable one;
+  - exhaustive counts match the golden data;
+  - the portable (non-AVX2) code paths pass the same tests.
+- **Speed:** **26.9–28.3M nodes/s** per thread, with table and dead-end tests, against a ≥20M target. Plain DFS won 100/100 full deals,
+  averaging about 89k positions per deal.
+- **Not met:** the ≤5 ns `apply` + movegen target. `apply` measures 16 ns. It is left for later tuning, since the node-rate target it was
+  meant to serve is met.
+- **Tests:** the gates were tuned by `acc bench --sweep`.
+  - **Connectivity:** on trigger at ≤19 piles.
+  - **Left-leaf:** off by default. It cuts 5–9% of nodes but costs more time than it saves.
+  - **Leftmost-card constraint:** gave no cheap sound test beyond these, so it moves to the Phase 5 move-ordering experiments.
 
 Design from RESEARCH §6:
 
@@ -209,13 +230,13 @@ Design from RESEARCH §6:
     - The full check (≤4-suit closure) runs only on that event.
     - It also catches every orphan, so there is no separate orphan test.
   - **Left-leaf pair** (two cards whose only match lies to their left): runs only when ≥2 single-match cards exist, tracked from suit/rank counts.
-  - **Gates by piles left.** Starting values, to be tuned with the Rust benchmark:
+  - **Gates by piles left**, as tuned (starting values were 19 and 16):
 
     | Piles left | Tests |
     |---|---|
     | ≥ 20 | None (measured firing rate ≤0.1%); TT only |
-    | 17–19 | Connectivity on event |
-    | 11–16 | Connectivity on event; left-leaf when triggered |
+    | ≤ 19 | Connectivity on trigger (on entering the zone and after any move that removes the last rank two suits share) |
+    | any | Left-leaf off by default (not worth its cost); available via `Gates` |
     | ≤ 10 | Endgame table lookup instead (Phase 6) |
 
   - **Random-prefix moves run no tests at all.** Filtering every random move gave no higher win rate and cost ~450–500 test
@@ -230,7 +251,21 @@ Design from RESEARCH §6:
 **Done when:** differential and soundness tests pass. Single-thread targets: apply+movegen ≤ 5 ns, DFS with TT and
 dead-end tests ≥ 20M nodes/s (about 100× the Python probe).
 
-### Phase 3 — Visualizer (selected deals only)
+### Phase 3 — Visualizer (selected deals only) ✅ done
+
+**Outcome:**
+
+- **Built:** `viz/` (Vite + TypeScript, rules from WASM).
+  - deal by seed, random or entered deck (paste with live errors, or card picker with undo);
+  - hand play with click to move and legal-target highlights, undo/redo (Ctrl+Z / Ctrl+Y), move history, win/stuck status;
+  - replay of `.json`/`.jsonl` files (open or paste), with a game picker, transport, slider and 0.25–32× speeds;
+  - verification shown per game; replay stops before an illegal move;
+  - continue from here, verified export, and a stack info line on hover/focus.
+- **Tested** in the browser pane (play, undo/redo, deck errors, picker, replay at 32×, scrubbing, continue, phone width).
+- **TS golden tests:** `npm test` runs `viz/tests/golden.test.ts` on the WASM engine against `testdata/` and passes.
+- **Not exercised in the browser:** drag-and-drop, the file-picker path (the same parser is used by paste) and the download itself
+  (export is covered by the TS test).
+- **Deferred:** drag to reorder picked cards; Solve buttons (Phase 4).
 
 Vite + TypeScript; cards drawn in SVG/CSS. It opens **one deal at a time**: by seed, a user-entered deck, a single solve file,
 or one entry picked by seed from a batch or `hard-deals/` file. It has no batch dashboards or live solver views.
@@ -516,10 +551,10 @@ The unwinnable cases:
 
 | # | Milestone | Acceptance |
 |---|---|---|
-| M0 | Toolchain + skeleton | `cargo test`, `npm run dev` work |
-| M1 | Reference engine + formats | §6.2 golden catalogue passes (cheats rejected, unwinnable deals proven by exhaustive search, mutations agree with Python); formats frozen |
-| M2 | Fast engine + dead-end tests | 10M differential playouts and 1M soundness checks pass; exhaustive counts match; ≥20M DFS nodes/s/thread |
-| M3 | Visualizer | enter/validate a deck (paste or card picker); human play with undo; replays solver files with slider/speeds; continue-by-hand |
+| M0 ✅ | Toolchain + skeleton | `cargo test`, `npm run dev` work |
+| M1 ✅ | Reference engine + formats | §6.2 golden catalogue passes (cheats rejected, unwinnable deals proven by exhaustive search, mutations agree with Python); formats frozen |
+| M2 ✅ | Fast engine + dead-end tests | 10M differential playouts and 1M soundness checks pass; exhaustive counts match; ≥20M DFS nodes/s/thread (measured 26.9–28.3M) |
+| M3 ✅ | Visualizer | enter/validate a deck (paste or card picker); human play with undo; replays solver files with slider/speeds; continue-by-hand |
 | M4 | Baseline solver + solve-a-deck | ≥99.9% on 100k deals, all verified, every unknown has a dossier; never `win` on the unwinnable golden deals; `acc solve` and visualizer Solve / Solve-from-here work on user-entered decks |
 | M5 | Tuned schedule | beats baseline on held-out mean and p99; 100% on 100k held-out |
 | M6 | Endgame table + cache | verified; measured speed-up |

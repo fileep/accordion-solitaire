@@ -26,6 +26,11 @@ impl Card {
         Card::new(index / 13, index % 13)
     }
 
+    /// The card with this engine byte, if it is one (inverse of [`Card::code`]).
+    pub const fn from_code(code: u8) -> Option<Card> {
+        if code >> 4 < 4 && code & 0x0F < 13 { Some(Card(code)) } else { None }
+    }
+
     /// The one-byte engine code, `suit << 4 | rank`.
     pub const fn code(self) -> u8 {
         self.0

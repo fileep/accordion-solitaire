@@ -505,12 +505,18 @@ once at the end is as good. That check is simply the brute force's first node, a
 |---|---|---|
 | Random prefix | any | **Nothing** but movegen and a random pick. "No legal moves" ends the attempt |
 | Brute force | ≥ 20 | No dead-end tests (they fire ≤0.1% of the time); TT only |
-| Brute force | 17–19 | Connectivity, only on a "last shared rank removed" event |
-| Brute force | 11–16 | Connectivity on that event; left-leaf only when ≥2 single-match cards exist |
+| Brute force | ≤ 19 | Connectivity, on entering this zone and after any "last shared rank removed" move |
+| Brute force | any | Left-leaf off: measured in Rust, it saves fewer nodes than its cost |
 | Brute force | ≤ 10 | One exact endgame-table lookup replaces all tests (§5.3) |
 
-The brute force's first node follows the same rule, so it is the end-of-random-moves check. The gates (20, 16, 10) are starting values to tune in the
-Rust benchmark.
+The brute force's first node follows the same rule, so it is the end-of-random-moves check.
+
+**Rust measurements (Phase 2, docs/BENCHMARKS.md).** The schedule was confirmed and tuned with `acc bench --sweep`:
+
+- the triggered connectivity test at ≤ 19 piles is fastest;
+- checking at every node is slower;
+- gating as low as 13 piles misses cuts;
+- the left-leaf test cuts 5–9% of nodes but costs more time than it saves, at every depth.
 
 ### 5.11 Using the symmetry of suits and ranks (probe `symmetry.py`)
 
