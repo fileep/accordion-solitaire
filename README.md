@@ -43,6 +43,22 @@ cargo run --release -p accordion-cli -- deal --cards "KS 7H 10d ..."
 cargo run --release -p accordion-cli -- verify testdata/games/batch.jsonl
 ```
 
+Solve one deal or position on every core (a deal that isn't won gets a dossier in `hard-deals/`):
+
+```bash
+cargo run --release -p accordion-cli -- solve --seed 42
+```
+
+```bash
+cargo run --release -p accordion-cli -- solve --cards "KS 7H 10d ..." --escalate
+```
+
+Solve a range of deals and report the win rate with a confidence interval:
+
+```bash
+cargo run --release -p accordion-cli -- batch --from 0 --count 100000 --out results.jsonl
+```
+
 Check the fast engine against the reference engine (lockstep playouts and dead-end soundness), and measure search
 speed and the dead-end gate settings (results in [docs/BENCHMARKS.md](docs/BENCHMARKS.md)):
 
@@ -68,4 +84,6 @@ python testdata/tools/make_golden.py
 cd viz && npm install && npm run dev
 ```
 
-`npm run dev` rebuilds the WebAssembly engine (`npm run wasm`) before starting Vite.
+`npm run dev` rebuilds the WebAssembly engine (`npm run wasm`) before starting Vite. In the visualizer you can deal by seed (type
+it and press Enter), at random, or from your own deck; play with undo; press **Solve & replay** to have the solver find a win from
+the position on screen and replay it move by move; or open a solve file to replay it with a slider and speeds.

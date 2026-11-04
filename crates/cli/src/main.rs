@@ -9,7 +9,7 @@ use std::path::PathBuf;
 use std::process::ExitCode;
 
 #[derive(Parser)]
-#[command(name = "acc", version, about = "Accordion solitaire: deal, verify and (soon) solve games")]
+#[command(name = "acc", version, about = "Accordion solitaire: deal, solve, verify and batch-run games")]
 struct Cli {
     #[command(subcommand)]
     command: Command,
@@ -43,10 +43,17 @@ enum Command {
     },
     /// Measure search speed (single thread) on fixed residual positions, optionally sweeping the dead-end gates.
     Bench(bench::BenchArgs),
+    /// Solve one deal or position on every core and print a verified solve file.
+    Solve(solve::SolveArgs),
+    /// Solve a range of seeded deals on every core; report the win rate, effort and throughput.
+    Batch(batch::BatchArgs),
 }
 
+mod batch;
 mod bench;
+mod dossier;
 mod selftest;
+mod solve;
 
 #[derive(Args)]
 #[group(required = true, multiple = false)]
@@ -135,6 +142,8 @@ fn main() -> ExitCode {
         Command::Verify { path, quiet } => verify_command(path, quiet),
         Command::Selftest { playouts, positions } => selftest::run(playouts, positions),
         Command::Bench(args) => bench::run(&args).map(|()| true),
+        Command::Solve(args) => solve::run(&args),
+        Command::Batch(args) => batch::run(&args),
     };
     match result {
         Ok(true) => ExitCode::SUCCESS,

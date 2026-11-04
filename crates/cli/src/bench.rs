@@ -60,7 +60,7 @@ fn measure(work: &[Position], gates: Gates, args: &BenchArgs) -> Run {
         match search.run(root, args.budget) {
             SearchResult::Win(_) => wins += 1,
             SearchResult::Dead => dead += 1,
-            SearchResult::OutOfBudget => budget_outs += 1,
+            SearchResult::OutOfBudget | SearchResult::Stopped => budget_outs += 1,
         }
     }
     Run { stats: search.stats, seconds: start.elapsed().as_secs_f64(), wins, dead, budget_outs }

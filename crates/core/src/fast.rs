@@ -70,7 +70,7 @@ fn z(left: u8, right: u8) -> u64 {
 
 /// The `r`-th set bit of `mask` (0-based), in O(1) with BMI2.
 #[inline]
-fn select_bit(mask: u64, r: u32) -> u32 {
+pub fn select_bit(mask: u64, r: u32) -> u32 {
     #[cfg(all(target_arch = "x86_64", target_feature = "bmi2"))]
     #[allow(unused_unsafe)]
     // SAFETY: this branch only compiles when BMI2 is enabled for the whole build.

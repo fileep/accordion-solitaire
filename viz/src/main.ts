@@ -1,6 +1,7 @@
 // Accordion visualizer (PLAN.md Phase 3): play a deal by hand with undo, enter your own deck, and replay solve
 // files with a slider and speeds. One deal at a time; every rule comes from the Rust engine via WebAssembly.
 import './style.css';
+import type { SolveResponse } from './solver-worker';
 import {
   type Card,
   type LegalMove,
@@ -55,6 +56,7 @@ function newLine(cards: string, label: string, seed?: bigint): Line {
 
 function playSeed(seed: bigint) {
   playLine = newLine(dealFromSeed(seed), `seed ${seed}`, seed);
+  note('');
   showMode('play');
 }
 
@@ -125,11 +127,32 @@ function updateHighlights() {
   }
 }
 
-/** FLIP: remember where each top card was, rebuild, then animate every pile from its old place to its new one. */
-function renderBoard(animate: boolean, duration = 220) {
+/** The move that led to the position on screen, if any. */
+function lastMove(): { mover: Card; target: Card; leap: boolean } | null {
+  if (!line || line.cursor === 0) return null;
+  const [mover, target] = line.texts[line.cursor - 1].split('>');
+  return { mover, target, leap: (line.moves[line.cursor - 1] & 1) === 1 };
+}
+
+/**
+ * Rebuilds the board. When animating a move it plays in two steps, so a reviewer can see exactly what happened:
+ * the moving pile, raised and outlined, slides onto its target (a copy of the covered card stays in place until it
+ * lands), then the piles to the right slide left to close the gap. The last pile moved keeps an outline either way.
+ */
+function renderBoard(animate: boolean, duration = 420) {
+  const motion = animate && !reduceMotion.matches && duration > 0;
+  const moved = lastMove();
+  for (const old of board.parentElement!.querySelectorAll('.ghost')) old.remove(); // from a move still fading
   const before = new Map<string, DOMRect>();
-  if (animate && !reduceMotion.matches && duration > 0) {
+  let ghost: HTMLElement | null = null;
+  let ghostRect: DOMRect | null = null;
+  if (motion) {
     for (const el of board.querySelectorAll<HTMLElement>('.pile')) before.set(el.dataset.top!, el.getBoundingClientRect());
+    const covered = moved && board.querySelector<HTMLElement>(`.pile[data-top="${moved.target}"]`);
+    if (covered) {
+      ghost = covered.cloneNode(true) as HTMLElement;
+      ghostRect = covered.getBoundingClientRect();
+    }
   }
   if (!line || !state) {
     board.replaceChildren();
@@ -137,14 +160,42 @@ function renderBoard(animate: boolean, duration = 220) {
   }
   board.replaceChildren(...state.piles.map(pileElement));
   updateHighlights();
+  if (moved) board.querySelector(`.pile[data-top="${moved.mover}"]`)?.classList.add('last-move');
+  if (!motion) return;
+
+  const slide = duration * 0.6;
+  const close = duration - slide;
+  if (ghost && ghostRect) {
+    const wrap = board.parentElement!;
+    const origin = wrap.getBoundingClientRect();
+    ghost.className = 'pile ghost';
+    ghost.removeAttribute('tabindex');
+    ghost.removeAttribute('role');
+    ghost.setAttribute('aria-hidden', 'true');
+    ghost.style.left = `${ghostRect.left - origin.left}px`;
+    ghost.style.top = `${ghostRect.top - origin.top}px`;
+    ghost.style.width = `${ghostRect.width}px`;
+    wrap.append(ghost);
+    const fade = ghost.animate([{ opacity: 1 }, { opacity: 1, offset: 0.85 }, { opacity: 0 }], { duration: slide + 60 });
+    fade.finished.then(
+      () => ghost!.remove(),
+      () => ghost!.remove(),
+    );
+  }
   for (const el of board.querySelectorAll<HTMLElement>('.pile')) {
     const old = before.get(el.dataset.top!);
     if (!old) continue;
     const now = el.getBoundingClientRect();
-    const dx = old.left - now.left;
-    const dy = old.top - now.top;
-    if (dx || dy) {
-      el.animate([{ transform: `translate(${dx}px, ${dy}px)` }, { transform: 'none' }], { duration, easing: 'ease-out' });
+    const from = { transform: `translate(${old.left - now.left}px, ${old.top - now.top}px)` };
+    if (el.dataset.top === moved?.mover) {
+      el.classList.add('moving');
+      const flight = el.animate([from, { transform: 'none' }], { duration: slide, easing: 'ease-in-out' });
+      flight.finished.then(
+        () => el.classList.remove('moving'),
+        () => el.classList.remove('moving'),
+      );
+    } else if (old.left !== now.left || old.top !== now.top) {
+      el.animate([from, { transform: 'none' }], { duration: close, delay: slide, easing: 'ease-out', fill: 'backwards' });
     }
   }
 }
@@ -188,6 +239,10 @@ function renderStatus() {
   status.textContent = text;
   status.classList.toggle('bad', mode === 'replay' && !!replayEntry && !replayEntry.verified);
   label.textContent = `Deal (${line.label}): ${line.cards}`;
+  const moved = lastMove();
+  $('last-move').textContent = moved
+    ? `Move ${line.cursor}: ${cardLabel(moved.mover)} onto ${cardLabel(moved.target)} (${moved.leap ? 'leap, 3 piles left' : 'slide, 1 pile left'})`
+    : 'Start of the deal';
 }
 
 function renderReplayControls() {
@@ -200,7 +255,7 @@ function renderReplayControls() {
   $('r-play').setAttribute('aria-label', timer === undefined ? 'Play' : 'Pause');
 }
 
-function render(animate = false, duration = 220) {
+function render(animate = false, duration = 420) {
   state = line ? stateAfter(line.cards, line.moves.slice(0, line.cursor)) : null;
   if (selected !== null && (!state || selected >= state.piles.length)) selected = null;
   renderBoard(animate, duration);
@@ -209,7 +264,112 @@ function render(animate = false, duration = 220) {
   renderReplayControls();
   $<HTMLButtonElement>('undo').disabled = !line || line.cursor === 0;
   $<HTMLButtonElement>('redo').disabled = !line || line.cursor >= line.moves.length;
+  renderOutcome();
 }
+
+// ---- you win / game over ---------------------------------------------------------------------------------------
+
+/** The position the outcome box was hidden on; it stays hidden until the position changes. */
+let outcomeHiddenAt: string | null = null;
+const positionKey = () => (line ? `${line.cards}|${line.moves.slice(0, line.cursor).join(',')}` : '');
+
+function renderOutcome() {
+  const box = $('outcome');
+  const over = mode === 'play' && !!state && (state.won || state.legal.length === 0);
+  if (!over || outcomeHiddenAt === positionKey()) {
+    box.hidden = true;
+    return;
+  }
+  const piles = state!.piles.length;
+  $('outcome-title').textContent = state!.won ? 'You win!' : 'Game over';
+  $('outcome-text').textContent = state!.won
+    ? `All 52 cards in one pile in ${line!.cursor} moves.`
+    : `No moves left with ${piles} piles. Undo or restart to try another line, or ask the solver for a way to win.`;
+  $('o-solve').hidden = state!.won;
+  $<HTMLButtonElement>('o-undo').disabled = line!.cursor === 0;
+  box.hidden = false;
+}
+
+$('o-undo').addEventListener('click', () => seek((line?.cursor ?? 0) - 1));
+$('o-restart').addEventListener('click', () => seek(0));
+$('o-new').addEventListener('click', () => playSeed(randomSeed()));
+$('o-solve').addEventListener('click', () => startSolve(true));
+$('o-close').addEventListener('click', () => {
+  outcomeHiddenAt = positionKey();
+  renderOutcome();
+});
+
+// ---- solve & replay ---------------------------------------------------------------------------------------------
+
+let worker: Worker | null = null;
+let solveClock: number | undefined;
+const SOLVE_LIMIT = 300_000_000; // positions; about half a minute in the browser at worst
+
+function note(text: string) {
+  $('note').textContent = text;
+  $('note').hidden = text === '';
+}
+
+function setSolving(on: boolean) {
+  $('solving').hidden = !on;
+  $<HTMLButtonElement>('solve').hidden = on;
+  $<HTMLButtonElement>('o-solve').disabled = on;
+  clearInterval(solveClock);
+  if (on) {
+    const t0 = performance.now();
+    const tickClock = () => ($('solving-time').textContent = `${((performance.now() - t0) / 1000).toFixed(1)} s`);
+    tickClock();
+    solveClock = window.setInterval(tickClock, 100);
+  }
+}
+
+/** Solves the deal on screen from the current position (or from the start), verifies the line, and replays it. */
+function startSolve(fromStart = false) {
+  const game = playLine;
+  if (!game) return;
+  const prefix = fromStart ? [] : game.moves.slice(0, game.cursor);
+  note(fromStart ? 'Solving from the start of the deal…' : 'Solving from this position…');
+  setSolving(true);
+  worker ??= new Worker(new URL('./solver-worker.ts', import.meta.url), { type: 'module' });
+  worker.onmessage = (e: MessageEvent<SolveResponse>) => finishSolve(e.data, game, prefix, fromStart);
+  worker.postMessage({ cards: game.cards, moves: prefix, maxNodes: SOLVE_LIMIT, seed: Math.floor(Math.random() * 2 ** 32) });
+}
+
+function finishSolve(r: SolveResponse, game: Line, prefix: number[], fromStart: boolean) {
+  setSolving(false);
+  const effort = `${(r.nodes ?? 0).toLocaleString()} positions searched in ${(r.ms / 1000).toFixed(1)} s`;
+  if (r.error) return note(`The solver failed: ${r.error}`);
+  if (r.result === 'win' && r.moves) {
+    let record: string;
+    try {
+      record = exportRecord(game.cards, game.seed, [...prefix, ...r.moves]); // verified before it is shown
+    } catch (err) {
+      return note(`The solver's line failed verification and was discarded: ${String(err)}`);
+    }
+    showMode('replay');
+    openText(record);
+    seek(prefix.length);
+    const from = prefix.length ? `from move ${prefix.length}` : 'from the start';
+    note(`Solved ${from}: a verified win (${effort}). Replaying it now; use Continue from here to take over.`);
+    togglePlayback();
+  } else if (r.result === 'exhausted' && !fromStart && prefix.length > 0) {
+    note(`No win exists from this position (${effort}). Solving from the start of the deal instead…`);
+    startSolve(true);
+  } else if (r.result === 'exhausted') {
+    const where = fromStart || prefix.length === 0 ? 'from the start of the deal' : 'from here';
+    note(`No win found: every line ${where} was searched (${effort}). This deal looks unwinnable.`);
+  } else {
+    note(`No win found within the search limit (${effort}). Try again: each attempt searches in a new random order.`);
+  }
+}
+
+$('solve').addEventListener('click', () => startSolve(false));
+$('solve-cancel').addEventListener('click', () => {
+  worker?.terminate();
+  worker = null;
+  setSolving(false);
+  note('Solve cancelled.');
+});
 
 // ---- play ----------------------------------------------------------------------------------------------------
 
@@ -219,10 +379,11 @@ function play(mv: LegalMove) {
   line.texts = [...line.texts.slice(0, line.cursor), `${mv.mover}>${mv.target}`];
   line.cursor++;
   selected = null;
+  note('');
   render(true);
 }
 
-function seek(k: number, animate = false, duration = 220) {
+function seek(k: number, animate = false, duration = 420) {
   if (!line) return;
   const next = Math.max(0, Math.min(line.moves.length, k));
   const forward = next === line.cursor + 1;
@@ -282,11 +443,12 @@ $('history').addEventListener('click', (e) => {
   if (k) seek(Number(k));
 });
 $('new-random').addEventListener('click', () => playSeed(randomSeed()));
-$('new-seed').addEventListener('click', () => {
-  const input = $<HTMLInputElement>('seed-input');
+$('seed-input').addEventListener('keydown', (e) => {
+  if (e.key !== 'Enter') return;
+  const input = e.target as HTMLInputElement;
   try {
     const seed = BigInt(input.value.trim());
-    if (seed < 0n || seed >= 1n << 64n) throw new Error();
+    if (input.value.trim() === '' || seed < 0n || seed >= 1n << 64n) throw new Error();
     input.setCustomValidity('');
     playSeed(seed);
   } catch {
@@ -294,6 +456,7 @@ $('new-seed').addEventListener('click', () => {
     input.reportValidity();
   }
 });
+$('seed-input').addEventListener('input', (e) => (e.target as HTMLInputElement).setCustomValidity(''));
 $('export').addEventListener('click', () => {
   if (!line) return;
   try {
@@ -321,7 +484,7 @@ const interval = () => 1000 / Number($<HTMLSelectElement>('r-speed').value);
 
 function tick() {
   if (!line || line.cursor >= line.moves.length) return stopPlayback();
-  seek(line.cursor + 1, true, Math.min(220, interval() * 0.8));
+  seek(line.cursor + 1, true, Math.min(700, interval() * 0.75)); // slower speeds get a slower, clearer slide
   timer = window.setTimeout(tick, interval());
   renderReplayControls();
 }

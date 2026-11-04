@@ -18,8 +18,8 @@
     <section id="play-bar" class="bar">
       <div class="group">
         <button id="new-random">New random deal</button>
-        <label class="seed">Seed <input id="seed-input" inputmode="numeric" placeholder="e.g. 42" /></label>
-        <button id="new-seed">Deal</button>
+        <label class="seed" title="Type a seed and press Enter to deal it">Seed
+          <input id="seed-input" inputmode="numeric" placeholder="42 ↵" /></label>
         <button id="enter-deck">Enter a deck…</button>
       </div>
       <div class="group">
@@ -27,6 +27,9 @@
         <button id="redo" title="Redo (Ctrl+Y)">Redo</button>
         <button id="restart">Restart</button>
         <button id="export" title="Download this game as a solve file">Export</button>
+        <button id="solve" class="primary" title="Find a winning line from this position, then replay it">Solve &amp; replay</button>
+        <span id="solving" class="solving" hidden>Solving… <span id="solving-time"></span>
+          <button id="solve-cancel">Cancel</button></span>
       </div>
     </section>
 
@@ -50,8 +53,8 @@
         <span id="r-count" class="muted">0 / 0</span>
         <label>Speed
           <select id="r-speed">
-            <option value="0.25">0.25×</option><option value="0.5">0.5×</option><option value="1">1×</option>
-            <option value="2" selected>2×</option><option value="4">4×</option><option value="8">8×</option>
+            <option value="0.25">0.25×</option><option value="0.5">0.5×</option><option value="1" selected>1×</option>
+            <option value="2">2×</option><option value="4">4×</option><option value="8">8×</option>
             <option value="16">16×</option><option value="32">32×</option>
           </select>
         </label>
@@ -59,11 +62,28 @@
       </div>
     </section>
 
+    <p id="note" class="note" aria-live="polite" hidden></p>
     <p id="status" class="status" aria-live="polite"></p>
     <p id="deal-label" class="muted small"></p>
+    <p id="last-move" class="last-move-caption" aria-live="polite"></p>
     <p id="pile-info" class="small pile-info" aria-live="polite"></p>
 
-    <main id="board" class="board" aria-label="Piles, left to right"></main>
+    <div class="board-wrap">
+      <main id="board" class="board" aria-label="Piles, left to right"></main>
+      <div id="outcome" class="outcome" hidden>
+        <div class="outcome-box" role="alertdialog" aria-labelledby="outcome-title" aria-describedby="outcome-text">
+          <button id="o-close" class="o-close" title="Hide this box to look at the board" aria-label="Hide">×</button>
+          <h2 id="outcome-title"></h2>
+          <p id="outcome-text"></p>
+          <div class="outcome-actions">
+            <button id="o-undo">Undo</button>
+            <button id="o-restart">Restart</button>
+            <button id="o-solve">Show a solution</button>
+            <button id="o-new" class="primary">New random deal</button>
+          </div>
+        </div>
+      </div>
+    </div>
 
     <section class="history-wrap">
       <h2>Moves</h2>

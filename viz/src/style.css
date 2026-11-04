@@ -8,6 +8,7 @@
   --accent-soft: #d5ebe3;
   --target: #c98a1b;
   --target-soft: #f8e7c4;
+  --moved: #2f5fbf;
   --red: #b3261e;
   --black: #1d1d1b;
   --good: #2f6f5e;
@@ -30,6 +31,7 @@
     --accent-soft: #23423a;
     --target: #e6b04f;
     --target-soft: #4a3a1a;
+    --moved: #8ab4ff;
     --red: #ff8a80;
     --black: #ecebe6;
     --good: #7cc7b0;
@@ -202,7 +204,90 @@ textarea {
   word-break: break-word;
 }
 
+.note {
+  margin: 10px 0 0;
+  padding: 8px 12px;
+  border-left: 3px solid var(--accent);
+  background: var(--accent-soft);
+  border-radius: 4px;
+  font-size: 0.9rem;
+}
+
+.note[hidden] {
+  display: none;
+}
+
+.solving {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--muted);
+}
+
+.solving[hidden] {
+  display: none;
+}
+
 /* ---- board ---------------------------------------------------------------------------------------------- */
+
+.board-wrap {
+  position: relative;
+}
+
+.outcome {
+  position: absolute;
+  inset: 0;
+  z-index: 3;
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  padding-top: 48px;
+  border-radius: 8px;
+  background: rgb(0 0 0 / 0.35);
+}
+
+.outcome[hidden] {
+  display: none;
+}
+
+.outcome-box {
+  position: relative;
+  width: min(420px, calc(100% - 32px));
+  padding: 20px 22px 18px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--surface);
+  box-shadow: 0 8px 28px rgb(0 0 0 / 0.3);
+  text-align: center;
+}
+
+.outcome-box h2 {
+  font-size: 1.5rem;
+  margin: 0 0 6px;
+}
+
+.outcome-box p {
+  margin: 0 0 16px;
+  color: var(--muted);
+}
+
+.outcome-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 8px;
+}
+
+.o-close {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  border: none;
+  background: none;
+  font-size: 1.2rem;
+  line-height: 1;
+  color: var(--muted);
+}
 
 .board {
   display: grid;
@@ -307,6 +392,35 @@ textarea {
 
 .pile:focus-visible .card {
   outline: 3px solid var(--fg);
+}
+
+/* The last move: the pile that moved keeps a ring; while it flies it is raised above its neighbours. */
+.pile.last-move .card {
+  box-shadow: 0 0 0 3px var(--moved);
+}
+
+.pile.moving {
+  z-index: 2;
+}
+
+.pile.moving .card {
+  box-shadow:
+    0 0 0 3px var(--moved),
+    0 8px 18px rgb(0 0 0 / 0.35);
+}
+
+/* The covered card, left in place until the moving pile lands on it. */
+.pile.ghost {
+  position: absolute;
+  z-index: 1;
+  pointer-events: none;
+}
+
+.last-move-caption {
+  min-height: 1.3em;
+  margin: 2px 0 4px;
+  font-weight: 600;
+  color: var(--moved);
 }
 
 /* ---- history ------------------------------------------------------------------------------------------- */

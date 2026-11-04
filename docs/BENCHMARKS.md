@@ -99,3 +99,49 @@ dead ends.
 - **Gating too low hurts.** At 13 piles, dead ends are missed and searches grow.
 - **The left-leaf test doesn't pay.** It cuts 5–9% of nodes but costs more time than it saves at every depth, so it is off by default and
   stays available as an option.
+
+## Phase 4 — solving whole deals
+
+Same machine and toolchain. The solver is randomized first-win DFS with Luby restarts (unit 10,000 positions); the dead-position
+table persists across restarts; dead-end gates are the Phase 2 defaults.
+
+### 100,000 deals (`acc batch`, 16 threads)
+
+```bash
+cargo run --release -p accordion-cli -- batch --from 0 --count 100000 --out results.jsonl
+```
+
+| Measure | Result |
+|---|---|
+| Deals | 100,000 (seeds 0–99,999), limit 50M positions each |
+| Won | **100,000**, every one verified by the reference engine during the run, and again by `acc verify` on the output file |
+| Win rate | **100%**, 95% CI **[99.9962%, 100%]** (Wilson) |
+| Positions per deal | median 19,573 · p90 90,049 · p99 266,452 · p99.9 537,836 · max 2,527,046 |
+| Time per deal (one core) | median 1.67 ms · p90 8.5 ms · p99 26 ms · p99.9 52 ms · max 229 ms |
+| Throughput | **4,110 deals/s**, 156M positions/s overall (24.3 s wall) |
+
+### Per-thread table size (10,000 deals, seeds 10,000–19,999)
+
+| Table per thread | Deals/s | Median ms/deal |
+|---|---|---|
+| 2^12 buckets (256 KB) | 4,962 | 1.44 |
+| 2^13 (512 KB) | 4,617 | 1.48 |
+| **2^14 (1 MB), default** | 4,631 | 1.50 |
+| 2^16 (4 MB) | 3,489 | 2.07 |
+| 2^18 (16 MB) | 2,822 | 2.63 |
+
+Positions per deal barely change. A typical deal needs only about 20,000 positions, so a table that stays in the core's own cache wins.
+The differences among 2^12–2^14 are within run-to-run noise, so the default is 2^14, leaving room for hard deals. `acc solve`,
+which puts every thread on one deal, keeps 16 MB per thread.
+
+Earlier fix: building the per-thread search with rayon's `map_init` created a fresh table for every split of the work. A
+thread-local search took 2,000 deals from 844 to 2,724 deals/s.
+
+### Single deals (`acc solve`, 16 threads)
+
+| Input | Result |
+|---|---|
+| Seed 42 | won in 0.03 s (110k positions) |
+| Seed 7, typed in lowercase on stdin | won (58k positions) |
+| Seed 42 after 40 golden moves (`--position`, 12 piles) | won in 11 moves (923 positions) |
+| Constructed unwinnable deal (`testdata/games/unwinnable_dead_end.json`) | every line searched, no win (12,080 positions); dossier and index written |

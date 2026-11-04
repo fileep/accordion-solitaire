@@ -10,6 +10,7 @@ dependencies = [
  "accordion-solver",
  "clap",
  "rayon",
+ "serde_json",
 ]
 
 [[package]]
@@ -27,6 +28,7 @@ name = "accordion-solver"
 version = "0.1.0"
 dependencies = [
  "accordion-core",
+ "serde_json",
 ]
 
 [[package]]
@@ -34,6 +36,7 @@ name = "accordion-wasm"
 version = "0.1.0"
 dependencies = [
  "accordion-core",
+ "accordion-solver",
  "serde_json",
  "wasm-bindgen",
 ]

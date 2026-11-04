@@ -1,11 +1,13 @@
 //! First-win depth-first search over the fast engine, with a dead-position table and dead-end tests that run
 //! only where they pay (RESEARCH.md §5.10). No recursion and no allocation per node: a fixed stack of frames,
-//! each holding its position and its untried moves as two bitmasks. Restart schedules and random prefixes
-//! (PLAN.md Phases 4–5) are built on top of this.
+//! each holding its position and its untried moves as two bitmasks. Moves are tried in a fixed order or, with
+//! an RNG, in random order; restart schedules (`solver`) and random prefixes (PLAN.md Phase 5) build on this.
 
 use crate::table::DeadTable;
 use accordion_core::Move;
-use accordion_core::fast::{Position, connected};
+use accordion_core::fast::{Position, connected, select_bit};
+use accordion_core::rng::Xoshiro256StarStar;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 /// Run each dead-end test only at positions with at most this many piles (0 turns a test off).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -42,6 +44,8 @@ pub enum SearchResult {
     Dead,
     /// The node budget ran out first.
     OutOfBudget,
+    /// Another thread asked the search to stop.
+    Stopped,
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -65,6 +69,19 @@ impl std::ops::AddAssign for Stats {
     }
 }
 
+impl std::ops::Sub for Stats {
+    type Output = Stats;
+
+    fn sub(self, o: Stats) -> Stats {
+        Stats {
+            nodes: self.nodes - o.nodes,
+            table_hits: self.table_hits - o.table_hits,
+            dead_end_cuts: self.dead_end_cuts - o.dead_end_cuts,
+            tests_run: self.tests_run - o.tests_run,
+        }
+    }
+}
+
 #[derive(Clone, Copy)]
 struct Frame {
     pos: Position,
@@ -78,6 +95,9 @@ pub struct Search {
     gates: Gates,
     stack: Vec<Frame>,
     pub stats: Stats,
+    /// Fewest piles reached since the last [`Search::reset_best`], and the line from the root that reached it.
+    best_piles: usize,
+    best_line: Vec<Move>,
 }
 
 impl Search {
@@ -87,6 +107,8 @@ impl Search {
             gates,
             stack: Vec::with_capacity(53),
             stats: Stats::default(),
+            best_piles: usize::MAX,
+            best_line: Vec::new(),
         }
     }
 
@@ -94,9 +116,21 @@ impl Search {
         self.gates
     }
 
-    /// Forgets every dead position, e.g. between unrelated deals. Keep the table across attempts on the same deal.
+    /// Forgets every dead position. Dead is a fact about a position, whatever the root, so this is only to make
+    /// room between unrelated deals; keep the table across attempts on the same deal.
     pub fn clear_table(&mut self) {
         self.table.clear();
+    }
+
+    /// Starts tracking the best line afresh (for a new root).
+    pub fn reset_best(&mut self) {
+        self.best_piles = usize::MAX;
+        self.best_line.clear();
+    }
+
+    /// Fewest piles reached since the last reset, and the line from the root that reached them.
+    pub fn best(&self) -> (usize, &[Move]) {
+        (self.best_piles, &self.best_line)
     }
 
     /// Dead-end tests for a new position, gated by its pile count. `parent_len` tells whether the position just
@@ -121,8 +155,24 @@ impl Search {
         false
     }
 
-    /// Searches for a win from `root`, generating at most `budget` positions.
+    /// Searches for a win from `root` in a fixed move order, generating at most `budget` positions.
     pub fn run(&mut self, root: &Position, budget: u64) -> SearchResult {
+        self.run_with(root, budget, None, None)
+    }
+
+    /// [`Search::run`] with options: with `rng`, moves are tried in uniformly random order; with `stop`, the
+    /// search returns [`SearchResult::Stopped`] soon after the flag is set.
+    pub fn run_with(
+        &mut self,
+        root: &Position,
+        budget: u64,
+        mut rng: Option<&mut Xoshiro256StarStar>,
+        stop: Option<&AtomicBool>,
+    ) -> SearchResult {
+        if root.len() < self.best_piles {
+            self.best_piles = root.len();
+            self.best_line.clear();
+        }
         if root.is_won() {
             return SearchResult::Win(Vec::new());
         }
@@ -138,20 +188,31 @@ impl Search {
             via: Move::slide(0),
         });
         while let Some(top) = self.stack.last_mut() {
-            let untried = top.slides | top.leaps;
-            if untried == 0 {
+            let (n1, n3) = (top.slides.count_ones(), top.leaps.count_ones());
+            if n1 + n3 == 0 {
                 let dead = self.stack.pop().expect("non-empty");
                 self.table.insert(dead.pos.hash());
                 continue;
             }
-            // Lowest pile first, slide before leap: the reference engine's move order.
-            let pile = untried.trailing_zeros();
-            let bit = 1u64 << pile;
-            let leap = top.slides & bit == 0;
+            let (pile, leap) = match rng.as_deref_mut() {
+                // Lowest pile first, slide before leap: the reference engine's move order.
+                None => {
+                    let pile = (top.slides | top.leaps).trailing_zeros();
+                    (pile, top.slides >> pile & 1 == 0)
+                }
+                Some(r) => {
+                    let k = r.below(u64::from(n1 + n3)) as u32;
+                    if k < n1 {
+                        (select_bit(top.slides, k), false)
+                    } else {
+                        (select_bit(top.leaps, k - n1), true)
+                    }
+                }
+            };
             if leap {
-                top.leaps &= !bit;
+                top.leaps &= !(1u64 << pile);
             } else {
-                top.slides &= !bit;
+                top.slides &= !(1u64 << pile);
             }
             let hash = top.pos.hash_after(pile as usize, leap);
             self.table.prefetch(hash);
@@ -161,6 +222,12 @@ impl Search {
             let via = Move { pile: pile as u8, leap };
 
             self.stats.nodes += 1;
+            if child.len() < self.best_piles {
+                self.best_piles = child.len();
+                self.best_line.clear();
+                self.best_line.extend(self.stack.iter().skip(1).map(|f| f.via));
+                self.best_line.push(via);
+            }
             if child.is_won() {
                 let mut line: Vec<Move> = self.stack.iter().skip(1).map(|f| f.via).collect();
                 line.push(via);
@@ -168,6 +235,9 @@ impl Search {
             }
             if self.stats.nodes - start > budget {
                 return SearchResult::OutOfBudget;
+            }
+            if self.stats.nodes & 0xFFF == 0 && stop.is_some_and(|s| s.load(Ordering::Relaxed)) {
+                return SearchResult::Stopped;
             }
             if self.table.contains(hash) {
                 self.stats.table_hits += 1;
@@ -187,7 +257,6 @@ impl Search {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use accordion_core::rng::Xoshiro256StarStar;
     use accordion_core::verify::verify;
     use accordion_core::{Deal, Outcome, SolveRecord};
 
@@ -222,17 +291,39 @@ mod tests {
     }
 
     #[test]
-    fn gates_change_speed_not_answers() {
-        // With an exact table (large enough to hold everything) the verdict can't depend on the tests.
+    fn gates_and_ordering_change_speed_not_answers() {
+        // With an exact table (large enough to hold everything) the verdict can't depend on tests or order.
         for seed in 0..40 {
             let root = residual(seed, 32);
-            let verdict = |gates| {
+            let verdict = |gates, random: bool| {
                 let mut s = Search::new(18, gates);
-                matches!(s.run(&root, 5_000_000), SearchResult::Win(_))
+                let mut rng = Xoshiro256StarStar::from_seed(seed);
+                let r = s.run_with(&root, 5_000_000, random.then_some(&mut rng), None);
+                matches!(r, SearchResult::Win(_))
             };
-            let base = verdict(Gates::OFF);
-            assert_eq!(verdict(Gates::default()), base, "seed {seed}");
-            assert_eq!(verdict(Gates::ALWAYS), base, "seed {seed}");
+            let base = verdict(Gates::OFF, false);
+            assert_eq!(verdict(Gates::default(), false), base, "seed {seed}");
+            assert_eq!(verdict(Gates::ALWAYS, false), base, "seed {seed}");
+            assert_eq!(verdict(Gates::default(), true), base, "seed {seed} (random order)");
         }
+    }
+
+    #[test]
+    fn best_line_reaches_the_reported_pile_count() {
+        let root = residual(3, 30);
+        let mut s = Search::new(16, Gates::default());
+        let _ = s.run(&root, 2_000);
+        let (piles, line) = s.best();
+        let end = line.iter().fold(root, |p, &mv| p.play(mv));
+        assert_eq!(end.len(), piles);
+        assert!(piles < root.len());
+    }
+
+    #[test]
+    fn a_raised_stop_flag_stops_the_search() {
+        let stop = AtomicBool::new(true);
+        let mut s = Search::new(16, Gates::default());
+        let r = s.run_with(&Position::from_deal(&Deal::from_seed(1)), u64::MAX, None, Some(&stop));
+        assert!(matches!(r, SearchResult::Stopped | SearchResult::Win(_)), "{r:?}");
     }
 }

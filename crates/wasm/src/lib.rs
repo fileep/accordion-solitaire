@@ -4,13 +4,53 @@
 //! boundary as JSON strings; seeds are `BigInt` on the JavaScript side so all 64 bits survive.
 
 use accordion_core::deck_input::parse_position;
+use accordion_core::fast::Position;
 use accordion_core::game::Game;
 use accordion_core::notation::{CardMove, decode_compact};
 use accordion_core::solve_file::{Outcome, SolveRecord, parse_records};
 use accordion_core::verify::verify;
 use accordion_core::{Deal, Move};
+use accordion_solver::{Config, Gates, Search, Verdict};
 use serde_json::{Map, Value, json};
 use wasm_bindgen::prelude::*;
+
+/// Solves from the position after `moves` on the deal `cards`, with the same solver code as `acc solve` (one
+/// thread; run it in a Web Worker). `max_nodes` caps the search; `seed` picks the move-order randomness.
+/// Returns `{"result": "win", "moves": [bytes from that position], "nodes", "attempts"}`, or
+/// `{"result": "exhausted" | "unknown", "nodes", "attempts", "bestPiles"}`, or `{"error"}`.
+/// The page verifies a win with `exportRecord` before showing it.
+#[wasm_bindgen]
+pub fn solve(cards: &str, moves: &[u8], max_nodes: f64, seed: f64) -> String {
+    let deal = match Deal::parse(cards) {
+        Ok(d) => d,
+        Err(e) => return json!({ "error": format!("deal: {e}") }).to_string(),
+    };
+    let mut game = Game::new(&deal);
+    for (i, &byte) in moves.iter().enumerate() {
+        if let Err(e) = game.apply(Move::from_byte(byte)) {
+            return json!({ "error": format!("move {}: {e}", i + 1) }).to_string();
+        }
+    }
+    let config = Config { max_nodes: max_nodes.max(1.0) as u64, seed: seed as u64, ..Config::default() };
+    let mut search = Search::new(16, Gates::default());
+    let report = accordion_solver::solve(&Position::from_tops(&game.tops()), &config, &mut search, None);
+    let common =
+        json!({ "nodes": report.nodes, "attempts": report.attempts, "bestPiles": report.best_piles });
+    let mut out = common.as_object().cloned().unwrap_or_default();
+    match report.verdict {
+        Verdict::Win(line) => {
+            out.insert("result".into(), json!("win"));
+            out.insert("moves".into(), json!(line.iter().map(|m| m.to_byte()).collect::<Vec<u8>>()));
+        }
+        Verdict::Exhausted => {
+            out.insert("result".into(), json!("exhausted"));
+        }
+        Verdict::Unknown => {
+            out.insert("result".into(), json!("unknown"));
+        }
+    }
+    Value::Object(out).to_string()
+}
 
 /// Engine version, shown in the visualizer so it's clear which rules build is running.
 #[wasm_bindgen(js_name = engineVersion)]

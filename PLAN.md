@@ -265,7 +265,14 @@ dead-end tests ≥ 20M nodes/s (about 100× the Python probe).
 - **TS golden tests:** `npm test` runs `viz/tests/golden.test.ts` on the WASM engine against `testdata/` and passes.
 - **Not exercised in the browser:** drag-and-drop, the file-picker path (the same parser is used by paste) and the download itself
   (export is covered by the TS test).
-- **Deferred:** drag to reorder picked cards; Solve buttons (Phase 4).
+- **Deferred:** drag to reorder picked cards.
+- **Added with Phase 4** (requested during review):
+  - **Solve & replay:** solves from the position on screen with the WASM solver in a Web Worker, with a cancel button. If that position
+    can't be won it solves from the start instead. The line is verified, then opens in Replay and plays automatically.
+  - **Two-step move animation:** the moving pile, raised and outlined, slides onto its target while a copy of the covered card stays put,
+    then the row closes up. The last pile moved keeps an outline, and a caption names the move.
+  - **"You win!" / "Game over" box** over the board, with Undo, Restart, New random deal, Show a solution (after a loss) and hide.
+  - **Seed box:** the seed deals on Enter, and the separate Deal button is gone. Replay now defaults to 1x.
 
 Vite + TypeScript; cards drawn in SVG/CSS. It opens **one deal at a time**: by seed, a user-entered deck, a single solve file,
 or one entry picked by seed from a batch or `hard-deals/` file. It has no batch dashboards or live solver views.
@@ -290,7 +297,31 @@ or one entry picked by seed from a batch or `hard-deals/` file. It has no batch 
 
 **Done when:** a human can play a full game with undo, and solver output replays correctly at every speed, including scrubbing.
 
-### Phase 4 — Baseline solver and batch runner
+### Phase 4 — Baseline solver and batch runner ✅ done
+
+**Outcome** (numbers in docs/BENCHMARKS.md):
+
+- **Solver:**
+  - `accordion-solver::solve` is randomized first-win DFS under a Luby restart schedule. The dead-position table persists across restarts.
+  - `portfolio` runs it on N threads, with the first win stopping the rest.
+  - It tracks the best line for dossiers, and a stop flag lets a run be cancelled.
+- **`acc batch`:**
+  - **100,000 deals (seeds 0–99,999): 100,000 won, every one verified, 95% CI [99.9962%, 100%].**
+  - It ran at 4,110 deals/s on 16 threads; positions per deal: median 19,573, max 2.5M (229 ms).
+  - `acc verify` re-checked the whole output file independently.
+  - The per-thread table defaults to 1 MB: small tables that stay in the core's own cache were about 1.7× faster than 16 MB.
+- **`acc solve`:**
+  - It takes a seed, typed or piped cards, a file, or `--position`, and solves on all cores with live progress.
+  - It writes a verified solve file.
+  - `--escalate` retries with 10x and 100x limits and fresh orders. A deal that isn't won gets a dossier in `hard-deals/` and an INDEX.md row.
+- **Gates:**
+  - `crates/solver/tests/gates.rs`: the unwinnable golden deals and positions are never reported won, the controls are won, and the first
+    100 deals win and verify.
+  - The dossier path was exercised on the constructed unwinnable deal.
+- **Deviations:**
+  - Limits are in positions searched (`--max-nodes`), not wall time, so runs are reproducible.
+  - The visualizer's "export the deck and run `acc solve --escalate`" fallback and `acc serve` are not built yet.
+  - "Exhausted" (every line searched) is reported as not won rather than `loss`, because the table is lossy. Proofs remain Phase 7.
 
 - **First-win DFS:**
   - randomized move ordering;
@@ -555,7 +586,7 @@ The unwinnable cases:
 | M1 ✅ | Reference engine + formats | §6.2 golden catalogue passes (cheats rejected, unwinnable deals proven by exhaustive search, mutations agree with Python); formats frozen |
 | M2 ✅ | Fast engine + dead-end tests | 10M differential playouts and 1M soundness checks pass; exhaustive counts match; ≥20M DFS nodes/s/thread (measured 26.9–28.3M) |
 | M3 ✅ | Visualizer | enter/validate a deck (paste or card picker); human play with undo; replays solver files with slider/speeds; continue-by-hand |
-| M4 | Baseline solver + solve-a-deck | ≥99.9% on 100k deals, all verified, every unknown has a dossier; never `win` on the unwinnable golden deals; `acc solve` and visualizer Solve / Solve-from-here work on user-entered decks |
+| M4 ✅ | Baseline solver + solve-a-deck | ≥99.9% on 100k deals, all verified, every unknown has a dossier; never `win` on the unwinnable golden deals; `acc solve` and visualizer Solve / Solve-from-here work on user-entered decks |
 | M5 | Tuned schedule | beats baseline on held-out mean and p99; 100% on 100k held-out |
 | M6 | Endgame table + cache | verified; measured speed-up |
 | M7 | Big run | 10M+ deals, Wilson CI, results write-up, hard-deal gallery; exhaustive mode proves the golden unwinnable cases lost |
