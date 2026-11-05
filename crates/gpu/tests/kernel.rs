@@ -240,6 +240,23 @@ fn golden_and_random_deals_are_won_with_lines_that_verify() {
     }
 }
 
+#[test]
+fn every_try_runs_when_a_group_of_tries_straddles_the_rungs() {
+    // 5 + 8 tries a deal: in groups of 8 sharing their first moves (the default), the first group spans both rungs and
+    // the last is short. A deal not won still gets all 13, and every line replays.
+    let deals: Vec<(String, Deal, Option<Outcome>)> =
+        (0..2048u64).map(|s| (format!("seed {s}"), Deal::from_seed(s), None)).collect();
+    let positions: Vec<[u8; 52]> = deals.iter().map(|(_, deal, _)| deal_codes(deal)).collect();
+    let Some(gpu) = gpu() else { return };
+    assert!(gpu.settings.split && gpu.settings.share_group == 8, "the test expects groups of 8");
+    let result = gpu.run(&positions, &Attempts { tries: 5, tries2: 8, ..gpu.settings.attempts(0) }).unwrap();
+    let won = check_deals(&deals, &result.lines);
+    assert!(won > 0 && won < deals.len(), "won {won} of {}", deals.len());
+    for (i, (&tries, line)) in result.tries.iter().zip(&result.lines).enumerate() {
+        assert!(line.is_some() || tries == 13, "deal {i}: {tries} of 13 tries ran, not won");
+    }
+}
+
 /// Every recorded win is won, no recorded loss is, and every line verifies; returns the wins.
 fn check_deals(deals: &[(String, Deal, Option<Outcome>)], lines: &[Option<Vec<u8>>]) -> usize {
     let mut won = 0;

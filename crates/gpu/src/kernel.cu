@@ -30,8 +30,9 @@
 // every thread one step (a prefix move or a search position) each turn of its loop, so the threads doing the same
 // thing step together: 1.7 times the deals per second (docs/BENCHMARKS.md, "After Phase 8 — where the GPU's time
 // goes" and "the GPU's bit operations"). `attempts_split`, the default, gives the prefixes and the searches warps of
-// their own, joined by a queue of residuals in shared memory, and keeps the prefix's row in registers: about 1.45
-// times the deals per second of attempts_stepwise ("split warps" and "the prefix row in registers").
+// their own, joined by a queue of residuals in shared memory, keeps the prefix's row in registers, and lets groups of a
+// deal's tries share their first prefix moves: about 1.6 times the deals per second of attempts_stepwise ("split
+// warps", "the prefix row in registers" and "shared early prefix moves").
 //
 // A position is 52 bytes of engine codes (suit << 4 | rank), SENTINEL after its last pile; a deal fills all 52.
 
@@ -842,53 +843,105 @@ extern "C" __global__ void __launch_bounds__(BLOCK, 14) attempts_stepwise(
     )
 }
 
+// Shared early prefix moves (attempts_split): a deal's tries go in groups of SHARE_G (tries 0 to SHARE_G - 1, and so
+// on), and a group's first SHARE_K prefix moves are played once, from random numbers of the group's own; each try then
+// plays the rest of its prefix and searches with random numbers of its own.
+#ifndef SHARE_G
+#define SHARE_G 1
+#endif
+#ifndef SHARE_K
+#define SHARE_K 0
+#endif
+// The random numbers of attempt a, and of the group whose first try is attempt a0.
+__device__ __forceinline__ u32 own_rng(u64 seed, u32 a) { return seed_u32(seed ^ (0x9E3779B97F4A7C15ull * (a + 1))); }
+__device__ __forceinline__ u32 group_rng(u64 seed, u32 a0) { return seed_u32(seed ^ (0xD1B54A32D192ED03ull * (a0 + 1))); }
+
 // Writes a won attempt's line (attempts_split): the search's `depth` moves (on the via stack) after its prefix, which
-// it plays again from the attempt's random numbers.
+// it plays again from the same random numbers: its group's for the first `share` moves, then its own.
 __device__ __forceinline__ void write_line(const u8* deals, const u64* deal_masks, u8* lines, u32 deal, u32 a, u64 seed,
-                                           int moves, int depth, u64 via_lo, u64 via_hi, u32 leap_shift) {
+                                           int moves, int depth, u64 via_lo, u64 via_hi, u32 leap_shift, u32 n_deals,
+                                           u64 inv_deals, int share) {
     u8* out = lines + (u64)deal * 51;
     for (int d = 0; d < depth; d++) out[moves + d] = (u8)card_at(via_lo, via_hi, depth - 1 - d);
-    u32 r = seed_u32(seed ^ (0x9E3779B97F4A7C15ull * (a + 1)));
+    u32 unused, attempt_try;
+    deal_and_try(a, n_deals, inv_deals, unused, attempt_try);
+    u32 r = group_rng(seed, a - attempt_try % SHARE_G * n_deals);
     u64 present, l1, l3;
     u32 R[RW];
     int n = rrow_load(R, deals + (u64)deal * 52, deal_masks + 3 * (u64)deal, present, l1, l3);
-    for (int i = 0; i < moves; i++) out[i] = (u8)rrow_prefix_move(R, n, l1, l3, present, r, leap_shift);
+    for (int i = 0; i < moves; i++) {
+        if (i == share) r = own_rng(seed, a);
+        out[i] = (u8)rrow_prefix_move(R, n, l1, l3, present, r, leap_shift);
+    }
 }
 
 #define QSIZE 32           // residuals attempts_split's queue holds
+#ifndef PREFIX_THREADS
+#define PREFIX_THREADS (BLOCK / 2)   // attempts_split's threads a block that play prefixes (whole warps)
+#endif
+
+// The row a group's shared moves left, kept for its other tries in the prefix thread's 16 words of s_mem (`w` its
+// first; word k at w[k * PREFIX_THREADS]): its first 40 cards, the cards present and the masks. A row of more cards (fewer
+// than 12 shared moves on a deal) is marked missing, and the group's other tries play the shared moves again.
+#define KEPT 10            // the row's words kept
+__device__ __forceinline__ void keep_row(u32* w, const u32 (&R)[RW], int len, u64 present, u64 l1, u64 l3) {
+    if (len > 4 * KEPT) { w[0] = SENT4; return; }      // a row's first card is never SENTINEL
+    #pragma unroll
+    for (int j = 0; j < KEPT; j++) w[j * PREFIX_THREADS] = R[j];
+    w[KEPT * PREFIX_THREADS] = (u32)present; w[(KEPT + 1) * PREFIX_THREADS] = (u32)(present >> 32);
+    w[(KEPT + 2) * PREFIX_THREADS] = (u32)l1; w[(KEPT + 3) * PREFIX_THREADS] = (u32)(l1 >> 32);
+    w[(KEPT + 4) * PREFIX_THREADS] = (u32)l3; w[(KEPT + 5) * PREFIX_THREADS] = (u32)(l3 >> 32);
+}
+// Takes the kept row back; false if it is missing.
+__device__ __forceinline__ bool kept_row(const u32* w, u32 (&R)[RW], u64& present, u64& l1, u64& l3) {
+    if (w[0] == SENT4) return false;
+    #pragma unroll
+    for (int j = 0; j < RW; j++) R[j] = j < KEPT ? w[(j < KEPT ? j : 0) * PREFIX_THREADS] : SENT4;
+    present = w[KEPT * PREFIX_THREADS] | (u64)w[(KEPT + 1) * PREFIX_THREADS] << 32;
+    l1 = w[(KEPT + 2) * PREFIX_THREADS] | (u64)w[(KEPT + 3) * PREFIX_THREADS] << 32;
+    l3 = w[(KEPT + 4) * PREFIX_THREADS] | (u64)w[(KEPT + 5) * PREFIX_THREADS] << 32;
+    return true;
+}
 
 // The same attempts with prefixes and searches in different warps (Settings::split). In attempts_stepwise a warp's
 // threads playing prefixes and those searching take turns, so each turn runs both steps at about half the warp's
-// width. Here the first half of a block's warps play prefixes, all 32 threads stepping together (prefixes have a fixed
-// length), and put each residual worth searching in a queue in shared memory; the other half search, each thread
-// taking the next residual as soon as it has finished one. An attempt makes the same moves and gives the same result
-// as in attempts_stepwise (its residual carries the random state on to the search).
+// width. Here some of a block's warps play prefixes, all 32 threads stepping together (prefixes have a fixed length),
+// and put each residual worth searching in a queue in shared memory; the others search, each thread taking the next
+// residual as soon as it has finished one (its residual carries the random state on to the search).
 // Queue entry i (counted over the launch) lives in slot i % QSIZE, whose number says where it is: i, the slot is free
 // for it; i + 1, written; i + QSIZE, copied out, and the slot free for entry i + QSIZE. Prefix warps reserve runs of
 // free entries and search warps take runs of written ones, a compare-and-swap each; slots are freed out of order, by
-// threads of different warps. Prefix threads keep their rows in registers, search threads their asleep stacks in
-// their bytes of s_mem (the prefix threads' bytes go unused: freeing them fits 14 blocks of 64, which ran slower).
-// The queue's shared memory leaves room for 12 blocks of 64 on the T550, where 1 prefix warp to 1 search warp ran
-// fastest (docs/BENCHMARKS.md, "split warps"), so the kernel may take 80 registers (24 warps a multiprocessor); at 72
-// it spilled.
+// threads of different warps. Prefix threads keep their rows in registers, and in their words of s_mem the row a
+// group's shared moves left (keep_row); search threads keep their asleep stacks in their bytes of s_mem.
+// With shared early moves (SHARE_G, SHARE_K) a prefix thread takes a group of a deal's tries at a time and plays them
+// one after another: the shared moves once, then each try's own moves from the row they left. Its attempts are not
+// attempts_stepwise's (their first moves come from the group's random numbers); a won line replays the same way.
+// The queue's shared memory leaves room for 8 blocks of 96 on the T550, 1 prefix warp to 2 search warps
+// (docs/BENCHMARKS.md, "shared early prefix moves"), so the kernel may take 80 registers (24 warps a multiprocessor);
+// at 72 it spilled.
 extern "C" __global__ void __launch_bounds__(BLOCK, 768 / BLOCK) attempts_split(
     const u8* __restrict__ deals, const u64* __restrict__ deal_masks, u32 n_deals, u64 inv_deals, u32 tries,
     u32 prefix, u32 tries2, u32 prefix2, u32 budget, u32 conn_gate, u32 leftmost, u32 leap_shift,
     u64 seed, u32* next_attempt, u32* won, u8* lines, u64* deal_counts, u64* profile)
 {
     enum { DS = 0, DL = 2 * RES, BYTES = 4 * RES };
-    __shared__ u8 s_mem[BYTES * BLOCK];
+    // The prefix threads' words (keep_row) in the first half, the search threads' bytes (byte i of thread t at
+    // SH(i)) in the second.
+    __shared__ __align__(8) u8 s_mem[BYTES * BLOCK];
+    #undef SH
+    #define SH(i) s_mem[BYTES * PREFIX_THREADS + (i) * (BLOCK - PREFIX_THREADS) + t - PREFIX_THREADS]
     __shared__ u64 q_lo[QSIZE], q_hi[QSIZE], q_present[QSIZE];   // the residual and its cards
     __shared__ u32 q_rng[QSIZE], q_a[QSIZE], q_seq[QSIZE];        // its random state and attempt; the slot's number
     __shared__ u8 q_moves[QSIZE];                                 // its prefix's moves
     __shared__ u32 q_resv, q_head, q_closed;                      // entries reserved, entries taken, prefix warps done
     const int t = threadIdx.x;
-    const u32 lane = t & 31, FULL = 0xFFFFFFFFu, below_me = (1u << lane) - 1, prefix_warps = BLOCK / 64;
+    const u32 lane = t & 31, FULL = 0xFFFFFFFFu, below_me = (1u << lane) - 1, prefix_warps = PREFIX_THREADS / 32;
     if (t == 0) q_resv = q_head = q_closed = 0;
     for (int i = t; i < QSIZE; i += BLOCK) q_seq[i] = i;
     __syncthreads();
     if (prefix > MAX_PREFIX) prefix = MAX_PREFIX;
     if (prefix2 > MAX_PREFIX) prefix2 = MAX_PREFIX;
+    const int share = min(SHARE_K, (int)min(prefix, tries2 ? prefix2 : prefix));   // no more than either rung's prefix
     // Profiling: each warp's time in each part of its loop, by thread 0 of the warp, and how many of its threads
     // stepped (P_PREFIX_STEPS or P_STEPS), waited on the queue, or took and skipped attempts.
     PROF(const u64 t_start = now_ns(); u64 pf[P_SKIP + 1] = {0}, turns = 0, stepping = 0, waited = 0, taken = 0,
@@ -897,18 +950,46 @@ extern "C" __global__ void __launch_bounds__(BLOCK, 768 / BLOCK) attempts_split(
 
     if (t < 32 * prefix_warps) {
         // Slots P_FETCH, P_LOAD, P_PREFIX and P_GATE (queueing, with waiting for room) of pf.
+        // A thread takes a group of tries at a time (numbered like attempts: group j of deal d is j * deals + d) and
+        // plays them one after another: the shared moves once, then each try from the row they left (keep_row).
         enum { FETCH, PREFIX, READY, DONE };
-        const u64 total = n_deals * (u64)(tries + tries2);
+        const u32 all_tries = tries + tries2;
+        const u64 total = n_deals * (u64)((all_tries + SHARE_G - 1) / SHARE_G);
+        u32* const kw = (u32*)s_mem + t;
         int phase = FETCH;
         u32 held = 0, pend = 0;    // as in attempts_stepwise
         bool exhausted = false;
         u32 a = 0, deal = 0, k_moves = 0, rng = 1;
+        u32 left = 0;              // the group's tries after this one
         int moves = 0, len = 0;
         u64 present = 0, l1 = 0, l3 = 0;
         u32 R[RW];
         #pragma unroll
         for (int j = 0; j < RW; j++) R[j] = SENT4;
         for (;;) {
+            if (SHARE_G > 1 && phase == FETCH && left > 0) {
+                // The group's next try, from the row its shared moves left, unless the deal was won meanwhile.
+                a += n_deals;
+                if (*((volatile u32*)&won[deal])) {
+                    PROF(skipped += left;)
+                    left = 0;
+                } else {
+                    left--;
+                    k_moves = a < tries * n_deals ? prefix : prefix2;
+                    if (kept_row(kw, R, present, l1, l3)) {
+                        len = __popcll(present);
+                        moves = share;
+                        rng = own_rng(seed, a);
+                    } else {
+                        u32 unused, attempt_try;
+                        deal_and_try(a, n_deals, inv_deals, unused, attempt_try);
+                        len = rrow_load(R, deals + (u64)deal * 52, deal_masks + 3 * (u64)deal, present, l1, l3);
+                        moves = 0;
+                        rng = share ? group_rng(seed, a - attempt_try % SHARE_G * n_deals) : own_rng(seed, a);
+                    }
+                    phase = PREFIX;
+                }
+            }
             u32 need = __ballot_sync(FULL, phase == FETCH), got = 0;
             while (need) {
                 if (!pend) {
@@ -917,10 +998,10 @@ extern "C" __global__ void __launch_bounds__(BLOCK, 768 / BLOCK) attempts_split(
                     if (lane == 0) base = atomicAdd(next_attempt, 32u);
                     base = __shfl_sync(FULL, base, 0);
                     u64 s = (u64)base + lane;
-                    u32 d, unused;
-                    deal_and_try((u32)s, n_deals, inv_deals, d, unused);
+                    u32 d, j;
+                    deal_and_try((u32)s, n_deals, inv_deals, d, j);
                     bool ok = s < total && !*((volatile u32*)&won[d]);
-                    PROF(if (s < total) { taken++; if (!ok) skipped++; })
+                    PROF(if (s < total) { u32 g = min((u32)SHARE_G, all_tries - j * SHARE_G); taken += g; if (!ok) skipped += g; })
                     pend = __ballot_sync(FULL, ok);
                     held = (u32)s;
                     exhausted = (u64)base + 32 >= total;
@@ -936,15 +1017,23 @@ extern "C" __global__ void __launch_bounds__(BLOCK, 768 / BLOCK) attempts_split(
             if ((need >> lane) & 1) phase = DONE;
             WLAP(P_FETCH);
             if ((got >> lane) & 1) {
-                u32 attempt_try;
-                deal_and_try(a, n_deals, inv_deals, deal, attempt_try);
+                u32 j;
+                deal_and_try(a, n_deals, inv_deals, deal, j);    // a is the group's number here
+                left = SHARE_G > 1 ? min((u32)SHARE_G, all_tries - j * SHARE_G) - 1 : 0;
+                a = j * SHARE_G * n_deals + deal;               // its first try
                 if (*((volatile u32*)&won[deal])) {
-                    PROF(skipped++;)                  // won since the warp took it
+                    PROF(skipped += left + 1;)        // won since the warp took it
+                    left = 0;
                 } else {
-                    k_moves = attempt_try < tries ? prefix : prefix2;
-                    rng = seed_u32(seed ^ (0x9E3779B97F4A7C15ull * (a + 1)));
+                    k_moves = a < tries * n_deals ? prefix : prefix2;
                     len = rrow_load(R, deals + (u64)deal * 52, deal_masks + 3 * (u64)deal, present, l1, l3);
                     moves = 0;
+                    if (share) {
+                        rng = group_rng(seed, a);
+                    } else {
+                        if (SHARE_G > 1) keep_row(kw, R, len, present, l1, l3);
+                        rng = own_rng(seed, a);
+                    }
                     phase = PREFIX;
                 }
             }
@@ -954,18 +1043,30 @@ extern "C" __global__ void __launch_bounds__(BLOCK, 768 / BLOCK) attempts_split(
             if (phase == PREFIX) {
                 u32 n1 = __popcll(l1), n3 = __popcll(l3);
                 if (moves < (int)k_moves && n1 + n3 > 0) {
-                    if (rrow_prefix_move(R, len, l1, l3, present, rng, leap_shift) < 0) k_moves = moves;   // all lose
-                    else moves++;
+                    if (rrow_prefix_move(R, len, l1, l3, present, rng, leap_shift) < 0) {
+                        k_moves = moves;              // all lose
+                    } else if (++moves == share) {
+                        // The group's shared moves are played: keep the row for its other tries, and go on with
+                        // this try's own random numbers.
+                        if (SHARE_G > 1) keep_row(kw, R, len, present, l1, l3);
+                        rng = own_rng(seed, a);
+                    }
                 } else {
                     // Stuck before the residual got small, or already disconnected: lost anyway.
                     bool linked = leftmost ? connected_without_leftmost(present, R[0] & 0xFF, len) : connected(present);
                     bool search = len <= RES && !(len > 1 && len <= (int)conn_gate && !linked);
+                    // Stuck before the shared moves were all played: the group's other tries would play the same
+                    // moves and search the same residual with the same random numbers, so they end with this one.
+                    u64 same = moves < share ? left : 0;
+                    if (moves < share) left = 0;
                     if (search && len > 1) {
+                        if (same) atomicAdd(&deal_counts[deal], same * ((u64)moves << 16 | 1u));
                         phase = READY;
                     } else {
-                        atomicAdd(&deal_counts[deal], (u64)moves << 16 | 1u);
+                        atomicAdd(&deal_counts[deal], (same + 1) * ((u64)moves << 16 | 1u));
                         if (search && atomicCAS(&won[deal], 0u, 1u) == 0u)       // one pile left: won outright
-                            write_line(deals, deal_masks, lines, deal, a, seed, moves, 0, 0, 0, leap_shift);
+                            write_line(deals, deal_masks, lines, deal, a, seed, moves, 0, 0, 0, leap_shift, n_deals,
+                                       inv_deals, share);
                         phase = FETCH;
                     }
                 }
@@ -1142,7 +1243,8 @@ extern "C" __global__ void __launch_bounds__(BLOCK, 768 / BLOCK) attempts_split(
             if (phase == FINISH) {
                 atomicAdd(&deal_counts[deal], (u64)(moves + used) << 16 | 1u);
                 if (win && atomicCAS(&won[deal], 0u, 1u) == 0u)
-                    write_line(deals, deal_masks, lines, deal, a, seed, moves, depth, via_lo, via_hi, leap_shift);
+                    write_line(deals, deal_masks, lines, deal, a, seed, moves, depth, via_lo, via_hi, leap_shift,
+                               n_deals, inv_deals, share);
                 win = false;
                 phase = TAKE;
             }
@@ -1157,6 +1259,8 @@ extern "C" __global__ void __launch_bounds__(BLOCK, 768 / BLOCK) attempts_split(
              })
     }
     #undef WLAP
+    #undef SH
+    #define SH(i) s_mem[(i) * BLOCK + t]
     PROF(
         const u64 t_end = now_ns();
         atomicAdd(&profile[P_BUSY_NS], t_end - t_start);

@@ -1078,7 +1078,7 @@ Doubling ablations in the split kernel (against it in the same runs, 125,342–1
 - **Warps changing role** when the queue runs full or empty: the gain is bounded by the waits above (20% and 17% of
   turns), and a warp's threads would have to finish what they hold first.
 
-## After Phase 8 — shared early prefix moves (measured, not built)
+## After Phase 8 — shared early prefix moves, measured first
 
 **The idea.** A group of G tries at a deal plays its first K prefix moves once, keeps the row, and each try then plays
 its own remaining moves and searches. RESEARCH §5.5 found that up to about 20 random moves barely change an attempt's
@@ -1108,14 +1108,7 @@ Runs repeat to about ±0.5%. Wins held (99,780–99,827 of 100,000 against 99,80
 at 30 shared moves (99,719). So sharing 15 to 20 moves in groups of 4 costs 1% to 2.5% more attempts and spares 30% to
 40% of the prefix moves, and the prefix warps are what limits `attempts_split`.
 
-**Considered, not tried:**
-- **Building it in `attempts_split`.** Number the attempts so that a group's tries are consecutive and one prefix
-  thread plays them all: the shared moves once, a copy of the row (its 13 words in registers, with the masks and
-  cards present), then for each try the copy taken back, its own moves and the residual queued; a deal won meanwhile
-  skips the group's remaining tries. The search warps' share of the work then
-  grows (the prefix warps' moves fall by 30–40% while searches rise by 1–2.5%), so the split of warps between the two
-  may need to change with it. Parameters (rungs, tries, budget, leap weight) are to be retuned only once every
-  planned change is in.
+Built later: "shared early prefix moves, built", below.
 
 ## After Phase 8 — the prefix row in registers
 
@@ -1166,7 +1159,69 @@ the kernel; the search warps are nearer to it.
   138,547–139,136 against 141,243–142,810 for 12 (both at 72 registers). More warps still don't help.
 
 **Considered, not tried:**
-- **More search warps than prefix warps** now that the prefix warps wait more: a parameter, so for the retune once
-  every planned change is in.
+- **More search warps than prefix warps** now that the prefix warps wait more: tried with shared moves, next section.
 - **Batches of 2 in the prefix warps:** cheaper now (one funnel-shift pass can close two gaps), but the prefix warps
   have slack, so they would pay only with more search warps.
+
+## After Phase 8 — shared early prefix moves, built
+
+**The kernel.** A prefix thread of `attempts_split` now takes a group of a deal's tries at a time
+(`Settings::share_group`, numbered so that group j of deal d is j × deals + d) and plays them one after another: the
+first `Settings::share_moves` prefix moves once, from random numbers of the group's own, then each try's remaining moves
+from the row they left, with random numbers of its own, which its search carries on. Details:
+- **The kept row is in shared memory,** in the prefix threads' 16 words each, where their unused bytes were (the search
+  threads' bytes moved to the second part of `s_mem`): the first 40 cards, the cards present and both masks. In
+  registers it spilled 88 bytes and lost. Sharing fewer than 12 moves leaves more than 40 cards on a deal, so that row
+  is marked missing and each try plays the shared moves again (`share_moves` is at least 12 for that reason; the kernel
+  still gets it right, checked at 0, 8 and 11 moves).
+- **A won deal skips the group's remaining tries.** A group stuck before its shared moves are done ends all at once: its
+  other tries would play the same moves and search with the same numbers.
+- **A won line replays** with the group's numbers for the first `share_moves` moves, then the try's own. Every line went
+  through the reference engine and none failed, and seven of a group's eight tries come from the kept row, so this checks
+  it. New test: a group that spans both rungs and a short last one still run every try.
+- **Warps:** `Settings::prefix_warps` says how many of a block's warps play prefixes (`block` a multiple of 32).
+
+**At 1:1 warps it hardly pays.** The prefix warps were already waiting for queue room in 26% of their turns (previous
+section), so the moves saved mostly become more waiting. **With fewer prefix warps the saving becomes search.** `accgpu`,
+100,000 deals (seeds 2,000,000–2,099,999), alternated in two sets; rows of one set are comparable, heat moves the sets by
+several percent:
+
+| Prefix : search warps (block) | Group : shared | Deals/s | Won | Attempts a deal |
+|---|---|---|---|---|
+| 1:1 (64) | none | 142,509–145,006 | 99,808 | 130.7 |
+| 1:1 (64) | 4 : 15 | 145,807–149,991 | 99,809 | 132.9 |
+| 1:1 (64) | 4 : 20 | 137,861–147,421 | 99,797 | 134.0 |
+| 1:2 (192) | 4 : 25 | 143,153–150,793 | 99,786 | 134.4 |
+| 1:2 (192) | 4 : 30 | 144,674–152,127 | 99,735 | 144.6 |
+| 1:2 (192) | 8 : 20 | 145,881–152,722 | 99,785 | 135.5 |
+| 1:2 (192) | 8 : 25 | 152,669–159,474 | 99,751 | 142.9 |
+| 3:5 (256) | 4 : 15 | 138,136–143,553 | 99,809 | 129.9 |
+| 3:5 (256) | 4 : 20 | 146,604–150,663 | 99,797 | 131.2 |
+| 3:5 (256) | 4 : 25 | 152,521–158,220 | 99,786 | 134.9 |
+| Second set: 1:1 (64) | none | 135,312–145,559 | 99,808 | 130.7 |
+| 1:2 (96) | 4 : 25 | 145,833–158,344 | 99,786 | 135.2 |
+| 1:2 (96) | 4 : 30 | 149,314–158,745 | 99,735 | 145.5 |
+| 1:2 (96) | **8 : 20** | **151,755–160,980** | **99,785** | **136.5** |
+| 1:2 (96) | 8 : 25 | 158,542–164,573 | 99,751 | 143.8 |
+| 1:2 (96) | 8 : 30 | 144,891–147,048 | 99,590 | 164.7 |
+| 1:2 (96) | 16 : 20 | 151,649–157,995 | 99,754 | 144.8 |
+| 1:2 (96) | 16 : 25 | 149,167–156,881 | 99,683 | 158.6 |
+
+At 1:2 without shared moves the prefix warps limit it badly (108,578–114,329), and at 1:3 (block 128) they still do with
+4 : 25 (117,887–118,965). More sharing helps until the tries are too alike: 30 shared moves in groups of 8 cost a quarter
+more attempts. A thread's tries run back to back here, so a win is often known only after the next ones are queued; that
+is why the attempts a deal rise a little more than in the measurement above.
+
+**In `acc batch`** the misses count too, since they go to the CPU (1M deals, seeds 6,000,000,000–6,000,999,999 every run,
+alternated; the CPU's speed moves with heat from 10M to 106M positions/s, so it is in the table):
+
+| Setting | Deals/s (CPU positions/s) | GPU positions/s |
+|---|---|---|
+| No sharing, 1:1 (block 64) | 146,827 (15M), 148,362 (58M), 150,519 (53M), 145,599 (30M) | 1,181–1,263M |
+| **8 : 20, 1:2 (block 96)** | **158,532 (13M), 172,093 (57M), 168,712 (61M), 161,473 (27M)** | **1,464–1,500M** |
+| 8 : 22, 1:2 (block 96) | 160,399 (15M), 159,715 (32M), 165,995 (45M), 158,688 (41M) | 1,443–1,522M |
+| 8 : 25, 1:2 (block 96) | 136,959 (12M), 122,231 (11M), 162,914 (32M), 164,990 (38M) | 1,220–1,586M |
+
+An earlier set: no sharing 144,734–160,777, 4 : 15 at 1:1 145,938–159,536, 4 : 25 at 3:5 156,610–161,334, and 8 : 25 at
+1:2 160,761–174,155. So **8 : 20 at 1:2 gives +8% to +16% over the same conditions without sharing,** and 186,447 deals/s
+with the CPU cool. Every deal was won and no line failed verification.

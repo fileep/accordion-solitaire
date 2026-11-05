@@ -54,7 +54,7 @@ pub struct Settings {
     pub batch: usize,
     /// Threads per block (the kernel's shared memory is sized for it: 64 bytes per thread). On the T550, 64 fits
     /// 1,024 attempts per multiprocessor, its maximum (32 fits 512, the most blocks it takes); with `split`, whose
-    /// queue takes shared memory too, 12 blocks of 64 fit, and larger blocks ran slower.
+    /// queue takes shared memory too, 8 blocks of 96 or 12 of 64 fit.
     pub block: u32,
     /// Thread blocks per multiprocessor.
     pub blocks_per_sm: u32,
@@ -72,11 +72,19 @@ pub struct Settings {
     /// Run attempts a step at a time (kernel.cu `attempts_stepwise`), so a warp's threads step together: 1.7 times
     /// as many deals a second on the T550 as `attempts`, where each thread runs its own attempts start to finish.
     pub stepwise: bool,
-    /// Play prefixes and search in different warps (kernel.cu `attempts_split`; `stepwise` then doesn't matter): half
-    /// a block's warps play prefixes and queue the residuals for the other half to search, so neither waits for the
-    /// other's step; the prefix's row is in registers. About 1.45 times the deals a second of `attempts_stepwise` on
-    /// the T550. `block` must be a multiple of 64.
+    /// Play prefixes and search in different warps (kernel.cu `attempts_split`; `stepwise` then doesn't matter):
+    /// `prefix_warps` of a block's warps play prefixes and queue the residuals for the others to search, so neither
+    /// waits for the other's step; the prefix's row is in registers. About 1.45 times the deals a second of
+    /// `attempts_stepwise` on the T550 (half the warps each, without shared moves). `block` must be a multiple of 32.
     pub split: bool,
+    /// The warps of a block that play prefixes with `split` (kernel.cu `PREFIX_THREADS`); `block` must hold more.
+    pub prefix_warps: u32,
+    /// Shared early prefix moves (`split` only, the other kernels ignore them; kernel.cu `SHARE_G` and `SHARE_K`): a
+    /// deal's tries go in groups of `share_group`, whose first `share_moves` prefix moves are played once; each try
+    /// then plays the rest of its prefix from the row they left, and searches. 1 shares nothing.
+    pub share_group: u32,
+    /// At least 12 when `share_group` is more than 1 (the kept row holds 40 cards).
+    pub share_moves: u32,
 }
 
 impl Default for Settings {
@@ -85,7 +93,7 @@ impl Default for Settings {
             rungs: vec![[38, 256], [36, 1024]],
             budget: 2000,
             batch: 16384,
-            block: 64,
+            block: 96,
             blocks_per_sm: 16,
             conn_gate: 19,
             leftmost: true,
@@ -94,6 +102,9 @@ impl Default for Settings {
             profile: false,
             stepwise: true,
             split: true,
+            prefix_warps: 1,
+            share_group: 8,
+            share_moves: 20,
         }
     }
 }
@@ -118,10 +129,23 @@ impl Settings {
         if self.batch == 0 || self.block == 0 || self.block > 256 || self.blocks_per_sm == 0 {
             return Err("batch, block (at most 256) and blocks_per_sm must be positive".into());
         }
-        if self.split && !self.block.is_multiple_of(64) {
+        if self.split
+            && (!self.block.is_multiple_of(32)
+                || self.prefix_warps == 0
+                || self.prefix_warps >= self.block / 32)
+        {
             return Err(format!(
-                "block: {}; a multiple of 64 with split (half its warps play prefixes)",
-                self.block
+                "block {}, prefix_warps {}: with split, whole warps, at least one playing prefixes and one searching",
+                self.block, self.prefix_warps
+            ));
+        }
+        if self.share_group == 0 || self.share_group > 64 {
+            return Err(format!("share_group: {}; 1 to 64", self.share_group));
+        }
+        if self.share_group > 1 && !(12..=MAX_PREFIX).contains(&self.share_moves) {
+            return Err(format!(
+                "share_moves: {}; 12 to {MAX_PREFIX} (the kept row holds 40 cards)",
+                self.share_moves
             ));
         }
         Ok(())
@@ -321,8 +345,8 @@ fn add_bundled_nvrtc() {
 #[cfg(not(windows))]
 fn add_bundled_nvrtc() {}
 
-/// The kernels (`source`: kernel.cu) compiled to PTX for `ctx`'s device with `settings` (its block size, and
-/// profiling).
+/// The kernels (`source`: kernel.cu) compiled to PTX for `ctx`'s device with `settings` (its block size, shared
+/// moves, and profiling).
 fn compile(ctx: &CudaContext, settings: &Settings, source: &str) -> Result<cudarc::nvrtc::Ptx, String> {
     use cudarc::driver::sys::CUdevice_attribute as A;
     let major = ctx.attribute(A::CU_DEVICE_ATTRIBUTE_COMPUTE_CAPABILITY_MAJOR).map_err(err)?;
@@ -332,10 +356,15 @@ fn compile(ctx: &CudaContext, settings: &Settings, source: &str) -> Result<cudar
         source,
         CompileOptions {
             arch: Some(arch),
-            options: [format!("-DBLOCK={}", settings.block)]
-                .into_iter()
-                .chain(settings.profile.then(|| "-DPROFILE".to_string()))
-                .collect(),
+            options: [
+                format!("-DBLOCK={}", settings.block),
+                format!("-DPREFIX_THREADS={}", 32 * settings.prefix_warps),
+                format!("-DSHARE_G={}", settings.share_group),
+                format!("-DSHARE_K={}", if settings.share_group > 1 { settings.share_moves } else { 0 }),
+            ]
+            .into_iter()
+            .chain(settings.profile.then(|| "-DPROFILE".to_string()))
+            .collect(),
             ..Default::default()
         },
     )
