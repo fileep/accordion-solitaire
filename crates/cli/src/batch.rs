@@ -4,6 +4,7 @@
 //! deals both ways, and checks that the deals are all different games.
 
 use crate::dossier;
+use crate::progress::Meter;
 use crate::runner::{self, Options, percentile, wilson};
 use accordion_core::Deal;
 use accordion_core::fast::Position;
@@ -64,6 +65,12 @@ pub struct BatchArgs {
     /// the gallery there, and list them in its INDEX.md. With the GPU, only deals solved on the CPU are ranked.
     #[arg(long, default_value_t = 0)]
     gallery: usize,
+    /// Where the speed log goes: a CSV row a second of how fast the run is going, in batch-<UTC time>Z.csv.
+    #[arg(long, default_value = "logs")]
+    log_dir: PathBuf,
+    /// Don't write the speed log.
+    #[arg(long)]
+    no_log: bool,
 }
 
 pub fn run(args: &BatchArgs) -> Result<bool, String> {
@@ -98,6 +105,14 @@ pub fn run(args: &BatchArgs) -> Result<bool, String> {
         args.max_nodes
     );
     let seeds: Vec<u64> = (args.from..args.from + args.count).collect();
+    let about = format!(
+        "acc batch: seeds {}..{} ({} deals), {hardware}, commit {}",
+        args.from,
+        args.from + args.count - 1,
+        args.count,
+        crate::experiment::commit()
+    );
+    let mut meter = Meter::new(seeds.len(), (!args.no_log).then_some(args.log_dir.as_path()), &about)?;
     let opts = Options { threads: workers, table_log2: args.table, endgame, records: out.is_some(), gpu };
     let start = Instant::now();
     let (mut won, mut exhausted, mut unknown, mut failed) = (0u64, 0u64, 0u64, 0u64);
@@ -164,10 +179,7 @@ pub fn run(args: &BatchArgs) -> Result<bool, String> {
             }
             Ok(())
         },
-        |done| {
-            let elapsed = start.elapsed().as_secs_f64();
-            eprint!("\r  {done} / {} deals · {:.0} deals/s   ", seeds.len(), done as f64 / elapsed);
-        },
+        |p| meter.update(&p),
     )?;
     eprintln!();
     let elapsed = start.elapsed().as_secs_f64();

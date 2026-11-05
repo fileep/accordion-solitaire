@@ -67,6 +67,7 @@ mod bench;
 mod dossier;
 mod endgame;
 mod experiment;
+mod progress;
 mod prove;
 mod runner;
 mod selftest;

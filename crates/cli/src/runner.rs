@@ -19,7 +19,8 @@ use serde_json::json;
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::path::Path;
 use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
-use std::sync::{Arc, Mutex, mpsc};
+use std::sync::mpsc::{self, RecvTimeoutError};
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 pub struct Options {
@@ -83,6 +84,21 @@ pub struct CpuTime {
     /// Wall time times worker threads: everything else is the difference.
     pub total: u64,
 }
+
+/// How a run stands, for [`run`]'s `progress`.
+#[derive(Clone, Copy, Debug)]
+pub struct Progress {
+    /// Deals finished.
+    pub done: usize,
+    /// Deals the GPU has won, and positions it has generated (0 without one).
+    pub gpu_won: u64,
+    pub gpu_positions: u64,
+    /// GPU results waiting for a CPU worker to verify them, or to solve the deals the GPU didn't win.
+    pub backlog: usize,
+}
+
+/// How often [`run`] reports progress.
+const PROGRESS_EVERY: Duration = Duration::from_secs(1);
 
 /// A deal back from the GPU, waiting for a CPU worker.
 struct FromGpu {
@@ -172,28 +188,29 @@ pub fn open_gpu(flag: &str, settings: Settings) -> Result<Option<Arc<Gpu>>, Stri
 }
 
 /// Solves every deal in `seeds` with `config` (move-order seed = deal seed) and hands each result to `sink`.
-/// `progress` is called about twice a second with the number of deals finished. Stops early if `sink` fails.
+/// `progress` is called about once a second, results or not, and once at the end. Stops early if `sink` fails.
 /// Returns what the GPU did, if there was one.
 pub fn run(
     seeds: &[u64],
     config: &Config,
     opts: &Options,
     mut sink: impl FnMut(Solved) -> Result<(), String>,
-    mut progress: impl FnMut(usize),
+    mut progress: impl FnMut(Progress),
 ) -> Result<Option<GpuTotals>, String> {
     let next = AtomicUsize::new(0);
     let abort = AtomicBool::new(false);
     let from_gpu: Mutex<VecDeque<FromGpu>> = Mutex::new(VecDeque::new());
     let feeding = AtomicBool::new(opts.gpu.is_some());
-    let (gpu_won, gpu_failed) = (AtomicU64::new(0), AtomicU64::new(0));
+    let (gpu_won, gpu_failed, gpu_positions) = (AtomicU64::new(0), AtomicU64::new(0), AtomicU64::new(0));
     let cpu_time = Mutex::new(CpuTime::default());
     let started = Instant::now();
     let (tx, rx) = mpsc::sync_channel::<Solved>(4096);
     std::thread::scope(|scope| {
         let feeder = opts.gpu.as_deref().map(|gpu| {
-            let (next, abort, from_gpu, feeding) = (&next, &abort, &from_gpu, &feeding);
+            let (next, abort, from_gpu, feeding, positions) =
+                (&next, &abort, &from_gpu, &feeding, &gpu_positions);
             scope.spawn(move || {
-                let totals = feed(gpu, seeds, next, abort, from_gpu);
+                let totals = feed(gpu, seeds, next, abort, from_gpu, positions);
                 feeding.store(false, Ordering::Release);
                 totals
             })
@@ -267,21 +284,34 @@ pub fn run(
         drop(tx);
         let mut done = 0;
         let mut result = Ok(());
+        let stand = |done| Progress {
+            done,
+            gpu_won: gpu_won.load(Ordering::Relaxed),
+            gpu_positions: gpu_positions.load(Ordering::Relaxed),
+            backlog: from_gpu.lock().expect("no panics").len(),
+        };
         let mut last = Instant::now();
-        for solved in rx {
-            if result.is_ok() {
-                result = sink(solved);
-                if result.is_err() {
-                    abort.store(true, Ordering::Relaxed);
+        loop {
+            // Wake for the next report even when no deal finishes (the last hard deals, or a stalled GPU).
+            match rx.recv_timeout(PROGRESS_EVERY.saturating_sub(last.elapsed())) {
+                Ok(solved) => {
+                    if result.is_ok() {
+                        result = sink(solved);
+                        if result.is_err() {
+                            abort.store(true, Ordering::Relaxed);
+                        }
+                    }
+                    done += 1;
                 }
+                Err(RecvTimeoutError::Timeout) => {}
+                Err(RecvTimeoutError::Disconnected) => break,
             }
-            done += 1;
-            if last.elapsed() >= Duration::from_millis(500) {
+            if last.elapsed() >= PROGRESS_EVERY {
                 last = Instant::now();
-                progress(done);
+                progress(stand(done));
             }
         }
-        progress(done);
+        progress(stand(done));
         let mut cpu = *cpu_time.lock().expect("no panics");
         cpu.total = started.elapsed().as_micros() as u64 * opts.threads.max(1) as u64;
         let totals = feeder.map(|h| GpuTotals {
@@ -302,6 +332,7 @@ fn feed(
     next: &AtomicUsize,
     abort: &AtomicBool,
     queue: &Mutex<VecDeque<FromGpu>>,
+    positions: &AtomicU64,
 ) -> GpuTotals {
     let mut totals = GpuTotals::default();
     let batch = gpu.settings.batch;
@@ -318,7 +349,9 @@ fn feed(
             totals.launches += 1;
             totals.deals += indices.len() as u64;
             totals.attempts += result.tries.iter().map(|&t| u64::from(t)).sum::<u64>();
-            totals.positions += result.nodes.iter().sum::<u64>();
+            let generated = result.nodes.iter().sum::<u64>();
+            totals.positions += generated;
+            positions.fetch_add(generated, Ordering::Relaxed);
             let jobs = indices
                 .into_iter()
                 .zip(result.lines)

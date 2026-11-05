@@ -256,7 +256,7 @@ pub fn run(args: &ExperimentArgs) -> Result<bool, String> {
                     }
                     Ok(())
                 },
-                |done| eprint!("\r  {label}: {done} / {} deals   ", seeds.len()),
+                |p| eprint!("\r  {label}: {} / {} deals   ", p.done, seeds.len()),
             )?;
             o.wall = start.elapsed().as_secs_f64();
             if let Some(mut w) = deal_rows {
