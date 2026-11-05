@@ -865,3 +865,77 @@ fifth of the deals is worth only 1–2% in all. Every deal was won, and no line 
 - **Why taking back stuck moves pays on the GPU but not on the CPU** is not known. Counting the attempts each deal
   needs with and without it, on both, would show whether it saves attempts on the CPU at all or only time on the GPU.
 
+## After Phase 8 — a truer breakdown, and the dead-end test without a loop
+
+**A truer breakdown.** The profiled build (`accgpu --profile`) now runs at half the normal speed. Its counters, some
+of them indexed at run time, take it to 80 registers with 184 bytes of local memory, and they sit in the short
+phases, which it overstates two to three times (taking work 15.2%, loading 15.8%, writing results 11.5%). A build
+with only the phase timers ran 9% slow, and split the time: **search 45.9%, prefix 37.6%**, taking work 6.1%, loading
+the deal 5.4%, writing results 5.1%. Its "threads busy 74%" divides by the 16 blocks a multiprocessor launched, of
+which 12 fitted; it isn't idle time. A deal took 129 attempts, an attempt 69 positions (37 prefix moves, 32 search
+positions); 15.8 and 14.8 threads of 32 stepped together in the search and the prefix; 57.5% of prefixes were
+searched, 32.5% left disconnected cards and 10.0% ended above 16 piles (every move lost); half the searches ended
+within 15 positions.
+
+**Doubling ablations.** Each kernel did one part twice (with an input the compiler can't see is the same), giving the
+same moves and wins; the slowdown is that part's cost (`accgpu`, 100,000 deals, alternated with the kernel before):
+
+| Done twice | Cost |
+|---|---|
+| Each prefix move (played, taken back, played again) | +30% |
+| The search's dead-end test (`connected_without_leftmost`) | +18% |
+| The search's move masks | +5.5% |
+| Loading the deal | +4% |
+| The per-attempt statistics atomic (left out instead) | −1% |
+
+**The dead-end test without a loop.** `connected` walked the suit graph a suit at a time until nothing changed, one
+to three turns depending on the cards, so a warp waited for its slowest thread whenever any of them needed the test.
+It now takes three fixed steps on all four suits at once, in 16-bit lanes as `breaks_link` does: the suits holding a
+rank of a set are bit 15 of each lane after `(present & ranks × 0x0001000100010001) + 0x7FFF…`, and the ranks of the
+flagged suits are their lanes masked by `flags − (flags >> 15)`, folded together. From the lowest suit present,
+three steps reach every suit linked to it. It agreed with the loop on 2.8M card sets in Python (every way four suits
+can share three ranks among them, and random sets), and the GPU tests' playouts check it against the Rust engines.
+
+| Kernel (against the kernel before, in the same runs) | Registers, blocks a multiprocessor | Change |
+|---|---|---|
+| The old loop, forced inline | 72, 14 | −1% |
+| New test, only where the trigger fired | 80, 12 | +1.5% |
+| New test, every thread every search step | 79, 12 | +4% to +6% |
+| **Both, capped at 72 registers** (`__launch_bounds__(BLOCK, 14)`) | **72, 14** | **+12%** |
+
+Left to itself the compiler kept the test's 64-bit constants in registers and lost two blocks; capped, it fits 72
+without spilling. **Kept: 101,474–101,811 against 90,369–90,967 deals/s, 915–918M positions/s against 814–820M**, the
+same 99,829 deals won.
+
+**In `acc batch`** (1M deals, seeds 6,000,000,000–6,000,999,999 every run, alternated with the previous commit's
+build): 117,513 against 104,218 (+13%), 104,178 against 100,505 (+4%, the old build first), 108,071 against 96,471
+(+12%). The GPU did 862–903M positions/s against 801–807M in every run; the laptop's heat took the CPU from 82M to
+34M positions/s over the six runs. Every deal was won, and no line failed verification.
+
+**Tried, not kept:**
+- **Testing only where the trigger fired**, at 72 registers: 98,300–99,300 against 102,800–103,600. The test now
+  costs less than the branch around it.
+- **64 registers for 16 blocks a multiprocessor:** 8 bytes spilled, 95,200–95,600 against 100,400–100,600.
+- **Settings, re-swept** (one run each, against 93,020 and 91,426 for the defaults): budget 1,000 95,040 (201 deals
+  missed, against 171), 1,500 93,689, 3,000 91,403, 4,000 90,072; rungs of 38 × 512 and 36 × 768 89,867, of 38 × 128
+  and 36 × 1,152 94,323 (150 missed). Inside the noise, so unchanged; an alternated run would settle the two that
+  looked faster.
+
+**Considered, not tried:**
+- **Playing several prefix moves at once.** Two moves commute when the left one's pile is left of the right one's
+  target (RESEARCH §10.4): neither touches the other's cards, both stay legal, and either order gives the same
+  position. So a batch of them can be played with one pass that closes all their gaps, instead of a shift per move.
+  Simulated on 3,000 random deals with leaps at 8:1 (scratch script: each batch drawn by the policy, a move at a time,
+  keeping those that commute with the moves already drawn), a 36-move prefix took 6.7 batches of 5.3 moves and
+  shifted 26% of the bytes; capped at 4 moves a batch, 10 batches and 43%. The prefix is 38% of the time and its
+  shifting most of that, so this is next. What it does to the attempts a deal needs has to be measured: a batch can't
+  use the moves its own moves create.
+- **The same in the search.** Sleep sets already skip the second order of every commuting pair; a search move is a
+  few register operations, not a shift in shared memory; and a first-win search has to visit the positions in between
+  (a win may go A then C, not A then B). Little to gain.
+- **Shifting whichever side of the gap is shorter:** about halves the longest shift; batches would save more.
+- **A residual queue in each warp**, so that the prefix and the search each run with all 32 threads (each has about
+  half now): the largest ceiling and the largest change, best tried after batches change the balance.
+- **The same branch-free test on the CPU** (fast.rs `connected` is the same loop): the CPU solves a tenth of the deals.
+- **A lighter `--profile`:** the timers alone measure well; the counters could become an option of their own.
+

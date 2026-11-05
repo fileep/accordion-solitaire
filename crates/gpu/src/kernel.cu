@@ -129,32 +129,37 @@ __device__ __forceinline__ bool breaks_link(u64 present, u32 covered) {
     return (has_rank & ~shares & ~(0x8000ull << (16 * s))) != 0 && row != 0;
 }
 
-__device__ bool connected(u64 present) {
-    u64 rows[4] = {present & ROW, (present >> 16) & ROW, (present >> 32) & ROW, (present >> 48) & ROW};
-    u32 nonempty = 0;
-    #pragma unroll
-    for (int s = 0; s < 4; s++) if (rows[s]) nonempty |= 1u << s;
-    if (!nonempty) return true;
-    u32 reached = 1u << (__ffs(nonempty) - 1);
-    for (;;) {
-        u64 ranks = 0;
-        #pragma unroll
-        for (int s = 0; s < 4; s++) if ((reached >> s) & 1) ranks |= rows[s];
-        u32 next = reached;
-        #pragma unroll
-        for (int s = 0; s < 4; s++) if (rows[s] & ranks) next |= 1u << s;
-        if (next == reached) return reached == nonempty;
-        reached = next;
-    }
+// The suits whose rows hold a rank in `ranks` (13 bits): bit 15 of each suit's 16-bit lane. A lane holds at most
+// 0x1FFF, so adding 0x7FFF sets its bit 15 exactly when it isn't empty, and never carries into the next.
+__device__ __forceinline__ u64 suits_with(u64 present, u64 ranks) {
+    return ((present & (ranks * 0x0001000100010001ull)) + 0x7FFF7FFF7FFF7FFFull) & 0x8000800080008000ull;
+}
+
+// The ranks the suits flagged in `suits` (bit 15 of their lanes) hold between them.
+__device__ __forceinline__ u64 ranks_of(u64 present, u64 suits) {
+    u64 r = present & (suits - (suits >> 15));     // 0x7FFF in each flagged lane
+    r |= r >> 32;
+    return (r | r >> 16) & ROW;
+}
+
+// fast.rs connected: the suits present are linked, two suits when they share a rank. Branch-free, so a warp never
+// waits for its slowest thread (the search loop it replaced, one suit a turn until nothing changed, cost about 18%
+// of the kernel's time): from the lowest suit present, three steps reach every suit linked to it.
+__device__ __forceinline__ bool connected(u64 present) {
+    u64 all = (present + 0x7FFF7FFF7FFF7FFFull) & 0x8000800080008000ull;
+    u64 ranks = (present >> ((__ffsll(all) - 16) & 63)) & ROW;     // the lowest suit's (none present: 0)
+    u64 reached = suits_with(present, ranks);
+    reached = suits_with(present, ranks_of(present, reached));
+    reached = suits_with(present, ranks_of(present, reached));
+    return reached == all;
 }
 
 // fast.rs connected_without_leftmost: pile 0 never moves, so the other top cards must be connected among themselves
 // and pile 0's card `left` must match one of them.
-__device__ bool connected_without_leftmost(u64 present, u32 left, int len) {
-    if (len < 2) return true;
+__device__ __forceinline__ bool connected_without_leftmost(u64 present, u32 left, int len) {
     u64 rest = present & ~(1ull << left);
     bool matched = (((rest >> (16 * (left >> 4))) & ROW) | ((rest >> (left & 0x0F)) & 0x0001000100010001ull)) != 0;
-    return matched && connected(rest);
+    return (len < 2) | (matched & connected(rest));
 }
 
 // ---- The row: piles 0.. at row[OFF..], SENTINEL around them, and the legal-move masks l1 (slides) and l3 (leaps).
@@ -511,7 +516,9 @@ extern "C" __global__ void __launch_bounds__(BLOCK) attempts(
 // together, and a thread that finishes an attempt takes the next at once. The warp takes attempts 32 at a time, with
 // one atomic and one load of their deals' won flags; attempts it can't use yet wait, one per thread, for the next
 // threads that need one.
-extern "C" __global__ void __launch_bounds__(BLOCK) attempts_stepwise(
+// At least 14 blocks a multiprocessor: at most 72 registers, which the kernel fits without spilling (left to itself
+// it took 79, 12 blocks fitted, and it ran 5% slower; 64 registers and 16 blocks spilled and lost).
+extern "C" __global__ void __launch_bounds__(BLOCK, 14) attempts_stepwise(
     const u8* __restrict__ deals, const u64* __restrict__ deal_masks, u32 n_deals, u64 inv_deals, u32 tries,
     u32 prefix, u32 tries2, u32 prefix2, u32 budget, u32 conn_gate, u32 leftmost, u32 leap_shift,
     u64 seed, u32* next_attempt, u32* won, u8* lines, u64* deal_counts, u64* profile)
@@ -662,11 +669,12 @@ extern "C" __global__ void __launch_bounds__(BLOCK) attempts_stepwise(
                     bool dead;
                     if (leftmost) {
                         // Also when pile 0's card changed, or the move broke a link among the other cards.
+                        // Every thread computes the trigger and the test (both branch-free), which ran faster than
+                        // testing only where the trigger fired.
                         u32 left = card_at(lo, hi, 0);
-                        dead = len <= (int)conn_gate
-                               && (breaks_link(present, cov) || parent_len > (int)conn_gate || pile == dd
-                                   || breaks_link(present & ~(1ull << left), cov))
-                               && !connected_without_leftmost(present, left, len);
+                        bool trigger = breaks_link(present, cov) | (parent_len > (int)conn_gate) | (pile == dd)
+                                       | breaks_link(present & ~(1ull << left), cov);
+                        dead = (len <= (int)conn_gate) & trigger & !connected_without_leftmost(present, left, len);
                     } else {
                         dead = len <= (int)conn_gate && (breaks_link(present, cov) || parent_len > (int)conn_gate)
                                && !connected(present);
