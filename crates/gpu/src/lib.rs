@@ -74,7 +74,7 @@ pub struct Settings {
     pub stepwise: bool,
     /// Play prefixes and search in different warps (kernel.cu `attempts_split`; `stepwise` then doesn't matter):
     /// `prefix_warps` of a block's warps play prefixes and queue the residuals for the others to search, so neither
-    /// waits for the other's step; the prefix's row is in registers and its warps go in lockstep. About 2.2 times the
+    /// waits for the other's step; the prefix's row is in registers and its warps go in lockstep. About 3.5 times the
     /// deals a second of `attempts_stepwise` on the T550. `block` must be a multiple of 32.
     pub split: bool,
     /// The warps of a block that play prefixes with `split` (kernel.cu `PREFIX_THREADS`); `block` must hold more.

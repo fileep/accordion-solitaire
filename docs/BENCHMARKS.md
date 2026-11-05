@@ -1235,7 +1235,7 @@ short) waits for the warp's next groups. That gives three things at once:
 - **Every thread is on the same move,** so at move m a row has at most 52 − m cards, and a move touches only the words
   that can hold them: the try's own moves run on 8, 7, 6, 5 then 4 words, with a uniform branch between those lengths,
   and on 3 barrel-shift stages where 4 were needed (x ≤ 29 from move 22 on). Rows of at most 32 cards keep their masks
-  in 32 bits (64-bit shifts take several instructions each).
+  in 32 bits (64-bit shifts take several instructions each). (The next section keeps only the 8-word copy.)
 - **Taking work happens once a cycle.** It took 9.4% of thread time when each thread took a group as it ended, so that
   some thread's scan of won deals stalled the warp every few turns; now it is under 1%.
 - **The threads stay together:** 29.6 of 32 stepping, against 23.6 when they waited for queue room one by one.
@@ -1272,3 +1272,64 @@ positions/s against 1,475–1,505M. Every deal was won and no line failed verifi
 
 **The balance moved again:** prefix threads wait for queue room in 37% of their turns (profile build), search threads
 starve in 3%, and searching is 54% of thread time. The search is what limits it now.
+
+## After Phase 8 — the search step, and what code size costs
+
+The search limited the kernel after the lockstep rewrite (54% of thread time), so these came next. All but the last two
+leave its results the same, which is a strong check: the same residuals and the same order give the same 99,785 wins of
+100,000. `accgpu`, 100,000 deals (seeds 2,000,000–2,099,999), one CPU thread, alternated; each row is against the kernel
+of the row above it, in the same runs.
+
+| Change | Deals/s | Before |
+|---|---|---|
+| **One undo and one mask computation a turn:** threads going down and backing up had a copy each, and a warp with both kinds ran both, one after the other. Now they join at the end of the turn | 253,763–268,669 | 213,387–225,375 |
+| **No trigger for the dead-end test:** every thread ran it anyway, and a position it finds dead is dead whatever its parent, so working out whether it was needed (two `breaks_link`) only cost time | 273,058–284,425 | 253,763–268,669 |
+| The other small ones together: one bit selection, the connectivity test on 32-bit words, and a taken residual's masks at the end of the turn with the others (each about +1%, by leaving each out) | 285,547–289,401 | 273,058–284,425 |
+| **A fixed search order:** leaps first, then slides, the highest pile first. Most searches run out of moves within their budget, so the order hardly matters to what they find (99,784 wins), and it needs no random numbers: no generator, no bit selection, and no random state in the queue | 291,514–303,171 | 280,381–289,043 |
+| **One copy of a try's moves,** on 8 words, instead of six for 8 down to 4 words (below) | 342,512–345,602 | 299,062–301,692 |
+| Tidying what that left, and one connectivity test for both forms of it | 353,964–359,263 | 348,329–357,582 |
+| The search's cards on four 32-bit words, so that every shift is one funnel shift (it lost before the code shrank) | 359,943–363,758 | 354,918–358,476 |
+
+**Code size is what the tiers cost.** Keeping fewer of the row lengths of the previous section ran *faster*, though every
+move then does more work:
+
+| Own-move copies (words) | PTX instructions in `attempts_split` | Deals/s |
+|---|---|---|
+| 8, 8, 7, 6, 5, 4 | 4,899 | 299,062–301,692 |
+| 8, 8, 6, 4 | | 317,568–321,225 |
+| 8, 8, 7, 5 | | 315,624–323,063 |
+| 8, 8, 5 | | 322,894–329,122 |
+| 8, 8 (4 then 3 barrel stages) | 3,737 | 335,807–342,898 |
+| **8** | **3,415** | **342,512–345,602** |
+
+Hot code is about 760 PTX instructions in a prefix warp's cycle and as many in a search warp's step, with all the warps of
+a multiprocessor sharing the instruction cache. So from here a change has to pay for its code.
+
+**Warps are no longer the limit.** Half the blocks lose nothing (`blocks_per_sm`, same kernel: 8 blocks 284,273–284,644, 4
+blocks 287,974–290,233, 3 blocks 280,584–281,652), and fewer attempts run on deals already won (131.5 a deal at 4
+blocks, 136.5 at 8). The multiprocessor is limited by its instructions, not by how many threads wait to run them.
+
+**In `acc batch`** (1M deals, seeds 6,000,000,000–6,000,999,999 every run, alternated with the previous commit's build):
+**350,850, 359,269 and 347,102 deals/s against 245,289, 228,531 and 226,911 (+43% to +58%)**, GPU 3,193–3,316M positions/s
+against 2,037–2,129M. Every deal was won and no line failed verification; the GPU now takes 98% of the deals.
+
+**Tried, not kept** (`accgpu`, same conditions):
+- **A thread backing up makes its next move in the same turn,** by saving its untried moves at each depth in shared memory
+  (twice the bytes a thread, so 5 blocks of 96), with dead ends backed out the next turn: same wins, 275,209–278,643
+  against 286,790–290,233. With the move and covered-card stacks in shared memory too, 263,458–265,448. A shared-memory
+  access costs far more than a register operation.
+- **The kept row in registers,** at 95 registers: 285,285–285,802 against 286,074–286,205 with it in shared memory.
+- **More registers** (`__launch_bounds__` for 6 blocks of 96, 95 registers, no spill): 357,936–359,357 against
+  356,133–362,786 at 80 with 24 bytes spilled.
+- **Taking residuals:** the won flag's load used only after the turn's step, a queue of 48 or 64, 2, 3 or 6 threads
+  needing one or a floor of 8 or 24: all within 1% (285,759–297,201).
+- **No counting of attempts at all,** to see what the atomic add costs: nothing measurable (285,759–291,538).
+- **Two steps of the connectivity test instead of three** (a suit three links away counts as cut off): 102 fewer wins and
+  more attempts, 283,052–290,084 against 293,959–299,920.
+- **A linear congruential generator for prefix moves:** the same speed.
+- **Row lengths for the shared moves too** (13, 11, 9, 8 words): 277,343–281,514 against 293,959–299,920; the code again.
+- **One copy of the move for shared and own moves** (on 13 words): 338,179–346,411 against 348,329–357,582.
+- **The won flag at a try's start used after its first moves:** 290,694–294,707 against 293,959–299,920.
+- **Search warps with few threads at work sleeping to wait for residuals** (fewer than 8 or 16): 292,009–296,730.
+- **Cards present by a loop** instead of 16 unrolled steps: 348,873–354,734 against 348,329–357,582.
+- **`write_line` out of line:** 286,323–294,873 against 299,062–301,692 (a real call costs the whole kernel).
