@@ -8,7 +8,7 @@
 use accordion_core::fast::Position;
 use accordion_core::verify::verify;
 use accordion_core::{Deal, Move, Outcome, SolveRecord};
-use accordion_gpu::{Gpu, Settings, deal_codes};
+use accordion_gpu::{Gpu, PROFILE_SLOTS, Settings, deal_codes};
 use accordion_solver::{Config, Endgame, Search, Verdict, solve};
 use clap::Parser;
 use std::path::PathBuf;
@@ -40,6 +40,9 @@ struct Args {
     /// Write the seeds of the deals the GPU did not win here, one per line.
     #[arg(long)]
     misses: Option<PathBuf>,
+    /// Compile the kernel with its profile counters and report where its time goes (slower; for measuring).
+    #[arg(long)]
+    profile: bool,
 }
 
 fn main() -> ExitCode {
@@ -54,10 +57,11 @@ fn main() -> ExitCode {
 }
 
 fn run(args: &Args) -> Result<bool, String> {
-    let settings: Settings = match &args.gpu_config {
+    let mut settings: Settings = match &args.gpu_config {
         Some(text) => serde_json::from_str(text).map_err(|e| format!("--gpu-config: {e}"))?,
         None => Settings::default(),
     };
+    settings.profile |= args.profile;
     let t = Instant::now();
     let gpu = Gpu::new(settings)?;
     eprintln!(
@@ -65,6 +69,11 @@ fn run(args: &Args) -> Result<bool, String> {
         gpu.name,
         gpu.sms,
         t.elapsed().as_secs_f64()
+    );
+    let (regs, local, blocks) = gpu.occupancy()?;
+    eprintln!(
+        "attempt kernel: {regs} registers and {local} bytes of local memory a thread; {blocks} blocks of {} a multiprocessor",
+        gpu.settings.block
     );
     let cpu: Config = serde_json::from_str(&args.cpu_config).map_err(|e| format!("--cpu-config: {e}"))?;
     let endgame = match cpu.search.endgame_piles {
@@ -80,6 +89,7 @@ fn run(args: &Args) -> Result<bool, String> {
 
     let mut lines: Vec<Option<Vec<u8>>> = vec![None; n];
     let (mut nodes, mut attempts) = (0u64, 0u64);
+    let mut profile = [0u64; PROFILE_SLOTS];
     let mut first = 0;
     let start = Instant::now();
     gpu.feed(
@@ -91,6 +101,9 @@ fn run(args: &Args) -> Result<bool, String> {
         },
         |idx, result| {
             nodes += result.nodes.iter().sum::<u64>();
+            for (sum, c) in profile.iter_mut().zip(&result.profile) {
+                *sum += c;
+            }
             attempts += result.tries.iter().map(|&t| u64::from(t)).sum::<u64>();
             for (i, line) in idx.into_iter().zip(result.lines) {
                 lines[i] = line;
@@ -183,6 +196,64 @@ fn run(args: &Args) -> Result<bool, String> {
         let text: String = seeds.iter().map(|s| format!("{s}\n")).collect();
         std::fs::write(path, text).map_err(|e| format!("{}: {e}", path.display()))?;
     }
+    if gpu.settings.profile {
+        print_profile(&profile, gpu_time, gpu.threads(), attempts, nodes);
+    }
     println!("all won            {}", if won + cpu_won == n { "yes" } else { "NO" });
     Ok(failed == 0 && won + cpu_won == n)
+}
+
+/// Where the kernel's thread time went (kernel.cu's profile counters, summed over launches).
+fn print_profile(p: &[u64; PROFILE_SLOTS], gpu_time: f64, threads: u64, attempts: u64, nodes: u64) {
+    let names = [
+        "taking work",
+        "loading the deal",
+        "random prefix",
+        "dead-end gate",
+        "search",
+        "writing results",
+        "skipping won deals",
+    ];
+    let cycles: u64 = p[..names.len()].iter().sum();
+    println!(
+        "kernel profile     thread time by phase (a thread waiting on others in its warp counts where it is):"
+    );
+    for (name, &c) in names.iter().zip(p) {
+        println!(
+            "                     {name:<19} {:5.1}%  {:7.0} cycles an attempt run",
+            100.0 * c as f64 / cycles as f64,
+            c as f64 / attempts.max(1) as f64
+        );
+    }
+    let in_step = |warp_steps: u64, steps: u64| steps as f64 / warp_steps.max(1) as f64;
+    println!(
+        "                   threads of a warp stepping together: {:.1} of 32 in the search loop, {:.1} in the prefix loop",
+        in_step(p[7], p[8]),
+        in_step(p[9], p[10])
+    );
+    println!(
+        "                   {} attempts taken, {} skipped ({:.1}%) because their deal was already won",
+        p[11],
+        p[12],
+        100.0 * p[12] as f64 / p[11].max(1) as f64
+    );
+    let searches: u64 = p[13..19].iter().sum();
+    let share = |i: usize| 100.0 * p[i] as f64 / searches.max(1) as f64;
+    println!(
+        "                   {searches} searches by positions: 0-15 {:.1}%, 16-63 {:.1}%, 64-255 {:.1}%, 256-1023 {:.1}%, 1024+ {:.1}%, the whole budget {:.1}%",
+        share(13),
+        share(14),
+        share(15),
+        share(16),
+        share(17),
+        share(18)
+    );
+    println!(
+        "                   {:.0} cycles of thread time a position (prefix moves and search positions)",
+        cycles as f64 / nodes.max(1) as f64
+    );
+    println!(
+        "                   threads busy {:.1}% of the GPU time ({threads} threads resident, {gpu_time:.2} s)",
+        100.0 * p[19] as f64 / 1e9 / (threads as f64 * gpu_time)
+    );
 }

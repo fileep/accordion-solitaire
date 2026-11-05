@@ -619,3 +619,73 @@ by the reference engine and counted (stage `prove`), and an undecided deal count
 Seeds 202,346,000–202,347,999 (2,000 deals): the run finished in 0.1 s and seed 202,346,720 was proven lost 0.05 s
 later. With the solver squeezed to 300 positions a deal (`--gpu off --max-nodes 300`), the prover won all 33 deals the
 solver left (within 3M positions a run); with a 2,000-position proof limit it won 8 and left 25 undecided.
+
+## After Phase 8 — where the GPU's time goes
+
+**Measuring it.** `accgpu --profile` compiles the kernel with its profile counters (`Settings::profile`, `-DPROFILE`;
+normal builds compile them out). Each thread adds up the clock cycles it spends in each phase of an attempt, and
+counts the steps of the prefix and search loops twice: once per thread, and once per warp (by the lowest thread
+stepping), so that their ratio is how many of a warp's 32 threads step together. It also counts the attempts taken and
+skipped, and the searches by length. The profiled build ran about 10% slower. All runs: `accgpu`, seeds 200,000–299,999,
+the GPU on its own.
+
+**Where the time went** (the kernel as it was, `attempts`; a thread waiting on others in its warp counts where it is):
+
+| Thread time | Share |
+|---|---|
+| Skipping attempts whose deal was already won | 56.4% |
+| Search | 22.5% |
+| Taking work | 12.8% |
+| Random prefix | 6.5% |
+| Loading the deal, the dead-end gate, writing results | 1.7% |
+
+- **Divergence, not work.** Of a warp's 32 threads, 1.5 took each search step together and 6.9 each prefix step.
+  Each thread runs its own attempt start to finish, so the threads of a warp soon drift apart, and the warp runs
+  them nearly one at a time. The skipping and taking work are mostly threads waiting their turn.
+- **Skips.** 87.3% of the 128M attempt slots belong to deals already won (a deal needs 162 attempts on average, and its
+  1,280 slots are spread over the launch).
+- **Search lengths.** 60% of searches end within 16 positions, 24% within 64, 12% within 256; 0.4% go past 1,024. So
+  making a warp's threads wait for each other at the end of every attempt would waste most of the warp too.
+
+**The step-at-a-time kernel** (`attempts_stepwise`, now the default; `"stepwise": false` keeps the old one). Each turn
+of its loop moves every thread one step through what it is doing, a prefix move or a search position. The threads
+doing the same thing step together, and a thread that finishes an attempt takes the next one at once. The warp takes
+attempts 32 at a time with one atomic and checks their deals' won flags with one load. Attempts it can't use yet
+wait, one per thread, for the next threads that need one. An attempt does exactly what it did before (the same
+random numbers for the same attempt number). Lockstep went from 1.5 to 14.4 threads of 32 in the search and from 6.9 to 16.6 in the prefix.
+
+The warp's time per turn then split as: search 37%, prefix 30%, loading the deal 21%, finishing an attempt 6% and
+taking work 6%. Loading read the deal one byte at a time, each load waiting on the one before, since the loop
+stopped at the first sentinel. It now loads 13 words at once and computes the move masks in registers (both
+kernels).
+
+| GPU alone, 100,000 deals | Deals/s | Positions/s |
+|---|---|---|
+| `attempts`, before | 34,879 | 334M |
+| `attempts`, words loaded at once | 35,789 | 343M |
+| `attempts_stepwise` | 44,575 | 484M |
+| **`attempts_stepwise`, words loaded at once** | **49,801–50,346** (three runs) | **533–539M** |
+
+Both win the same 99,513 deals (99.51%), and no line failed verification.
+
+**Tried, not kept:**
+- **Rows as 32-bit words.** The prefix's move shifted the piles above the mover down one byte at a time, about 25
+  of them; shifting a word at a time needs about 7. But each card read and written then costs a word read and
+  write, and the mask update reads up to 8 cards: 48,154 deals/s.
+- **Loading the won flag with the deal**, so that a thread starting an attempt waits on memory once, not twice:
+  49,050–49,111. Other warps hide the wait already.
+- **64 registers** (`__launch_bounds__` with 16 blocks a multiprocessor), so all 1,024 threads fit at once. The
+  kernel takes 72 registers, so 14 blocks of 64 fit, and the launch's last two blocks a multiprocessor wait their
+  turn. Capped at 64 it spilled nothing, but ran at 45,766–45,831. Launching only 14 blocks a multiprocessor:
+  49,114–49,268.
+
+**In `acc batch`** (CPU and GPU together, 1M fresh deals a run from seed 1,000,000,000, alternated):
+
+| Pair | Step at a time | Before | |
+|---|---|---|---|
+| 1 (laptop cool) | 72,215 deals/s; GPU 528M positions/s, 68% of the deals | 49,239; 329M, 70% | +47% |
+| 2 (warm) | 60,242; GPU 514M positions/s, 80% of the deals | 46,515; 320M, 72% | +30% |
+
+The laptop's heat moves these runs a lot (the CPU did 115M positions/s in the first, cool run and 64–76M in the
+others), so pair 2 is the fairer one. No GPU line failed verification. The GPU tests now run every attempt check on
+both kernels, and also check that a deal's tries stop only once it is won.

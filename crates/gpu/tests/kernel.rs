@@ -20,11 +20,20 @@ fn testdata(path: &str) -> String {
 
 /// The GPU, compiled once for every test; `None` (and a note) without one.
 fn gpu() -> Option<&'static Gpu> {
-    static GPU: OnceLock<Option<Gpu>> = OnceLock::new();
-    GPU.get_or_init(|| {
-        Gpu::new(Settings::default()).inspect_err(|e| eprintln!("skipping the GPU tests: {e}")).ok()
+    gpus().first()
+}
+
+/// The GPU with each attempt kernel: a step at a time (the default), and each thread on its own; empty without one.
+fn gpus() -> &'static [Gpu] {
+    static GPUS: OnceLock<Vec<Gpu>> = OnceLock::new();
+    GPUS.get_or_init(|| {
+        [true, false]
+            .into_iter()
+            .map(|stepwise| Gpu::new(Settings { stepwise, ..Settings::default() }))
+            .collect::<Result<_, _>>()
+            .inspect_err(|e| eprintln!("skipping the GPU tests: {e}"))
+            .unwrap_or_default()
     })
-    .as_ref()
 }
 
 /// Every golden deal: the solve files, batch.jsonl and the seeded-deal list, with their recorded result.
@@ -142,7 +151,12 @@ fn playouts_match_the_rust_engines() {
 
 #[test]
 fn golden_positions_get_the_right_verdict() {
-    let Some(gpu) = gpu() else { return };
+    for gpu in gpus() {
+        golden_positions_on(gpu);
+    }
+}
+
+fn golden_positions_on(gpu: &Gpu) {
     for (name, tops, winnable) in golden_positions()
         .into_iter()
         .flat_map(|g| [(g.clone(), false), (g, true)])
@@ -151,6 +165,7 @@ fn golden_positions_get_the_right_verdict() {
         })
     {
         let (winnable, leftmost) = winnable;
+        let name = format!("{name}, stepwise kernel {}", gpu.settings.stepwise);
         // Small positions: no prefix and no budget, so every try is a complete search. Large ones: long random
         // prefixes, which never find a win on an unwinnable position.
         let a = if tops.len() <= accordion_gpu::RESIDUAL {
@@ -195,18 +210,25 @@ fn golden_positions_get_the_right_verdict() {
 
 #[test]
 fn golden_and_random_deals_are_won_with_lines_that_verify() {
-    let Some(gpu) = gpu() else { return };
     let mut deals: Vec<(String, Deal, Option<Outcome>)> = golden_deals();
     deals.extend((0..4096u64).map(|s| (format!("seed {s}"), Deal::from_seed(s), None)));
     let positions: Vec<[u8; 52]> = deals.iter().map(|(_, deal, _)| deal_codes(deal)).collect();
-    for leftmost in [false, true] {
-        let result = gpu.run(&positions, &Attempts { leftmost, ..gpu.settings.attempts(0) }).unwrap();
-        let won = check_deals(&deals, &result.lines);
-        assert!(
-            won as f64 > 0.98 * deals.len() as f64,
-            "leftmost test {leftmost}: won {won} of {}",
-            deals.len()
-        );
+    for gpu in gpus() {
+        for leftmost in [false, true] {
+            let result = gpu.run(&positions, &Attempts { leftmost, ..gpu.settings.attempts(0) }).unwrap();
+            let won = check_deals(&deals, &result.lines);
+            assert!(
+                won as f64 > 0.98 * deals.len() as f64,
+                "stepwise kernel {}, leftmost test {leftmost}: won {won} of {}",
+                gpu.settings.stepwise,
+                deals.len()
+            );
+            // Every attempt is accounted for: a deal's tries stop only once it is won.
+            for (i, (&tries, line)) in result.tries.iter().zip(&result.lines).enumerate() {
+                let all = gpu.settings.rungs.iter().map(|&[_, t]| t).sum::<u32>();
+                assert!(line.is_some() || tries == all, "deal {i}: {tries} of {all} tries ran, not won");
+            }
+        }
     }
 }
 

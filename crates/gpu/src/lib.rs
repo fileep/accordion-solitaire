@@ -26,6 +26,12 @@ pub const RESIDUAL: usize = 16;
 pub const MAX_TRIES: u32 = 0xFFFF;
 /// NVRTC 12.9 writes PTX that needs a driver for CUDA 12.9 or later.
 const MIN_DRIVER: i32 = 12090;
+/// The kernel's profile counters (kernel.cu, with [`Settings::profile`]), in order: cycles taking work, loading the
+/// position, playing the prefix, the dead-end gate, searching, writing the result and skipping a won deal's attempt
+/// (summed over threads); steps of the search loop by warps and by threads, and of the prefix loop; attempts taken
+/// and skipped; searches by positions generated (0-15, 16-63, 64-255, 256-1023, 1024 up to the budget, the budget);
+/// thread spans summed (ns); the latest end (ns); and the earliest start, bit-inverted (ns).
+pub const PROFILE_SLOTS: usize = 22;
 
 /// How `acc batch` uses the GPU (`--gpu-config`, JSON; fields left out keep these defaults, measured in Phase 5
 /// track F).
@@ -51,6 +57,11 @@ pub struct Settings {
     /// `connected_without_leftmost`): about 50% faster on the T550.
     pub leftmost: bool,
     pub seed: u64,
+    /// Compile the kernel with its profile counters ([`BatchResult::profile`]); slower, for measuring only.
+    pub profile: bool,
+    /// Run attempts a step at a time (kernel.cu `attempts_stepwise`), so a warp's threads step together: 1.4 times
+    /// as many deals a second on the T550 as `attempts`, where each thread runs its own attempts start to finish.
+    pub stepwise: bool,
 }
 
 impl Default for Settings {
@@ -64,6 +75,8 @@ impl Default for Settings {
             conn_gate: 19,
             leftmost: true,
             seed: 0x5EED,
+            profile: false,
+            stepwise: true,
         }
     }
 }
@@ -131,6 +144,8 @@ pub struct BatchResult {
     pub nodes: Vec<u64>,
     /// Attempts run (a position's later attempts are skipped once one has won it).
     pub tries: Vec<u32>,
+    /// The kernel's [`PROFILE_SLOTS`] counters for the launch, when profiling (empty otherwise).
+    pub profile: Vec<u64>,
 }
 
 /// A launched batch, until its results are copied back.
@@ -142,6 +157,7 @@ pub struct Pending {
     lines: CudaSlice<u8>,
     /// Per position: positions generated << 16 | attempts run.
     counts: CudaSlice<u64>,
+    profile: Option<CudaSlice<u64>>,
     // Kept alive until the kernel is done with them.
     _inputs: (CudaSlice<u8>, CudaSlice<u32>),
 }
@@ -158,6 +174,7 @@ pub struct Playout {
 
 pub struct Gpu {
     ctx: Arc<CudaContext>,
+    /// `attempts` or `attempts_stepwise`, as the settings say.
     attempts: CudaFunction,
     playouts: CudaFunction,
     pub name: String,
@@ -266,13 +283,18 @@ impl Gpu {
             SOURCE,
             CompileOptions {
                 arch: Some(arch),
-                options: vec![format!("-DBLOCK={}", settings.block)],
+                options: [format!("-DBLOCK={}", settings.block)]
+                    .into_iter()
+                    .chain(settings.profile.then(|| "-DPROFILE".to_string()))
+                    .collect(),
                 ..Default::default()
             },
         )
         .map_err(|e| format!("compiling the kernel: {e:?}"))?;
         let module = ctx.load_module(ptx).map_err(|e| format!("loading the kernel: {e:?}"))?;
-        let attempts = module.load_function("attempts").map_err(err)?;
+        let attempts = module
+            .load_function(if settings.stepwise { "attempts_stepwise" } else { "attempts" })
+            .map_err(err)?;
         let playouts = module.load_function("playouts").map_err(err)?;
         Ok(Gpu { ctx, attempts, playouts, name, sms, settings })
     }
@@ -280,6 +302,18 @@ impl Gpu {
     /// Thread blocks per launch.
     pub fn blocks(&self) -> u32 {
         self.sms * self.settings.blocks_per_sm
+    }
+
+    /// The attempt kernel's registers and local memory per thread, and how many of its blocks a multiprocessor holds.
+    pub fn occupancy(&self) -> Result<(i32, i32, u32), String> {
+        let f = &self.attempts;
+        let blocks = f.occupancy_max_active_blocks_per_multiprocessor(self.settings.block, 0, None);
+        Ok((f.num_regs().map_err(err)?, f.local_size_bytes().map_err(err)?, blocks.map_err(err)?))
+    }
+
+    /// Threads per launch, all resident at once when the multiprocessors hold that many blocks.
+    pub fn threads(&self) -> u64 {
+        u64::from(self.blocks()) * u64::from(self.settings.block)
     }
 
     /// A new stream to submit batches on.
@@ -309,6 +343,7 @@ impl Gpu {
         let mut won = s.alloc_zeros::<u32>(positions.len()).map_err(err)?;
         let mut lines = s.alloc_zeros::<u8>(positions.len() * 51).map_err(err)?;
         let mut counts = s.alloc_zeros::<u64>(positions.len()).map_err(err)?;
+        let mut profile = s.alloc_zeros::<u64>(PROFILE_SLOTS).map_err(err)?;
         let leftmost = u32::from(a.leftmost);
         let mut launch = s.launch_builder(&self.attempts);
         launch
@@ -325,7 +360,8 @@ impl Gpu {
             .arg(&mut next)
             .arg(&mut won)
             .arg(&mut lines)
-            .arg(&mut counts);
+            .arg(&mut counts)
+            .arg(&mut profile);
         let cfg = LaunchConfig {
             grid_dim: (self.blocks(), 1, 1),
             block_dim: (self.settings.block, 1, 1),
@@ -340,6 +376,7 @@ impl Gpu {
             won,
             lines,
             counts,
+            profile: self.settings.profile.then_some(profile),
             _inputs: (d_positions, next),
         })
     }
@@ -435,6 +472,10 @@ impl Pending {
         let won = s.clone_dtoh(&self.won).map_err(err)?;
         let lines = s.clone_dtoh(&self.lines).map_err(err)?;
         let counts = s.clone_dtoh(&self.counts).map_err(err)?;
+        let profile = match &self.profile {
+            Some(p) => s.clone_dtoh(p).map_err(err)?,
+            None => Vec::new(),
+        };
         Ok(BatchResult {
             lines: won
                 .iter()
@@ -444,6 +485,7 @@ impl Pending {
                 .collect(),
             nodes: counts.iter().map(|&c| c >> 16).collect(),
             tries: counts.iter().map(|&c| (c & 0xFFFF) as u32).collect(),
+            profile,
         })
     }
 }
