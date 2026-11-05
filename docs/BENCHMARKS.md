@@ -311,3 +311,56 @@ Two lessons came out of the runner:
 | Endgame tables | Pattern counts match the independent Python DP for 1–12 piles. Winnable counts for 1–8 piles match an independent Python enumeration (`research/probes/endgame_check.py`). Verdicts match plain search on 3,000 random positions; won lines replay |
 | Gate tests (`crates/solver/tests/gates.rs`) | Golden positions and unwinnable deals give the right verdict under the default strategy, with endgame tables, and with the Phase 4 solver. **With every ladder search starved (budget 0), the thorough stage wins all of the first 100 deals**, every line verified |
 | Visualizer (`npm test`) | The in-page WASM solver wins seeded deals and a mid-game position, and reports both unwinnable golden deals as exhausted |
+
+## Phase 8 — CPU and GPU together (`acc batch --gpu`)
+
+**Setup:** same machine; code on top of commit `af14316`. `acc batch` and `acc experiment` now run the GPU ladder
+attempts of Phase 5 track F next to the CPU solver whenever an NVIDIA GPU is found (`--gpu auto`, the default):
+
+- **Feeder:** one thread sends the GPU batches of 4,096 deals from the same queue as the CPU workers, two launches in
+  flight. It only launches and collects.
+- **CPU workers:** 15 of them. Each verifies the GPU's lines before taking a new deal, and solves a deal the GPU didn't
+  win from the start, with the full stage chain.
+- **Kernel:** unchanged from Phase 5. It now also accepts positions of fewer than 52 piles (for the tests) and counts
+  positions and attempts per deal.
+
+**CPU alone against CPU + GPU** (1M deals per run, seeds 2,000,000–2,999,999, alternating after a 110 s warm-up;
+`research/experiments/phase8/`):
+
+| Run | CPU only (16 threads) | CPU + GPU (15 threads + GPU) | GPU's share of the wins | Ratio |
+|---|---|---|---|---|
+| 1 | 17,392 deals/s | 25,786 deals/s | 65% | 1.48× |
+| 2 | 13,148 deals/s | 28,282 deals/s | 60% | 2.15× |
+| 3 | 12,571 deals/s | 28,674 deals/s | 58% | 2.28× |
+| **Median** | **13,148** | **28,282** | | **2.15×** |
+
+- **Every deal was won in all six runs.** The GPU won 99.4% of the deals it was given, and all 1,830,604 of its lines
+  verified.
+- **The CPU alone slows as the laptop heats** (±18% across the three runs); CPU + GPU stays within ±5%. Each CPU-only run
+  came straight after a hybrid run, which leaves the shared cooling hot, so runs 2 and 3 may flatter the GPU somewhat. Run
+  1 (1.48×) came after the CPU-only warm-up.
+- **Inside the hybrid** the GPU wins about 16,800 deals/s at 228M positions/s, close to its solo rate (18,971). The CPU
+  workers solve about 11,400 deals/s, including the 0.6% the GPU couldn't win.
+- **Per-deal costs** for the deals the CPU solved in the hybrid: mean 6,252 positions and p99 52,040, against 5,886 and
+  47,088 for the CPU alone. The GPU's leftovers are harder than average.
+
+The Phase 5 gate (≥2× end to end) measured 1.56–1.88× with the prototype runner and 60 s of rest before each run. These
+runs give 1.48–2.28×. On this laptop the gain depends on how hot it is.
+
+**Sustained, over 100M deals** (seeds 0–99,999,999, 86 minutes; docs/RESULTS.md): CPU + GPU held 18,900–19,700 deals/s
+over each stretch of 10M deals after the first two minutes, 19,281 deals/s overall. That is about 1.4× the CPU alone's
+13,422 deals/s over the 25-minute Phase 7 run of 20M deals, not the 2.15× of the short runs above.
+
+- **The GPU held up:** 214M positions/s and 15,800 wins/s, against 228M and 16,800 in the short runs.
+- **The CPU slowed:** 23M positions/s and 3,500 deals/s, against 56–74M and 8,900–12,000; median 1.15 ms per deal,
+  against 0.47–0.61 ms. Heat is the likely cause, since the two share one cooling system, but it wasn't measured directly.
+- **The GPU's share** of the deals rose to 82%, against 58–65% in the short runs.
+
+### Correctness gates (Phase 8)
+
+| Check | Result |
+|---|---|
+| Playouts (`crates/gpu/tests/kernel.rs`) | GPU random playouts: 64 from each golden deal and position, and one from each of 20,000 seeded deals. At every step the GPU's legal moves equal the reference engine's, its connectivity and link-broken tests equal the fast engine's, and undo restores the position. Both of the kernel's rules codes are covered: the row (more than 16 piles) and the registers (16 or fewer). Planted bugs in a move mask, the link test and the leap distance each make it fail |
+| Golden positions | With no prefix and no budget, every GPU try is a complete search: it wins the winnable 12-pile golden position (the line replays) and never wins the 16-pile dead end. 8,192 long random prefixes never win either unwinnable 52-pile case |
+| Golden and random deals | Every golden deal recorded as a win is won on the GPU, no unwinnable one is, and all lines on 4,096 random deals verify |
+| Runner (`crates/cli/src/runner.rs`) | With the GPU, every deal comes back exactly once, verified; the GPU's wins match its count. Without NVRTC or a GPU, `--gpu auto` falls back to the CPU and `--gpu on` stops with the reason |

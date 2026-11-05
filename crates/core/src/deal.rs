@@ -42,6 +42,25 @@ impl Deal {
     pub fn cards(&self) -> &[Card; DECK_SIZE] {
         &self.0
     }
+
+    /// This deal with suits and ranks renamed in order of first appearance, left to right: the first card becomes
+    /// the ace of clubs, the first new suit after it diamonds, the first new rank a two, and so on. Matching only
+    /// compares suits and ranks, so two deals play alike, move for move, exactly when these are equal.
+    pub fn relabelled(&self) -> Deal {
+        let (mut suits, mut ranks) = ([u8::MAX; 4], [u8::MAX; 13]);
+        let (mut next_suit, mut next_rank) = (0, 0);
+        Deal(self.0.map(|card| {
+            let suit = &mut suits[card.suit() as usize];
+            if *suit == u8::MAX {
+                (*suit, next_suit) = (next_suit, next_suit + 1);
+            }
+            let rank = &mut ranks[card.rank() as usize];
+            if *rank == u8::MAX {
+                (*rank, next_rank) = (next_rank, next_rank + 1);
+            }
+            Card::new(*suit, *rank)
+        }))
+    }
 }
 
 impl fmt::Display for Deal {
@@ -80,5 +99,23 @@ mod tests {
     fn display_parses_back() {
         let d = Deal::from_seed(99);
         assert_eq!(Deal::parse(&d.to_string()), Ok(d));
+    }
+
+    #[test]
+    fn relabelling_ignores_names_but_not_play() {
+        let d = Deal::from_seed(7);
+        let r = d.relabelled();
+        assert_eq!(r.cards()[0], Card::new(0, 0));
+        assert_eq!(r.relabelled(), r);
+        assert!(deck_input::check_full_deck(r.cards()).is_ok());
+        // Same pattern of matches, card by card.
+        for (i, j) in (0..52).flat_map(|i| (0..52).map(move |j| (i, j))) {
+            assert_eq!(d.cards()[i].matches(d.cards()[j]), r.cards()[i].matches(r.cards()[j]));
+        }
+        // Renaming suits (hearts and spades swapped) and ranks (reversed) gives the same game.
+        let renamed = Deal(d.0.map(|c| Card::new([0, 1, 3, 2][c.suit() as usize], 12 - c.rank())));
+        assert_ne!(renamed, d);
+        assert_eq!(renamed.relabelled(), r);
+        assert_ne!(Deal::from_seed(8).relabelled(), r);
     }
 }

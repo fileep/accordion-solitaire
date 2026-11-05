@@ -1,17 +1,21 @@
 //! `acc experiment`: run solver configurations over a fixed deal set and record what each costs (PLAN.md Phase 5
 //! track A). Each run appends one summary line to `<out>/summary.jsonl` (machine, commit, set, configuration,
 //! wins by stage, positions and time percentiles, throughput) and can write one row per deal. Repeats are
-//! interleaved (A B A B …) so laptop heat and clock drift hit every configuration alike.
+//! interleaved (A B A B …) so laptop heat and clock drift hit every configuration alike. A configuration with
+//! `"gpu"` runs GPU ladder attempts in front of the CPU solver, as `acc batch --gpu` does (PLAN.md Phase 8); its
+//! position and time percentiles cover the deals solved on the CPU.
 
 use crate::dossier::now_utc;
-use crate::runner::{self, Options, percentile};
-use accordion_solver::{Config, Stats, Verdict};
+use crate::runner::{self, GpuTotals, Options, percentile};
+use accordion_gpu::{Gpu, Settings};
+use accordion_solver::{Config, Endgame, Stage, Stats, Verdict};
 use clap::Args;
 use serde::Deserialize;
 use serde_json::{Value, json};
 use std::collections::BTreeMap;
 use std::io::{BufWriter, Write};
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 use std::time::Instant;
 
 #[derive(Args)]
@@ -20,8 +24,9 @@ pub struct ExperimentArgs {
     /// regression (0–99,999), hard (<out>/sets/hard.txt), a range FROM:COUNT, or a file of seeds.
     #[arg(long)]
     set: String,
-    /// A configuration as JSON: {"name": "...", "solver": {Config fields}, "table": 14, "threads": 16, "note": ".."}.
-    /// Repeatable; fields left out keep their defaults.
+    /// A configuration as JSON: {"name": "...", "solver": {Config fields}, "table": 14, "threads": 16, "gpu":
+    /// {accordion_gpu::Settings fields}, "note": ".."}. Repeatable; fields left out keep their defaults, and without
+    /// "gpu" the GPU isn't used.
     #[arg(long = "config")]
     configs: Vec<String>,
     /// A JSON file holding a list of configurations like --config, run after them.
@@ -62,8 +67,32 @@ struct Variant {
     solver: Config,
     table: Option<u32>,
     threads: Option<usize>,
+    gpu: Option<Settings>,
     #[serde(default)]
     note: String,
+}
+
+impl Variant {
+    /// Options for a run: `threads` in all (0 = every core), one of them the GPU's feeder.
+    fn options(
+        &self,
+        threads: usize,
+        table: u32,
+        endgame: &Option<Arc<Endgame>>,
+        gpu: &Option<Arc<Gpu>>,
+    ) -> Options {
+        let threads = match self.threads.unwrap_or(threads) {
+            0 => runner::all_threads(),
+            n => n,
+        };
+        Options {
+            threads: if gpu.is_some() { threads.saturating_sub(1).max(1) } else { threads },
+            table_log2: self.table.unwrap_or(table),
+            endgame: endgame.clone(),
+            records: false,
+            gpu: gpu.clone(),
+        }
+    }
 }
 
 /// The seeds of a named deal set (PLAN.md Phase 5 track A; the sets are disjoint).
@@ -118,6 +147,7 @@ struct Outcome {
     micros: Vec<u64>,
     stats: Stats,
     wall: f64,
+    gpu: Option<GpuTotals>,
 }
 
 pub fn run(args: &ExperimentArgs) -> Result<bool, String> {
@@ -138,6 +168,13 @@ pub fn run(args: &ExperimentArgs) -> Result<bool, String> {
     }
     let max_endgame = variants.iter().map(|v| v.solver.search.endgame_piles).max().unwrap_or(0);
     let endgame = runner::load_endgame(&args.endgame_dir, max_endgame)?;
+    let gpus: Vec<Option<Arc<Gpu>>> = variants
+        .iter()
+        .map(|v| match &v.gpu {
+            Some(settings) => runner::open_gpu("on", settings.clone()),
+            None => Ok(None),
+        })
+        .collect::<Result<_, _>>()?;
     let (commit, date) = (commit(), now_utc());
     let cpu = std::env::var("PROCESSOR_IDENTIFIER").unwrap_or_default();
     eprintln!(
@@ -150,16 +187,7 @@ pub fn run(args: &ExperimentArgs) -> Result<bool, String> {
 
     if args.warmup > 0.0 {
         let v = &variants[0];
-        let threads = match v.threads.unwrap_or(args.threads) {
-            0 => runner::all_threads(),
-            n => n,
-        };
-        let opts = Options {
-            threads,
-            table_log2: v.table.unwrap_or(args.table),
-            endgame: endgame.clone(),
-            records: false,
-        };
+        let opts = v.options(args.threads, args.table, &endgame, &gpus[0]);
         let start = Instant::now();
         while start.elapsed().as_secs_f64() < args.warmup {
             runner::run(&seeds, &v.solver, &opts, |_| Ok(()), |_| {})?;
@@ -170,12 +198,8 @@ pub fn run(args: &ExperimentArgs) -> Result<bool, String> {
     let mut all_won = true;
     for rep in 0..args.repeat {
         for (vi, v) in variants.iter().enumerate() {
-            let threads = match v.threads.unwrap_or(args.threads) {
-                0 => runner::all_threads(),
-                n => n,
-            };
-            let table = v.table.unwrap_or(args.table);
-            let opts = Options { threads, table_log2: table, endgame: endgame.clone(), records: false };
+            let opts = v.options(args.threads, args.table, &endgame, &gpus[vi]);
+            let (threads, table) = (opts.threads + usize::from(opts.gpu.is_some()), opts.table_log2);
             let mut deal_rows = if args.deals && rep == 0 {
                 let dir = args.out.join("deals");
                 std::fs::create_dir_all(&dir).map_err(|e| format!("creating {}: {e}", dir.display()))?;
@@ -196,10 +220,11 @@ pub fn run(args: &ExperimentArgs) -> Result<bool, String> {
                 micros: Vec::with_capacity(seeds.len()),
                 stats: Stats::default(),
                 wall: 0.0,
+                gpu: None,
             };
             let start = Instant::now();
             let label = format!("{} (run {}/{})", v.name, rep + 1, args.repeat);
-            runner::run(
+            o.gpu = runner::run(
                 &seeds,
                 &v.solver,
                 &opts,
@@ -215,8 +240,10 @@ pub fn run(args: &ExperimentArgs) -> Result<bool, String> {
                     } else {
                         o.not_won.push(s.seed);
                     }
-                    o.nodes.push(s.report.nodes);
-                    o.micros.push(s.us);
+                    if s.report.stage != Stage::Gpu {
+                        o.nodes.push(s.report.nodes);
+                        o.micros.push(s.us);
+                    }
                     o.stats += s.report.stats;
                     if let Some(w) = deal_rows.as_mut() {
                         let row = json!({
@@ -240,9 +267,9 @@ pub fn run(args: &ExperimentArgs) -> Result<bool, String> {
             o.nodes.sort_unstable();
             o.micros.sort_unstable();
             o.not_won.sort_unstable();
-            all_won &= o.not_won.is_empty() && o.failed == 0;
+            all_won &= o.not_won.is_empty() && o.failed == 0 && o.gpu.as_ref().is_none_or(|t| t.failed == 0);
             let n = seeds.len() as f64;
-            let mean = |v: &[u64]| v.iter().sum::<u64>() as f64 / n;
+            let mean = |v: &[u64]| v.iter().sum::<u64>() as f64 / v.len().max(1) as f64;
             let pct = |v: &[u64]| {
                 json!({
                     "mean": (mean(v) * 10.0).round() / 10.0,
@@ -264,7 +291,7 @@ pub fn run(args: &ExperimentArgs) -> Result<bool, String> {
                 let summary = json!({
                     "date": date, "commit": commit, "cpu": cpu, "set": args.set, "deals": seeds.len(),
                     "name": v.name, "note": v.note, "repeat": rep + 1, "threads": threads, "table": table,
-                    "solver": v.solver,
+                    "solver": v.solver, "gpu": v.gpu,
                     "won": o.won, "failed_verify": o.failed, "not_won": o.not_won.iter().take(100).collect::<Vec<_>>(),
                     "stages": o.stages,
                     "nodes": pct(&o.nodes), "us": pct(&o.micros),
@@ -273,6 +300,10 @@ pub fn run(args: &ExperimentArgs) -> Result<bool, String> {
                         "tests_run": o.stats.tests_run, "endgame_lookups": o.stats.endgame_lookups,
                         "asleep": o.stats.asleep, "search_nodes": o.stats.nodes,
                     },
+                    "gpu_totals": o.gpu.as_ref().map(|t| json!({
+                        "deals": t.deals, "won": t.won, "failed_verify": t.failed, "attempts": t.attempts,
+                        "positions": t.positions, "launches": t.launches, "error": t.error,
+                    })),
                     "wall_s": (o.wall * 1000.0).round() / 1000.0,
                     "deals_per_s": (n / o.wall).round(),
                 });
@@ -309,7 +340,10 @@ fn print_table(variants: &[Variant], results: &[Vec<Outcome>], deals: usize) {
         let first = &runs[0];
         let mut rates: Vec<f64> = runs.iter().map(|o| n / o.wall).collect();
         rates.sort_by(f64::total_cmp);
-        let mut ms: Vec<f64> = runs.iter().map(|o| o.micros.iter().sum::<u64>() as f64 / n / 1e3).collect();
+        let mut ms: Vec<f64> = runs
+            .iter()
+            .map(|o| o.micros.iter().sum::<u64>() as f64 / o.micros.len().max(1) as f64 / 1e3)
+            .collect();
         ms.sort_by(f64::total_cmp);
         let median = |v: &[f64]| v[v.len() / 2];
         let spread = if rates.len() > 1 {
@@ -321,7 +355,7 @@ fn print_table(variants: &[Variant], results: &[Vec<Outcome>], deals: usize) {
             "{:<28} {:>13} {:>10.0} {:>9} {:>10} {:>9.3} {:>9.2} {:>17}",
             v.name,
             format!("{}/{}{}", first.won, deals, if first.failed > 0 { " FAIL" } else { "" }),
-            first.nodes.iter().sum::<u64>() as f64 / n,
+            first.nodes.iter().sum::<u64>() as f64 / first.nodes.len().max(1) as f64,
             percentile(&first.nodes, 0.99),
             first.nodes.last().copied().unwrap_or(0),
             median(&ms),

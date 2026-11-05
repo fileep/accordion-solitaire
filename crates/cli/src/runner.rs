@@ -1,27 +1,37 @@
-//! Runs one solver configuration over many seeded deals on worker threads (PLAN.md Phase 5 track B). Workers take
-//! the next deal from a shared counter, so a slow deal never holds the others up; each worker solves, verifies
-//! and serializes its own deals and keeps one search (and table) for the whole run. The calling thread only
+//! Runs one solver configuration over many seeded deals on worker threads (PLAN.md Phase 5 track B, Phase 8).
+//! Workers take the next deal from a shared counter, so a slow deal never holds the others up; each worker solves,
+//! verifies and serializes its own deals and keeps one search (and table) for the whole run. The calling thread only
 //! receives finished deals, in completion order.
+//!
+//! With a GPU, a feeder thread takes batches of deals from the same counter for GPU ladder attempts and only
+//! launches and collects. Workers check the GPU's lines before taking new deals, so nothing waits on them: each line
+//! is replayed by the reference engine, and a deal the GPU didn't win goes through the CPU solver from the start,
+//! like any other.
 
-use accordion_core::Deal;
 use accordion_core::fast::Position;
 use accordion_core::notation::encode_compact;
 use accordion_core::verify::verify;
-use accordion_core::{Outcome, SolveRecord};
-use accordion_solver::{Config, Endgame, Report, Search, Verdict, solve};
+use accordion_core::{Deal, Move, Outcome, SolveRecord};
+use accordion_gpu::{Gpu, Settings, deal_codes};
+use accordion_solver::{Config, Endgame, Report, Search, Stage, Stats, Verdict, solve};
+use rayon::slice::ParallelSliceMut;
 use serde_json::json;
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::path::Path;
-use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
-use std::sync::{Arc, mpsc};
+use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
+use std::sync::{Arc, Mutex, mpsc};
 use std::time::{Duration, Instant};
 
 pub struct Options {
+    /// CPU worker threads (a GPU feeder, if any, is one more).
     pub threads: usize,
     /// Dead-position table per thread, as log2 of 64-byte buckets.
     pub table_log2: u32,
     pub endgame: Option<Arc<Endgame>>,
     /// Serialize each deal's solve record (compact moves) for output.
     pub records: bool,
+    /// GPU ladder attempts in front of the CPU solver (`--gpu`).
+    pub gpu: Option<Arc<Gpu>>,
 }
 
 /// One finished deal.
@@ -30,12 +40,37 @@ pub struct Solved {
     pub index: usize,
     pub seed: u64,
     pub report: Report,
-    /// Time to solve on one thread, in microseconds.
+    /// Time to solve on one thread, in microseconds; 0 for a deal won on the GPU, which works in batches.
     pub us: u64,
     /// The reference engine's verdict on the line (the win, or the best line of a deal not won).
     pub verified: Result<(), String>,
     /// The solve record as one JSON line, when asked for.
     pub record: Option<String>,
+    /// [`fingerprint`] of the deal.
+    pub fingerprint: u64,
+}
+
+/// What the GPU did in a run.
+#[derive(Default)]
+pub struct GpuTotals {
+    pub launches: u64,
+    /// Deals it was given, and how many of them it won (every line verified).
+    pub deals: u64,
+    pub won: u64,
+    /// Lines that failed verification: a bug. Each of those deals was solved on the CPU instead.
+    pub failed: u64,
+    pub attempts: u64,
+    pub positions: u64,
+    /// Why the GPU stopped early, if it did; the CPU solved the deals it had in hand, and the rest.
+    pub error: Option<String>,
+}
+
+/// A deal back from the GPU, waiting for a CPU worker.
+struct FromGpu {
+    index: usize,
+    line: Option<Vec<u8>>,
+    nodes: u64,
+    tries: u32,
 }
 
 /// Every thread on this machine.
@@ -90,31 +125,101 @@ pub fn load_endgame(dir: &Path, piles: usize) -> Result<Option<Arc<Endgame>>, St
     Ok(Some(Arc::new(tables)))
 }
 
+/// Opens the GPU for `--gpu`: `on` (an error without one), `auto` (CPU only, with a note, without one) or `off`.
+pub fn open_gpu(flag: &str, settings: Settings) -> Result<Option<Arc<Gpu>>, String> {
+    let required = match flag {
+        "off" => return Ok(None),
+        "on" => true,
+        "auto" => false,
+        f => return Err(format!("--gpu: {f:?} (auto, on or off)")),
+    };
+    let start = Instant::now();
+    match Gpu::new(settings) {
+        Ok(gpu) => {
+            eprintln!(
+                "GPU: {} ({} multiprocessors), kernel compiled in {:.1} s",
+                gpu.name,
+                gpu.sms,
+                start.elapsed().as_secs_f64()
+            );
+            Ok(Some(Arc::new(gpu)))
+        }
+        Err(e) if required => Err(format!("--gpu on: {e}")),
+        Err(e) => {
+            eprintln!("no GPU ({e}); solving on the CPU only");
+            Ok(None)
+        }
+    }
+}
+
 /// Solves every deal in `seeds` with `config` (move-order seed = deal seed) and hands each result to `sink`.
 /// `progress` is called about twice a second with the number of deals finished. Stops early if `sink` fails.
+/// Returns what the GPU did, if there was one.
 pub fn run(
     seeds: &[u64],
     config: &Config,
     opts: &Options,
     mut sink: impl FnMut(Solved) -> Result<(), String>,
     mut progress: impl FnMut(usize),
-) -> Result<(), String> {
+) -> Result<Option<GpuTotals>, String> {
     let next = AtomicUsize::new(0);
     let abort = AtomicBool::new(false);
+    let from_gpu: Mutex<VecDeque<FromGpu>> = Mutex::new(VecDeque::new());
+    let feeding = AtomicBool::new(opts.gpu.is_some());
+    let (gpu_won, gpu_failed) = (AtomicU64::new(0), AtomicU64::new(0));
     let (tx, rx) = mpsc::sync_channel::<Solved>(4096);
     std::thread::scope(|scope| {
+        let feeder = opts.gpu.as_deref().map(|gpu| {
+            let (next, abort, from_gpu, feeding) = (&next, &abort, &from_gpu, &feeding);
+            scope.spawn(move || {
+                let totals = feed(gpu, seeds, next, abort, from_gpu);
+                feeding.store(false, Ordering::Release);
+                totals
+            })
+        });
         for _ in 0..opts.threads.max(1) {
             let tx = tx.clone();
-            let (next, abort) = (&next, &abort);
+            let (next, abort, from_gpu, feeding) = (&next, &abort, &from_gpu, &feeding);
+            let (gpu_won, gpu_failed) = (&gpu_won, &gpu_failed);
             scope.spawn(move || {
                 let mut search = Search::with_options(opts.table_log2, config.search);
                 search.set_endgame(opts.endgame.clone());
-                loop {
-                    let index = next.fetch_add(1, Ordering::Relaxed);
-                    if index >= seeds.len() || abort.load(Ordering::Relaxed) {
-                        break;
-                    }
-                    let solved = solve_one(index, seeds[index], config, &mut search, opts.records);
+                while !abort.load(Ordering::Relaxed) {
+                    let job = from_gpu.lock().expect("no panics").pop_front();
+                    let solved = match job {
+                        Some(job) => {
+                            let seed = seeds[job.index];
+                            match gpu_win(&job, seed, opts.records) {
+                                Some(Ok(solved)) => {
+                                    gpu_won.fetch_add(1, Ordering::Relaxed);
+                                    solved
+                                }
+                                not_won => {
+                                    if let Some(Err(e)) = not_won {
+                                        gpu_failed.fetch_add(1, Ordering::Relaxed);
+                                        eprintln!(
+                                            "\nseed {seed}: GPU line FAILED verification ({e}); solving it on the CPU"
+                                        );
+                                    }
+                                    solve_one(job.index, seed, config, &mut search, opts.records)
+                                }
+                            }
+                        }
+                        None => {
+                            let index = next.fetch_add(1, Ordering::Relaxed);
+                            if index < seeds.len() {
+                                solve_one(index, seeds[index], config, &mut search, opts.records)
+                            } else if !feeding.load(Ordering::Acquire)
+                                && from_gpu.lock().expect("no panics").is_empty()
+                            {
+                                break;
+                            } else {
+                                // The GPU still has deals in flight.
+                                std::thread::sleep(Duration::from_micros(200));
+                                continue;
+                            }
+                        }
+                    };
                     if tx.send(solved).is_err() {
                         break;
                     }
@@ -139,7 +244,77 @@ pub fn run(
             }
         }
         progress(done);
-        result
+        let totals = feeder.map(|h| GpuTotals {
+            won: gpu_won.load(Ordering::Relaxed),
+            failed: gpu_failed.load(Ordering::Relaxed),
+            ..h.join().expect("the feeder does not panic")
+        });
+        result.map(|()| totals)
+    })
+}
+
+/// The GPU feeder: batches of deals from the shared counter until it runs out (or the run is aborted), results
+/// into `queue`. If the GPU fails, the deals it had in hand go into the queue as not won.
+fn feed(
+    gpu: &Gpu,
+    seeds: &[u64],
+    next: &AtomicUsize,
+    abort: &AtomicBool,
+    queue: &Mutex<VecDeque<FromGpu>>,
+) -> GpuTotals {
+    let mut totals = GpuTotals::default();
+    let batch = gpu.settings.batch;
+    let result = gpu.feed(
+        |&index: &usize| deal_codes(&Deal::from_seed(seeds[index])),
+        || {
+            if abort.load(Ordering::Relaxed) {
+                return None;
+            }
+            let first = next.fetch_add(batch, Ordering::Relaxed);
+            (first < seeds.len()).then(|| (first..(first + batch).min(seeds.len())).collect())
+        },
+        |indices, result| {
+            totals.launches += 1;
+            totals.deals += indices.len() as u64;
+            totals.attempts += result.tries.iter().map(|&t| u64::from(t)).sum::<u64>();
+            totals.positions += result.nodes.iter().sum::<u64>();
+            let jobs = indices
+                .into_iter()
+                .zip(result.lines)
+                .zip(result.nodes)
+                .zip(result.tries)
+                .map(|(((index, line), nodes), tries)| FromGpu { index, line, nodes, tries });
+            queue.lock().expect("no panics").extend(jobs);
+        },
+    );
+    if let Err((e, lost)) = result {
+        eprintln!(
+            "\nGPU stopped: {e}\n(the CPU solves the {} deals it had in hand, and the rest)",
+            lost.len()
+        );
+        let jobs = lost.into_iter().map(|index| FromGpu { index, line: None, nodes: 0, tries: 0 });
+        queue.lock().expect("no panics").extend(jobs);
+        totals.error = Some(e);
+    }
+    totals
+}
+
+/// A deal the GPU won, verified: `None` if it didn't win, an error if its line fails verification.
+fn gpu_win(job: &FromGpu, seed: u64, records: bool) -> Option<Result<Solved, String>> {
+    let line: Vec<Move> = job.line.as_ref()?.iter().map(|&b| Move::from_byte(b)).collect();
+    let report = Report {
+        verdict: Verdict::Win(line.clone()),
+        nodes: job.nodes,
+        attempts: job.tries,
+        stage: Stage::Gpu,
+        stats: Stats::default(),
+        best_piles: 1,
+        best_line: line,
+    };
+    let solved = finish(job.index, seed, &Deal::from_seed(seed), report, 0, records);
+    Some(match &solved.verified {
+        Ok(()) => Ok(solved),
+        Err(e) => Err(e.clone()),
     })
 }
 
@@ -149,12 +324,17 @@ fn solve_one(index: usize, seed: u64, config: &Config, search: &mut Search, reco
     let start = Instant::now();
     let report = solve(&Position::from_deal(&deal), &Config { seed, ..*config }, search, None);
     let us = start.elapsed().as_micros() as u64;
+    finish(index, seed, &deal, report, us, records)
+}
+
+/// Verifies a deal's line with the reference engine and serializes its record.
+fn finish(index: usize, seed: u64, deal: &Deal, report: Report, us: u64, records: bool) -> Solved {
     let (outcome, line) = match &report.verdict {
         Verdict::Win(line) => (Outcome::Win, line),
         _ => (Outcome::Unknown, &report.best_line),
     };
     // Nothing counts as a win until the reference engine has replayed it.
-    let (verified, record) = match SolveRecord::new(&deal, Some(seed), outcome, line) {
+    let (verified, record) = match SolveRecord::new(deal, Some(seed), outcome, line) {
         Err(e) => (Err(e.to_string()), None),
         Ok(mut record) => {
             record.moves_b64 = Some(encode_compact(line));
@@ -174,7 +354,46 @@ fn solve_one(index: usize, seed: u64, config: &Config, search: &mut Search, reco
             (verified, text)
         }
     };
-    Solved { index, seed, report, us, verified, record }
+    Solved { index, seed, report, us, verified, record, fingerprint: fingerprint(deal) }
+}
+
+/// A 64-bit fingerprint of the deal with suits and ranks renamed ([`Deal::relabelled`]): deals that play alike
+/// share it, and different ones almost never do.
+pub fn fingerprint(deal: &Deal) -> u64 {
+    let mix = |mut z: u64| {
+        z = (z ^ (z >> 30)).wrapping_mul(0xBF58_476D_1CE4_E5B9);
+        z = (z ^ (z >> 27)).wrapping_mul(0x94D0_49BB_1331_11EB);
+        z ^ (z >> 31)
+    };
+    deal.relabelled().cards().chunks(8).fold(0x9E37_79B9_7F4A_7C15, |h, chunk| {
+        mix(h ^ chunk.iter().fold(0u64, |w, c| w << 8 | u64::from(c.code())))
+    })
+}
+
+/// The pairs of seeds (from `seeds`, with `fingerprints` in the same order) whose deals are the same game, even with
+/// suits and ranks renamed. Deals whose fingerprints agree are compared card by card.
+pub fn same_games(seeds: &[u64], fingerprints: &[u64]) -> Vec<(u64, u64)> {
+    let mut sorted = fingerprints.to_vec();
+    sorted.par_sort_unstable();
+    let repeated: HashSet<u64> = sorted.windows(2).filter(|w| w[0] == w[1]).map(|w| w[0]).collect();
+    let mut groups: HashMap<u64, Vec<u64>> = HashMap::new();
+    for (&seed, f) in seeds.iter().zip(fingerprints) {
+        if repeated.contains(f) {
+            groups.entry(*f).or_default().push(seed);
+        }
+    }
+    let mut pairs = Vec::new();
+    for group in groups.values() {
+        for (i, &a) in group.iter().enumerate() {
+            for &b in &group[i + 1..] {
+                if Deal::from_seed(a).relabelled() == Deal::from_seed(b).relabelled() {
+                    pairs.push((a.min(b), a.max(b)));
+                }
+            }
+        }
+    }
+    pairs.sort_unstable();
+    pairs
 }
 
 /// Wilson score interval (95%) for `k` successes in `n` trials.
@@ -207,12 +426,13 @@ mod tests {
         assert!((lo - 0.999_962).abs() < 1e-5 && (hi - 1.0).abs() < 1e-12, "{lo} {hi}");
     }
 
-    #[test]
-    fn every_deal_comes_back_once_and_verified() {
-        let seeds: Vec<u64> = (500..560).collect();
-        let opts = Options { threads: 4, table_log2: 12, endgame: None, records: true };
+    fn check_run(gpu: Option<Arc<Gpu>>, count: u64) {
+        let seeds: Vec<u64> = (500..500 + count).collect();
+        let on_gpu = gpu.is_some();
+        let opts = Options { threads: 4, table_log2: 12, endgame: None, records: true, gpu };
         let mut seen = vec![0u32; seeds.len()];
-        run(
+        let mut stages: HashMap<String, u32> = HashMap::new();
+        let totals = run(
             &seeds,
             &Config::default(),
             &opts,
@@ -221,11 +441,48 @@ mod tests {
                 assert_eq!(s.seed, seeds[s.index]);
                 assert!(s.verified.is_ok() && matches!(s.report.verdict, Verdict::Win(_)));
                 assert!(s.record.is_some());
+                assert_eq!(s.fingerprint, fingerprint(&Deal::from_seed(s.seed)));
+                *stages.entry(s.report.stage.to_string()).or_default() += 1;
                 Ok(())
             },
             |_| {},
         )
         .unwrap();
         assert!(seen.iter().all(|&n| n == 1));
+        match totals {
+            Some(t) => {
+                assert!(on_gpu && t.error.is_none() && t.failed == 0);
+                assert_eq!(u64::from(stages["gpu"]), t.won);
+                assert!(t.won > 0 && t.won <= t.deals, "{} of {}", t.won, t.deals);
+            }
+            None => assert!(!on_gpu && !stages.contains_key("gpu")),
+        }
+    }
+
+    #[test]
+    fn every_deal_comes_back_once_and_verified() {
+        check_run(None, 60);
+    }
+
+    #[test]
+    fn with_the_gpu_too() {
+        match open_gpu("auto", Settings { batch: 512, ..Settings::default() }).unwrap() {
+            Some(gpu) => check_run(Some(gpu), 3_000),
+            None => eprintln!("skipped: no GPU"),
+        }
+    }
+
+    #[test]
+    fn the_same_game_is_found_under_new_names() {
+        let seeds = [1, 2, 3, 4];
+        let mut prints: Vec<u64> = seeds.iter().map(|&s| fingerprint(&Deal::from_seed(s))).collect();
+        assert!(same_games(&seeds, &prints).is_empty());
+        // Seed 4 given seed 2's fingerprint: compared card by card, they still differ.
+        prints[3] = prints[1];
+        assert!(same_games(&seeds, &prints).is_empty());
+        // The same seed twice is the same game.
+        let seeds = [1, 2, 1];
+        let prints: Vec<u64> = seeds.iter().map(|&s| fingerprint(&Deal::from_seed(s))).collect();
+        assert_eq!(same_games(&seeds, &prints), vec![(1, 1)]);
     }
 }

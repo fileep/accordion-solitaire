@@ -46,7 +46,7 @@ for it (an optional "required final card" in the rules config); no other work is
 |---|---|---|
 | Engine + solver | **Rust** (stable, `std::arch` AVX2/BMI2, rayon) | C-level speed, safe concurrency, easy on Windows, and it compiles to **WebAssembly** |
 | Visualizer | **TypeScript + Vite** web app, engine via **WASM** | One rules implementation for solver and UI |
-| GPU (prototype in Phase 5, runner in Phase 8) | **CUDA** kernels via NVRTC, launched from Rust with `cudarc` | NVIDIA T550 on this machine; decided by a measured go/no-go gate |
+| GPU (prototype in Phase 5, in `acc batch` since Phase 8) | **CUDA** kernels via NVRTC, launched from Rust with `cudarc` | NVIDIA T550 on this machine; decided by a measured go/no-go gate |
 | Analysis | Python (numpy/pandas/matplotlib) on solver JSONL output | Plotting and stats only, never in the hot path |
 
 ---
@@ -88,7 +88,7 @@ crates/core/               accordion-core
 crates/solver/             accordion-solver
 crates/cli/                acc binary
 crates/wasm/               accordion-wasm
-crates/gpu/                accordion-gpu (Phase 5 prototype; Phase 8 runner only if the gate passes)
+crates/gpu/                accordion-gpu: GPU ladder attempts, run by `acc batch` next to the CPU (Phase 8)
 viz/                       Vite + TypeScript app
 research/probes/           Python probes behind RESEARCH.md (reproducible)
 research/experiments/      experiment configs + result JSONL + notebooks
@@ -144,7 +144,8 @@ Batch files also allow a compact form: one byte per move (index·2 + leap flag),
 ## 4. Phases
 
 Phases run in order:
-`0 → 1 → 2 → 3 → 4 → 5 → 7`. Phase 6 was merged into Phase 5. Phase `8` (the GPU runner) follows only if the Phase 5 GPU gate passes.
+`0 → 1 → 2 → 3 → 4 → 5 → 7 → 8`. Phase 6 was merged into Phase 5. Phase `8` (the GPU runner) was to follow only if the Phase 5
+GPU gate passed; it didn't quite (1.7×), and the runner was built anyway at the user's request, then measured.
 
 ### Phase 0 — Toolchain and scaffold ✅ done
 
@@ -392,8 +393,8 @@ or one entry picked by seed from a batch or `hard-deals/` file. It has no batch 
     is hardware.
   - **GPU** (`accgpu`, crates/gpu):
     - The kernel reaches 255M positions/s and 18,840 deals/s alone.
-    - CPU + GPU is about 1.7× the CPU alone. **The 2× gate is not met** on this laptop, where both share one cooling system,
-      so Phase 8 is not started.
+    - CPU + GPU is about 1.7× the CPU alone. **The 2× gate is not met** on this laptop, where both share one cooling system.
+      Phase 8 was built anyway, at the user's request (below).
 - **Every strategy falls back to the thorough search.** The ladder is a stage in front of it.
   - A test starves every ladder search and checks that the thorough stage still wins every deal.
   - On the 100,000 regression deals, one deal fell through every rung and was won by the thorough stage.
@@ -651,12 +652,37 @@ Its symmetry work (endgame tables, the symmetry-keyed cache and canonical deal I
   Solvitaire (99.99948 ± 0.00052%).
 - Results in `docs/RESULTS.md`. A hard-deal gallery lives in `hard-deals/INDEX.md`, with every entry loadable in the visualizer.
 
-### Phase 8 (only if the Phase 5 GPU gate passes) — GPU deep-rung lottery
+### Phase 8 — GPU deep-rung lottery ✅ done
 
-**Status: not started.** The Phase 5 prototype (`accgpu`, crates/gpu) works and all its wins verify. CPU + GPU measured
-about 1.7× the CPU alone on this laptop, short of the 2× gate (docs/BENCHMARKS.md, Phase 5 track F). The design below was
-validated by the prototype. Its kernel keeps the residual in registers instead of a per-attempt table, and relies on sleep
-sets instead of a cache. On a machine where CPU and GPU don't share cooling, re-run the gate first.
+Built at the user's request, although the Phase 5 gate measured 1.7×, short of its 2×.
+
+**Outcome** (docs/BENCHMARKS.md Phase 8, docs/RESULTS.md):
+
+- **`acc batch` and `acc experiment` run the GPU next to the CPU** whenever an NVIDIA GPU and NVRTC are found
+  (`--gpu auto`, the default; `off`; `on` stops if there is none).
+  - **Feeder:** one thread sends the GPU batches of 4,096 deals from the CPU workers' own queue, two launches in flight.
+  - **CPU workers:** they verify every GPU line with the reference engine first, and solve the GPU's misses from the start.
+  - **On a GPU error,** the unfinished deals go back to the CPU.
+- **Faster end to end:**
+  - **Short runs** (1M deals each, alternating): median 2.15× the CPU alone, range 1.48–2.28×.
+  - **Sustained over 100M deals:** 19,281 deals/s, about 1.4× the CPU alone's 13,422 over Phase 7's 20M run. The GPU kept
+    its rate (214M positions/s) and the CPU slowed, most likely from heat, since they share one cooling system.
+- **100,000,000 deals (seeds 0–99,999,999), every one won and verified, in 86 minutes. 95% Wilson CI [99.999996%, 100%].**
+  - The GPU won 81.8M of them, and all its lines verified.
+  - The run also checked that the deals are all different games, even with suits and ranks renamed: they are.
+  - The hardest took 4.68M positions and was won by the thorough search; 52 deals needed it.
+- **Correctness gates passed** (§6.3; tests in `crates/gpu/tests/kernel.rs` and `crates/cli/src/runner.rs`):
+  - GPU random playouts agree with the Rust engines move by move on the golden files and 20,000 seeded deals;
+  - the kernel wins the winnable golden cases, never the unwinnable ones, and its lines verify;
+  - with the GPU, every deal comes back exactly once, verified.
+- **Deviations:**
+  - **No dead-state cache on the GPU:** the plan put a small table per attempt in shared memory. The kernel keeps the
+    ≤16-card residual in two registers and relies on sleep sets and its 2,000-position budget instead, and still wins
+    99.4% of the deals it is given.
+  - **`accgpu` only measures** the GPU alone; the hybrid runner lives in `acc`.
+  - **No GPU endgame-table build:** the CPU builds the 11-pile tables once, in 7 minutes, and they are kept on disk.
+
+On a machine where the CPU and GPU don't share cooling, the sustained gain should be closer to the short-run 2×.
 
 **Why it might pay.** The probe data (RESEARCH §9) shows that **deep rungs** do almost all the useful work if we can afford many more tries there.
 A deep rung is a long random prefix plus a small brute force on ≤20 piles. With 64 tries per deep rung, **99.1% of deals were won without ever
@@ -686,7 +712,7 @@ The large DFS with a big TT stays on the CPU, which is poor GPU territory: publi
 - **Correctness:** CUDA rules code is tested against the Rust engine with the same differential tests and golden files as Phase 2.
 - **Also a GPU candidate:** building the *k*=11 endgame table (1.15 GB fits in the T550's 4 GB). This kind of bit-table BFS is a known GPU strength (27× in Edelkamp et al.).
 
-**Go/no-go gate (decided in Phase 5, track F).** Build this only if the prototype hybrid (GPU deep rungs plus the CPU stage chain) reaches
+**Go/no-go gate (decided in Phase 5, track F; not met, built anyway).** Build this only if the prototype hybrid (GPU deep rungs plus the CPU stage chain) reaches
 **≥2× the end-to-end deals/s** of the tuned 16-thread CPU solver.
 
 The T550 is entry-level (1,024 CUDA cores, 4 GB). Expect a modest gain here; larger NVIDIA GPUs scale the same kernel much further.
@@ -815,7 +841,7 @@ The unwinnable cases:
 | M5 ✅ | Fastest strategy | every track measured on the leaderboard; adopted pipeline beats Phase 4 on held-out mean and p99 and on deals/s (target 2×, measured 5.0×); 100% on 100k held-out + regression set; pruning checked sound (1M residuals); GPU gate decided (1.7×, not met) |
 | M6 | (merged into M5) | — |
 | M7 ✅ | Big run | 10M+ deals, Wilson CI, results write-up, hard-deal gallery; exhaustive mode proves the golden unwinnable cases lost (30M/30M won, CI [99.999987%, 100%]) |
-| M8 | GPU runner | only if the Phase 5 gate passed: hybrid runner built into `acc batch`, faster end to end, every GPU win verified |
+| M8 ✅ | GPU runner | hybrid runner built into `acc batch`, faster end to end, every GPU win verified (2.15× on short runs, 1.4× sustained; 100M/100M won, CI [99.999996%, 100%]) |
 
 ## 8. Risks
 
@@ -832,7 +858,7 @@ The unwinnable cases:
 ## 9. Decided
 
 - **Rules:** open Accordion, moves 1 or 3 left, suit-or-rank match, **win = one pile only**. Accordion's Revenge maybe later.
-- **Stack:** Rust engine/solver, TypeScript + WASM visualizer for selected deals, Python for analysis. CUDA prototype in Phase 5, built into the runner (Phase 8) only if it passes its gate.
+- **Stack:** Rust engine/solver, TypeScript + WASM visualizer for selected deals, Python for analysis. CUDA prototype in Phase 5, built into the runner in Phase 8.
 - **Strategy:** Masten-style random prefix + brute force with a tuned escalation ladder.
   - Dead-end tests run only where they pay: none during random moves, then gated by piles left and event-triggered.
   - Suit/rank symmetry powers the endgame table, the endgame cache and canonical deal IDs.

@@ -10,27 +10,27 @@ None yet: every deal attempted so far has been won.
 
 ## Gallery: the hardest deals won
 
-The deals that took the most positions in `acc batch` over seeds 0–9999999 (10000000 deals, commit e3298e3+dirty). Each file is a verified solve file: open it in the visualizer to replay the win.
+The deals that took the most positions in `acc batch` over seeds 0–99999999 (100000000 deals, commit af14316+dirty; only the 18176386 solved on the CPU are ranked). Each file is a verified solve file: open it in the visualizer to replay the win.
 
 | Rank | Deal | Positions | Won in stage |
 |---|---|---|---|
-| 1 | [seed 1670239](gallery/seed-1670239.json) | 1620265 | ladder-5 |
-| 2 | [seed 7530372](gallery/seed-7530372.json) | 1497709 | ladder-4 |
-| 3 | [seed 9589096](gallery/seed-9589096.json) | 1157701 | ladder-4 |
-| 4 | [seed 5520439](gallery/seed-5520439.json) | 1129669 | ladder-4 |
-| 5 | [seed 1327798](gallery/seed-1327798.json) | 1121596 | ladder-4 |
-| 6 | [seed 9882112](gallery/seed-9882112.json) | 1095813 | ladder-4 |
-| 7 | [seed 7823105](gallery/seed-7823105.json) | 1069004 | ladder-3 |
-| 8 | [seed 1912526](gallery/seed-1912526.json) | 1056917 | ladder-3 |
-| 9 | [seed 5690768](gallery/seed-5690768.json) | 998265 | ladder-4 |
-| 10 | [seed 4422968](gallery/seed-4422968.json) | 980407 | ladder-4 |
-| 11 | [seed 1148696](gallery/seed-1148696.json) | 974645 | ladder-5 |
-| 12 | [seed 9446700](gallery/seed-9446700.json) | 970611 | ladder-4 |
-| 13 | [seed 6378653](gallery/seed-6378653.json) | 964362 | ladder-3 |
-| 14 | [seed 7167056](gallery/seed-7167056.json) | 931915 | ladder-4 |
-| 15 | [seed 4952366](gallery/seed-4952366.json) | 927775 | ladder-4 |
-| 16 | [seed 1579818](gallery/seed-1579818.json) | 917831 | ladder-4 |
-| 17 | [seed 6853371](gallery/seed-6853371.json) | 914538 | ladder-4 |
-| 18 | [seed 6414679](gallery/seed-6414679.json) | 913610 | ladder-4 |
-| 19 | [seed 5495812](gallery/seed-5495812.json) | 896819 | ladder-3 |
-| 20 | [seed 5334123](gallery/seed-5334123.json) | 891959 | ladder-3 |
+| 1 | [seed 87477620](gallery/seed-87477620.json) | 4683481 | thorough |
+| 2 | [seed 37438664](gallery/seed-37438664.json) | 3804122 | ladder-5 |
+| 3 | [seed 33685996](gallery/seed-33685996.json) | 3344219 | thorough |
+| 4 | [seed 46363180](gallery/seed-46363180.json) | 3031700 | ladder-5 |
+| 5 | [seed 31232446](gallery/seed-31232446.json) | 2847319 | ladder-5 |
+| 6 | [seed 55064009](gallery/seed-55064009.json) | 2654482 | ladder-5 |
+| 7 | [seed 42533606](gallery/seed-42533606.json) | 2562045 | ladder-5 |
+| 8 | [seed 51877246](gallery/seed-51877246.json) | 2492709 | ladder-4 |
+| 9 | [seed 23861335](gallery/seed-23861335.json) | 2461394 | ladder-5 |
+| 10 | [seed 19257830](gallery/seed-19257830.json) | 2328034 | ladder-5 |
+| 11 | [seed 44401367](gallery/seed-44401367.json) | 2150187 | ladder-4 |
+| 12 | [seed 24160031](gallery/seed-24160031.json) | 2118547 | ladder-4 |
+| 13 | [seed 18286005](gallery/seed-18286005.json) | 1928796 | ladder-4 |
+| 14 | [seed 21212646](gallery/seed-21212646.json) | 1923354 | ladder-4 |
+| 15 | [seed 48645192](gallery/seed-48645192.json) | 1923274 | ladder-5 |
+| 16 | [seed 78644174](gallery/seed-78644174.json) | 1914965 | ladder-4 |
+| 17 | [seed 88805491](gallery/seed-88805491.json) | 1817857 | ladder-6 |
+| 18 | [seed 83577085](gallery/seed-83577085.json) | 1804263 | ladder-5 |
+| 19 | [seed 12793295](gallery/seed-12793295.json) | 1800633 | ladder-4 |
+| 20 | [seed 48089778](gallery/seed-48089778.json) | 1764873 | ladder-4 |

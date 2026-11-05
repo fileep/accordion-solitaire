@@ -9,6 +9,7 @@ publish = false
 
 [workspace.dependencies]
 accordion-core = { path = "crates/core" }
+accordion-gpu = { path = "crates/gpu" }
 accordion-solver = { path = "crates/solver" }
 base64 = "0.22"
 clap = { version = "4", features = ["derive"] }

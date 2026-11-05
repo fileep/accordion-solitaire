@@ -116,8 +116,13 @@ pub enum Verdict {
 /// The stage a solve ended in.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Stage {
-    Ladder { rung: u32 },
+    Ladder {
+        rung: u32,
+    },
     Thorough,
+    /// Ladder attempts on the GPU, in front of this solver (crates/gpu, `acc batch --gpu`); [`solve`] itself
+    /// never ends here.
+    Gpu,
 }
 
 impl std::fmt::Display for Stage {
@@ -125,6 +130,7 @@ impl std::fmt::Display for Stage {
         match self {
             Stage::Ladder { rung } => write!(f, "ladder-{rung}"),
             Stage::Thorough => f.write_str("thorough"),
+            Stage::Gpu => f.write_str("gpu"),
         }
     }
 }

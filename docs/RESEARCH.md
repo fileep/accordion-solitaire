@@ -67,7 +67,8 @@ All probe numbers come from a deliberately naive Python engine (~220k nodes/s). 
     - endgame tables up to 11 piles.
 
     A cache keyed by suit/rank pattern and carried across deals did not pay. The GPU works, and a CPU+GPU hybrid is about
-    1.7× the CPU alone on this laptop, short of the 2× gate.
+    1.7× the CPU alone on this laptop, short of the 2× gate. Built into `acc batch` anyway (Phase 8), it measured 2.15× on
+    short runs and about 1.4× sustained, and won all of 100,000,000 deals (docs/RESULTS.md).
 
 ---
 
@@ -835,6 +836,9 @@ The no-cache means leave out capped runs, so they understate the cost.
 - **Gate:** start only if the tuned CPU profile shows deep-rung attempts are ≥50% of time, and a ≤1-week prototype kernel gives ≥2× end-to-end deals/s.
 - **Measured in Phase 5 (§10.8):** the prototype works and its wins all verify. The GPU alone matches the 16 CPU threads.
   Together they reach about 1.7× the CPU alone, short of the 2× gate, because the GPU and CPU share this laptop's cooling.
+- **Measured in Phase 8 (§10.8):** built into `acc batch` anyway, the hybrid reaches a median 2.15× the CPU alone on 1M-deal
+  runs, but about 1.4× sustained over 100M deals, as the CPU slows with heat and the GPU doesn't. The small per-attempt
+  cache was never needed: sleep sets and a 2,000-position budget let the GPU win 99.4% of the deals it is given.
 
 ---
 
@@ -985,6 +989,17 @@ took Phase 4's 100,000-deal run from 4,110 to 4,539 deals/s.
   That is **1.56–1.88×, about 1.7×**, short of the 2× gate.
 - **Why not 2×:** inside the hybrid the GPU keeps about its solo rate, but the CPU slows to about 12,800 deals/s. The T550
   at 30 W and the CPU share one cooling system. On a desktop with separate power budgets the two rates would add up.
+- **Phase 8, the runner in `acc batch`** (docs/BENCHMARKS.md Phase 8): a feeder thread keeps the GPU busy from the CPU
+  workers' own queue; the workers verify every GPU line, then solve the GPU's misses from the start.
+
+  | Runs | CPU only | CPU + GPU | Ratio |
+  |---|---|---|---|
+  | 1M deals each, alternating with no rest (median of 3) | 13,148 deals/s | 28,282 deals/s | 2.15× (1.48–2.28×) |
+  | Long runs: 20M deals (Phase 7), 100M deals (Phase 8) | 13,422 deals/s | 19,281 deals/s | about 1.4× |
+
+  Over the long run the GPU kept its rate (214M positions/s against 228M in the short runs). The CPU's median time per
+  deal more than doubled, to 1.15 ms, and the GPU's share of the deals rose from 58–65% to 82%. Heat is the likely cause;
+  it wasn't measured directly.
 
 ## Sources
 

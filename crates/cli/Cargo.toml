@@ -11,6 +11,7 @@ path = "src/main.rs"
 
 [dependencies]
 accordion-core.workspace = true
+accordion-gpu.workspace = true
 accordion-solver.workspace = true
 clap.workspace = true
 rayon.workspace = true
