@@ -741,8 +741,13 @@ against 62,668 deals/s (+38%), then 74,617 against 55,704 (+34%). The GPU did 70
   of 64 tries 58,700–58,900 against 68,100–68,200 (−14%), of 128 62,700–63,600 (−7%), of 256 65,400–65,800 (−3.6%),
   and two rounds (640 + 640, or 1,024 + 256) 64,700–65,400 against 65,700–66,100 (−1 to −2%). In the step-at-a-time
   kernel a skipped slot costs little (a warp takes 32 with one atomic and one load), while each round's end leaves
-  the GPU part idle as its last searches finish, more so as the rounds shrink. `acc batch` wasn't timed, since the
-  GPU alone already lost.
+  the GPU part idle as its last searches finish, more so as the rounds shrink. Pooling fixes the small rounds: two
+  pools of deals, each topped up from the next batches to a batch's worth, take turns, and every launch gives each
+  deal in its pool its next round (growing 64, 128, 256, 512, then the rest), so a launch is always full and a deal
+  leaves as soon as it is won. Skipped slots fell from 86% to 67%, and the GPU alone ran 71,800–72,900 deals/s
+  against 68,100–70,100 (about +5%, in either order). But in `acc batch` (1M fresh deals, alternated) the gain was
+  lost in the laptop's heat: +2.5% and −3.5% in two pairs where the pool ran second, on the warmer laptop. Not
+  kept.
 
 **What is left.** Each turn of the loop still runs the prefix branch and the search branch one after the other, each
 with about half the warp's threads. Splitting them (prefixes in some warps or a kernel of their own, searches of the
