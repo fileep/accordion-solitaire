@@ -23,13 +23,14 @@ fn gpu() -> Option<&'static Gpu> {
     gpus().first()
 }
 
-/// The GPU with each attempt kernel: a step at a time (the default), and each thread on its own; empty without one.
+/// The GPU with each attempt kernel: prefixes and searches in different warps (the default), a step at a time, and
+/// each thread on its own; empty without one.
 fn gpus() -> &'static [Gpu] {
     static GPUS: OnceLock<Vec<Gpu>> = OnceLock::new();
     GPUS.get_or_init(|| {
-        [true, false]
+        [(true, true), (false, true), (false, false)]
             .into_iter()
-            .map(|stepwise| Gpu::new(Settings { stepwise, ..Settings::default() }))
+            .map(|(split, stepwise)| Gpu::new(Settings { split, stepwise, ..Settings::default() }))
             .collect::<Result<_, _>>()
             .inspect_err(|e| eprintln!("skipping the GPU tests: {e}"))
             .unwrap_or_default()
@@ -165,7 +166,7 @@ fn golden_positions_on(gpu: &Gpu) {
         })
     {
         let (winnable, leftmost) = winnable;
-        let name = format!("{name}, stepwise kernel {}", gpu.settings.stepwise);
+        let name = format!("{name}, {}", gpu.settings.kernel());
         // Small positions: no prefix and no budget, so every try is a complete search. Large ones: long random
         // prefixes, which never find a win on an unwinnable position.
         let a = if tops.len() <= accordion_gpu::RESIDUAL {
@@ -221,8 +222,8 @@ fn golden_and_random_deals_are_won_with_lines_that_verify() {
             let won = check_deals(&deals, &result.lines);
             assert!(
                 won as f64 > 0.98 * deals.len() as f64,
-                "stepwise kernel {}, leftmost test {leftmost}: won {won} of {}",
-                gpu.settings.stepwise,
+                "{}, leftmost test {leftmost}: won {won} of {}",
+                gpu.settings.kernel(),
                 deals.len()
             );
             // Every attempt is accounted for: a deal's tries stop only once it is won.

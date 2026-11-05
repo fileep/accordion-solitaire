@@ -939,3 +939,146 @@ build): 117,513 against 104,218 (+13%), 104,178 against 100,505 (+4%, the old bu
 - **The same branch-free test on the CPU** (fast.rs `connected` is the same loop): the CPU solves a tenth of the deals.
 - **A lighter `--profile`:** the timers alone measure well; the counters could become an option of their own.
 
+## After Phase 8 — batched prefix moves, and one branch a turn (tried, not kept)
+
+Both ideas aimed at the prefix and the lockstep (`accgpu --kernel` files, 100,000 deals, against the kernel at
+c255fd6 in the same runs, 98,000–105,000 deals/s; every variant's lines verified).
+
+**What a shift is worth.** After each prefix move, shifting the bytes back up and down again (two more shift loops,
+the same row after) ran at 73,148–73,777 against 98,614–99,156: one shift is about 17% of the time. That is the
+most batching could act on.
+
+**Batched prefix moves.** Moves commute when the left one's pile is left of the right one's target, so a turn can draw
+several by the prefix's policy (each next one among the moves that commute with those drawn), put each mover on its
+target, and close all the gaps in one pass. A winning line replays the same draws and writes each batch right to
+left, an order in which every move is legal as written.
+
+How far batches hurt the attempts (attempts a second over deals a second, first version):
+
+| Moves a batch, at most | 1 (now) | 2 | 4 | 8 | no limit |
+|---|---|---|---|---|---|
+| Attempts a deal | 130 | 131 | 139 | 160 | 180 |
+| GPU deals won | 99,829 | 99,831 | 99,720 | 99,468 | 99,028 |
+
+So a batch of 2 costs nothing in wins and larger ones cost more and more: as suspected, the moves a batch can't see
+(those its own moves create) matter. But every version was slower:
+
+| Version | Batch of 2 | Others |
+|---|---|---|
+| Masks recomputed byte by byte in the closing pass | 62,146 | 4: 63,456; 8: 57,643; no limit: 51,178; single moves below 20–28 piles: 43,700–49,900 |
+| Masks by dropping the gone piles' bits, then a window around each move | 67,355 | 3: 62,994; 4: 56,064; caps shrinking with the row, min(B, (piles − 16) / step): 39,872–50,043; without the register cap (80 registers, no spill): 66,210 |
+| The same, windows unrolled (6 bits from each target, 9 cards loaded once) | 75,330 | single moves through the batch code: 80,837; 3: 71,988; 4: 64,532 |
+
+Even single moves through the batch code lost 22%, and each larger batch lost more. In lockstep, a heavier prefix
+step lengthens every turn, the ones where most of the warp is searching too; the shift it saves is a sixth of the
+time at most.
+
+**One branch a turn.** The warp runs both branches every turn, each with about half its threads. Letting it run only
+one:
+- **By majority** (the prefix when prefix threads × a ≥ search threads × b): 1:1 99,551–100,751 against
+  101,880–103,653; 2:1 97,644; 3:2 97,989; 2:3 93,410; 1:2 90,723. Lockstep hardly moved (15.4 and 16.2 of 32 in the
+  search and the prefix, against 15.7 and 14.7): the majority flips every few turns, so threads never gather.
+- **With hysteresis** (the prefix until at most P threads are left in it, then the search until fewer than S are):
+  P 0, S 8 / 12 / 16 / 20: 82,722 / 86,142 / 85,442 / 81,291; P 4, S 12: 97,260; P 2, S 8: 89,035; against
+  97,666–99,037. A thread that finishes its search waits for the prefix turns instead of starting its next attempt.
+
+What was left was to give each branch warps of its own; that is the next section.
+
+## After Phase 8 — split warps (`attempts_split`, the default)
+
+**The kernel.** `attempts_stepwise` runs the prefix step and the search step every turn, each with about half the
+warp. `attempts_split` gives each its own warps: the first half of a block's warps play prefixes, all 32 threads in
+step (a prefix's length is fixed), and put each residual worth searching (its 16 cards, the cards present, the random
+state, the attempt and the prefix's length: 37 bytes) in a queue of 32 in shared memory; the other half search, each
+thread taking the next residual as soon as it has finished one. An attempt plays the same moves as in
+`attempts_stepwise` (the residual carries the random state on), so both win the same deals. Every slot carries a
+number that says whether it is free for the next entry, written, or copied out; prefix warps reserve runs of free
+entries and search warps take runs of written ones, with a compare-and-swap each. A first version counted the slots
+freed instead, which let a prefix warp overwrite a slot one search warp was still copying while another had freed a
+later one; and a search warp could read the tail, then a head another warp had already moved past it, and take
+entries that did not exist (it hung with two search warps a block). A won search replays its prefix on its own bytes
+to write the line. `"split": false` in `--gpu-config` keeps `attempts_stepwise`, and the GPU tests run all three
+kernels.
+
+`accgpu`, 100,000 deals (seeds 2,000,000–2,099,999), alternated:
+
+| Kernel | Registers, blocks a multiprocessor | Deals/s | Positions/s |
+|---|---|---|---|
+| `attempts_stepwise` | 72, 14 | 99,304–100,327 | 894–905M |
+| **`attempts_split`** | **72, 12** | **122,608–128,610** | **1,064–1,116M** |
+
+Both won the same 99,808 deals with no line failing verification; in each pair the split kernel was 23% to 28%
+faster (the lower figures came from a warm laptop).
+
+**In `acc batch`** (1M deals, seeds 6,000,000,000–6,000,999,999 every run, alternated with `"split": false` in the
+same build): **137,944 against 113,834 (+21%), 133,543 against 104,491 (+28%, the old kernel first), 130,586 against
+104,925 (+24%)**. The GPU did 1,050–1,074M positions/s against 857–903M, and won 99.82% of the deals it was given
+against 99.81%. Every deal was won, and no line failed verification.
+
+**How many warps of each kind** (prototype kernel files; blocks of 64 hold one of each):
+
+| Prefix : search warps (block) | Blocks a multiprocessor | Deals/s |
+|---|---|---|
+| **1 : 1 (64)** | **12** | **124,468–127,153** |
+| 2 : 2 (128) | 6 | 123,064 |
+| 3 : 3 (192) | 4 | 121,111 |
+| 2 : 1 (96) | 8 | 99,209–100,520 |
+| 3 : 1 (128) | 6 | 81,016–82,262 |
+| 3 : 2 (160) | 5 | 117,209 |
+| 4 : 3 (224) | 4 | 117,140–118,563 |
+| 1 : 2 (96) | 8 | 93,123–94,776 |
+| 1 : 3 (128) | 6 | 66,960–67,885 |
+| 2 : 3 (160) | 5 | 109,331 |
+| 3 : 4 (224) | 4 | 108,546–109,806 |
+
+Fewer warps of either kind lose about in proportion, so the two are balanced at 1 : 1, and larger blocks lose a little
+even at 1 : 1.
+
+**Where its time goes** (`accgpu --profile`, which now times each warp's parts and runs 16% slow): prefix warps taking
+work 5.9%, loading the deal 6.4%, moves 29.9%, queueing 6.8%; search warps searching 35.9%, taking residuals and
+writing results 13.9%, waiting for residuals 1.1%. **25.5 of 32 threads step together in the prefix and 23.6 in the
+search, against 14.8 and 15.8 in `attempts_stepwise`.** The rest wait on the queue: prefix threads have a residual it
+has no room for in 20.0% of their turns, search threads have none to take in 17.3%. Searches run from a few positions
+to the 2,000 budget, so the queue fills and empties by turns.
+
+Doubling ablations in the split kernel (against it in the same runs, 125,342–130,555 deals/s):
+
+| Done twice | Cost |
+|---|---|
+| Each prefix move (played, taken back, played again) | +37% |
+| Two more shifts after each prefix move | +33% |
+| The prefix move's mask update | +12% |
+| The search's dead-end test | +5% |
+| The search's move masks | +4% |
+
+**So the prefix warps are what limits it now**: one shift is about 16% of the time and the mask update after a move
+12%, while the search's dead-end test costs +5% against +18% in `attempts_stepwise`.
+
+**Tried, not kept:**
+- **Another ratio or larger blocks** (the table above).
+- **A different queue.** 16 entries (13 blocks fit) 124,505 and 64 (10 blocks) 127,321, against 125,252–126,361 for
+  32. Entries of 28 bytes (the prefix's length is 52 minus the residual's piles, and its cards present follow from its
+  bytes), so more blocks fit: 32 entries (still 12 blocks) 125,757–127,786; 24 and 20 (13 blocks) 123,703–124,963; 16
+  (14 blocks) 121,963–122,100; against 127,334–129,505. More warps don't help: the prefix warps' work does.
+- **Not checking at the take whether the deal was won meanwhile:** 120,505–122,780 against 123,690–126,948; the same
+  positions a second, spent on residuals of won deals.
+- **Loading the won flag with the deal** in the prefix warps: 124,153–125,008 against 123,690–126,948. Other warps
+  hide the wait.
+- **Shifting the shorter side of the gap** (a row start per thread; the cards left of the gap move up one place and the
+  start with them, in one loop whose direction each thread sets): 121,061–122,296 against 121,397–123,989 for one side
+  with the same row start, which already cost a little. The step is known only at run time, so the compiler can't
+  tell the next load from the last store and keeps every load waiting for the store before it; the one-sided loop's
+  four loads at a time overlap. Unrolled by hand four bytes at a time (up to three cells too many): 117,576–119,258;
+  both: 119,925–119,928.
+
+**Considered, not tried:**
+- **The prefix row in registers** (13 32-bit words a thread). Closing a gap becomes a funnel shift and a byte permute
+  per word, choosing the kept bytes by comparing the word's index with the gap's; the mask update reads a window of
+  cards around the move at fixed offsets; no shared memory, and no thread waits for another's longer shift. The
+  shift and the mask update are 28% of the time, and the prefix warps limit the kernel. 13 words fit the prefix
+  warps' registers, which are not the search's.
+- **Batches of 2 in the prefix warps:** no cost in wins, and in registers two gaps cost hardly more than one to close.
+  The batch code above lost 22% even on single moves, so it needs the row in registers first.
+- **Warps changing role** when the queue runs full or empty: the gain is bounded by the waits above (20% and 17% of
+  turns), and a warp's threads would have to finish what they hold first.
+

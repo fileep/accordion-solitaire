@@ -32,9 +32,12 @@ const MIN_DRIVER: i32 = 12090;
 /// (summed over threads); steps of the search loop by warps and by threads, and of the prefix loop; attempts taken
 /// and skipped; searches by positions generated (0-15, 16-63, 64-255, 256-1023, 1024 up to the budget, the budget);
 /// prefixes that got stuck, left more than [`RESIDUAL`] piles, or left a disconnected residual, and the moves the
-/// stuck ones played (`attempts_stepwise` only); thread spans summed (ns); the latest end (ns); and the earliest
-/// start, bit-inverted (ns).
-pub const PROFILE_SLOTS: usize = 26;
+/// stuck ones played (`attempts_stepwise` only); thread spans summed (ns); the latest end (ns); the earliest start,
+/// bit-inverted (ns); and turns of `attempts_split`'s prefix threads with a residual its queue had no room for, and
+/// of its search threads with none to take. In `attempts_split` the first four count its prefix warps (the fourth
+/// queueing residuals), the next three its search warps (searching, taking residuals and writing results, waiting
+/// for residuals); it leaves the prefix and search tallies to `attempts_stepwise`, whose attempts are the same.
+pub const PROFILE_SLOTS: usize = 28;
 
 /// How `acc batch` uses the GPU (`--gpu-config`, JSON; fields left out keep these defaults, measured in Phase 5
 /// track F).
@@ -50,7 +53,8 @@ pub struct Settings {
     /// T550, and fewer leave several attempts at once on each deal, which wastes those still running once it is won).
     pub batch: usize,
     /// Threads per block (the kernel's shared memory is sized for it: 64 bytes per thread). On the T550, 64 fits
-    /// 1,024 attempts per multiprocessor, its maximum (32 fits 512, the most blocks it takes).
+    /// 1,024 attempts per multiprocessor, its maximum (32 fits 512, the most blocks it takes); with `split`, whose
+    /// queue takes shared memory too, 12 blocks of 64 fit, and larger blocks ran slower.
     pub block: u32,
     /// Thread blocks per multiprocessor.
     pub blocks_per_sm: u32,
@@ -68,6 +72,11 @@ pub struct Settings {
     /// Run attempts a step at a time (kernel.cu `attempts_stepwise`), so a warp's threads step together: 1.7 times
     /// as many deals a second on the T550 as `attempts`, where each thread runs its own attempts start to finish.
     pub stepwise: bool,
+    /// Play prefixes and search in different warps (kernel.cu `attempts_split`; `stepwise` then doesn't matter): half
+    /// a block's warps play prefixes and queue the residuals for the other half to search, so neither waits for the
+    /// other's step. A quarter more deals a second on the T550 than `attempts_stepwise`. `block` must be a multiple of
+    /// 64.
+    pub split: bool,
 }
 
 impl Default for Settings {
@@ -84,6 +93,7 @@ impl Default for Settings {
             seed: 0x5EED,
             profile: false,
             stepwise: true,
+            split: true,
         }
     }
 }
@@ -108,7 +118,22 @@ impl Settings {
         if self.batch == 0 || self.block == 0 || self.block > 256 || self.blocks_per_sm == 0 {
             return Err("batch, block (at most 256) and blocks_per_sm must be positive".into());
         }
+        if self.split && !self.block.is_multiple_of(64) {
+            return Err(format!(
+                "block: {}; a multiple of 64 with split (half its warps play prefixes)",
+                self.block
+            ));
+        }
         Ok(())
+    }
+
+    /// The attempt kernel these settings run.
+    pub fn kernel(&self) -> &'static str {
+        match (self.split, self.stepwise) {
+            (true, _) => "attempts_split",
+            (false, true) => "attempts_stepwise",
+            (false, false) => "attempts",
+        }
     }
 
     /// The settings for launch number `launch`: its own random seed.
@@ -187,7 +212,7 @@ pub struct Playout {
 
 pub struct Gpu {
     ctx: Arc<CudaContext>,
-    /// `attempts` or `attempts_stepwise`, as the settings say.
+    /// [`Settings::kernel`].
     attempts: CudaFunction,
     playouts: CudaFunction,
     pub name: String,
@@ -334,9 +359,7 @@ impl Gpu {
         let sms = ctx.attribute(A::CU_DEVICE_ATTRIBUTE_MULTIPROCESSOR_COUNT).map_err(err)? as u32;
         let ptx = compile(&ctx, &settings, source)?;
         let module = ctx.load_module(ptx).map_err(|e| format!("loading the kernel: {e:?}"))?;
-        let attempts = module
-            .load_function(if settings.stepwise { "attempts_stepwise" } else { "attempts" })
-            .map_err(err)?;
+        let attempts = module.load_function(settings.kernel()).map_err(err)?;
         let playouts = module.load_function("playouts").map_err(err)?;
         Ok(Gpu { ctx, attempts, playouts, name, sms, settings })
     }

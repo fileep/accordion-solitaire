@@ -24,11 +24,12 @@
 // skipped. Two rungs share one launch: the first `tries` tries of a deal use `prefix` random moves, the next
 // `tries2` use `prefix2`.
 //
-// There are two attempt kernels with the same arguments and results. `attempts` runs each thread's attempts start to
-// finish; its threads soon drift apart, and a warp then runs them nearly one at a time. `attempts_stepwise`, the
-// default, moves every thread one step (a prefix move or a search position) each turn of its loop, so the threads
-// doing the same thing step together: 1.7 times the deals per second (docs/BENCHMARKS.md, "After Phase 8 — where
-// the GPU's time goes" and "the GPU's bit operations").
+// There are three attempt kernels with the same arguments and results. `attempts` runs each thread's attempts start to
+// finish; its threads soon drift apart, and a warp then runs them nearly one at a time. `attempts_stepwise` moves
+// every thread one step (a prefix move or a search position) each turn of its loop, so the threads doing the same
+// thing step together: 1.7 times the deals per second (docs/BENCHMARKS.md, "After Phase 8 — where the GPU's time
+// goes" and "the GPU's bit operations"). `attempts_split`, the default, gives the prefixes and the searches warps of
+// their own, joined by a queue of residuals in shared memory: a quarter more again ("split warps").
 //
 // A position is 52 bytes of engine codes (suit << 4 | rank), SENTINEL after its last pile; a deal fills all 52.
 
@@ -329,6 +330,9 @@ enum {
                                                              // RES piles, or with the residual disconnected
     P_STUCK_MOVES,                                           // prefix moves played by the attempts that got stuck
     P_BUSY_NS, P_END_NS, P_START_NS_INV,                     // thread spans summed; latest end; ~earliest start
+    P_BLOCKED, P_STARVED,                                    // attempts_split: turns of prefix threads with a residual
+                                                             // the queue had no room for, and of search threads with
+                                                             // none to take
     P_SLOTS
 };
 #ifdef PROFILE
@@ -372,7 +376,7 @@ extern "C" __global__ void __launch_bounds__(BLOCK) attempts(
     const u64 total = n_deals * (u64)(tries + tries2);
     if (prefix > MAX_PREFIX) prefix = MAX_PREFIX;
     if (prefix2 > MAX_PREFIX) prefix2 = MAX_PREFIX;
-    PROF(u64 pf[P_SLOTS - 3] = {0}; const u64 t_start = now_ns(); u64 c0 = clock64(), c1;)
+    PROF(u64 pf[P_BUSY_NS] = {0}; const u64 t_start = now_ns(); u64 c0 = clock64(), c1;)
     #define LAP(slot) PROF(c1 = clock64(); pf[slot] += c1 - c0; c0 = c1;)
     for (;;) {
         u32 a = atomicAdd(next_attempt, 1u);
@@ -501,7 +505,7 @@ extern "C" __global__ void __launch_bounds__(BLOCK) attempts(
     }
     #undef LAP
     PROF(
-        for (int i = 0; i < P_SLOTS - 3; i++) atomicAdd(&profile[i], pf[i]);
+        for (int i = 0; i < P_BUSY_NS; i++) atomicAdd(&profile[i], pf[i]);
         const u64 t_end = now_ns();
         atomicAdd(&profile[P_BUSY_NS], t_end - t_start);
         atomicMax(&profile[P_END_NS], t_end);
@@ -532,7 +536,7 @@ extern "C" __global__ void __launch_bounds__(BLOCK, 14) attempts_stepwise(
     const u64 total = n_deals * (u64)(tries + tries2);
     if (prefix > MAX_PREFIX) prefix = MAX_PREFIX;
     if (prefix2 > MAX_PREFIX) prefix2 = MAX_PREFIX;
-    PROF(u64 pf[P_SLOTS - 3] = {0}; const u64 t_start = now_ns(); bool searched = false; u64 c0 = clock64(), c1;)
+    PROF(u64 pf[P_BUSY_NS] = {0}; const u64 t_start = now_ns(); bool searched = false; u64 c0 = clock64(), c1;)
     // The warp's time in each part of the loop, measured where its threads meet again, by thread 0 of the warp.
     #define WLAP(slot) PROF(c1 = clock64(); if (lane == 0) pf[slot] += c1 - c0; c0 = c1;)
 
@@ -721,7 +725,329 @@ extern "C" __global__ void __launch_bounds__(BLOCK, 14) attempts_stepwise(
     }
     #undef WLAP
     PROF(
-        for (int i = 0; i < P_SLOTS - 3; i++) atomicAdd(&profile[i], pf[i]);
+        for (int i = 0; i < P_BUSY_NS; i++) atomicAdd(&profile[i], pf[i]);
+        const u64 t_end = now_ns();
+        atomicAdd(&profile[P_BUSY_NS], t_end - t_start);
+        atomicMax(&profile[P_END_NS], t_end);
+        atomicMax(&profile[P_START_NS_INV], ~t_start);
+    )
+}
+
+// Writes a won attempt's line: the search's `depth` moves (on the via stack) after its prefix, which it plays again
+// from the attempt's random numbers on the thread's row.
+__device__ __forceinline__ void write_line(u8 (*row)[BLOCK], int t, const u8* deals, const u64* deal_masks, u8* lines,
+                                           u32 deal, u32 a, u64 seed, int moves, int depth, u64 via_lo, u64 via_hi,
+                                           u32 leap_shift) {
+    u8* out = lines + (u64)deal * 51;
+    for (int d = 0; d < depth; d++) out[moves + d] = (u8)card_at(via_lo, via_hi, depth - 1 - d);
+    u32 r = seed_u32(seed ^ (0x9E3779B97F4A7C15ull * (a + 1)));
+    u64 present, l1, l3;
+    int n = row_load(row, t, deals + (u64)deal * 52, deal_masks + 3 * (u64)deal, present, l1, l3);
+    for (int i = 0; i < moves; i++) out[i] = (u8)prefix_move(row, t, n, l1, l3, present, r, leap_shift);
+}
+
+#define QSIZE 32           // residuals attempts_split's queue holds
+
+// The same attempts with prefixes and searches in different warps (Settings::split). In attempts_stepwise a warp's
+// threads playing prefixes and those searching take turns, so each turn runs both steps at about half the warp's
+// width. Here the first half of a block's warps play prefixes, all 32 threads stepping together (prefixes have a fixed
+// length), and put each residual worth searching in a queue in shared memory; the other half search, each thread
+// taking the next residual as soon as it has finished one. An attempt makes the same moves and gives the same result
+// as in attempts_stepwise (its residual carries the random state on to the search).
+// Queue entry i (counted over the launch) lives in slot i % QSIZE, whose number says where it is: i, the slot is free
+// for it; i + 1, written; i + QSIZE, copied out, and the slot free for entry i + QSIZE. Prefix warps reserve runs of
+// free entries and search warps take runs of written ones, a compare-and-swap each; slots are freed out of order, by
+// threads of different warps. Search threads keep their asleep stacks in their bytes of s_mem, and replay a won
+// attempt's prefix there to write its line.
+// At most 72 registers (28 warps a multiprocessor); the queue's shared memory leaves room for 12 blocks of 64 on the
+// T550, where 1 prefix warp to 1 search warp ran fastest (docs/BENCHMARKS.md, "split warps").
+extern "C" __global__ void __launch_bounds__(BLOCK, 896 / BLOCK) attempts_split(
+    const u8* __restrict__ deals, const u64* __restrict__ deal_masks, u32 n_deals, u64 inv_deals, u32 tries,
+    u32 prefix, u32 tries2, u32 prefix2, u32 budget, u32 conn_gate, u32 leftmost, u32 leap_shift,
+    u64 seed, u32* next_attempt, u32* won, u8* lines, u64* deal_counts, u64* profile)
+{
+    enum { DS = 0, DL = 2 * RES, BYTES = 4 * RES };
+    __shared__ u8 s_mem[BYTES * BLOCK];
+    __shared__ u64 q_lo[QSIZE], q_hi[QSIZE], q_present[QSIZE];   // the residual and its cards
+    __shared__ u32 q_rng[QSIZE], q_a[QSIZE], q_seq[QSIZE];        // its random state and attempt; the slot's number
+    __shared__ u8 q_moves[QSIZE];                                 // its prefix's moves
+    __shared__ u32 q_resv, q_head, q_closed;                      // entries reserved, entries taken, prefix warps done
+    u8 (*s_row)[BLOCK] = (u8 (*)[BLOCK])s_mem;
+    const int t = threadIdx.x;
+    const u32 lane = t & 31, FULL = 0xFFFFFFFFu, below_me = (1u << lane) - 1, prefix_warps = BLOCK / 64;
+    if (t == 0) q_resv = q_head = q_closed = 0;
+    for (int i = t; i < QSIZE; i += BLOCK) q_seq[i] = i;
+    __syncthreads();
+    if (prefix > MAX_PREFIX) prefix = MAX_PREFIX;
+    if (prefix2 > MAX_PREFIX) prefix2 = MAX_PREFIX;
+    // Profiling: each warp's time in each part of its loop, by thread 0 of the warp, and how many of its threads
+    // stepped (P_PREFIX_STEPS or P_STEPS), waited on the queue, or took and skipped attempts.
+    PROF(const u64 t_start = now_ns(); u64 pf[P_SKIP + 1] = {0}, turns = 0, stepping = 0, waited = 0, taken = 0,
+         skipped = 0, c0 = clock64(), c1;)
+    #define WLAP(slot) PROF(c1 = clock64(); if (lane == 0) pf[slot] += c1 - c0; c0 = c1;)
+
+    if (t < 32 * prefix_warps) {
+        // Slots P_FETCH, P_LOAD, P_PREFIX and P_GATE (queueing, with waiting for room) of pf.
+        enum { FETCH, PREFIX, READY, DONE };
+        const u64 total = n_deals * (u64)(tries + tries2);
+        int phase = FETCH;
+        u32 held = 0, pend = 0;    // as in attempts_stepwise
+        bool exhausted = false;
+        u32 a = 0, deal = 0, k_moves = 0, rng = 1;
+        int moves = 0, len = 0;
+        u64 present = 0, l1 = 0, l3 = 0;
+        for (;;) {
+            u32 need = __ballot_sync(FULL, phase == FETCH), got = 0;
+            while (need) {
+                if (!pend) {
+                    if (exhausted) break;
+                    u32 base = 0;
+                    if (lane == 0) base = atomicAdd(next_attempt, 32u);
+                    base = __shfl_sync(FULL, base, 0);
+                    u64 s = (u64)base + lane;
+                    u32 d, unused;
+                    deal_and_try((u32)s, n_deals, inv_deals, d, unused);
+                    bool ok = s < total && !*((volatile u32*)&won[d]);
+                    PROF(if (s < total) { taken++; if (!ok) skipped++; })
+                    pend = __ballot_sync(FULL, ok);
+                    held = (u32)s;
+                    exhausted = (u64)base + 32 >= total;
+                    continue;
+                }
+                u32 from = __ffs(pend) - 1, to = __ffs(need) - 1;
+                u32 s = __shfl_sync(FULL, held, from);
+                if (lane == to) a = s;
+                got |= 1u << to;
+                pend &= pend - 1;
+                need &= need - 1;
+            }
+            if ((need >> lane) & 1) phase = DONE;
+            WLAP(P_FETCH);
+            if ((got >> lane) & 1) {
+                u32 attempt_try;
+                deal_and_try(a, n_deals, inv_deals, deal, attempt_try);
+                if (*((volatile u32*)&won[deal])) {
+                    PROF(skipped++;)                  // won since the warp took it
+                } else {
+                    k_moves = attempt_try < tries ? prefix : prefix2;
+                    rng = seed_u32(seed ^ (0x9E3779B97F4A7C15ull * (a + 1)));
+                    len = row_load(s_row, t, deals + (u64)deal * 52, deal_masks + 3 * (u64)deal, present, l1, l3);
+                    moves = 0;
+                    phase = PREFIX;
+                }
+            }
+            WLAP(P_LOAD);
+            PROF(u32 n = __popc(__ballot_sync(FULL, phase == PREFIX)); if (lane == 0) { turns++; stepping += n; })
+
+            if (phase == PREFIX) {
+                u32 n1 = __popcll(l1), n3 = __popcll(l3);
+                if (moves < (int)k_moves && n1 + n3 > 0) {
+                    if (prefix_move(s_row, t, len, l1, l3, present, rng, leap_shift) < 0) k_moves = moves;   // all lose
+                    else moves++;
+                } else {
+                    // Stuck before the residual got small, or already disconnected: lost anyway.
+                    bool linked = leftmost ? connected_without_leftmost(present, s_row[OFF][t], len) : connected(present);
+                    bool search = len <= RES && !(len > 1 && len <= (int)conn_gate && !linked);
+                    if (search && len > 1) {
+                        phase = READY;
+                    } else {
+                        atomicAdd(&deal_counts[deal], (u64)moves << 16 | 1u);
+                        if (search && atomicCAS(&won[deal], 0u, 1u) == 0u)       // one pile left: won outright
+                            write_line(s_row, t, deals, deal_masks, lines, deal, a, seed, moves, 0, 0, 0, leap_shift);
+                        phase = FETCH;
+                    }
+                }
+            }
+            WLAP(P_PREFIX);
+
+            // Queue the residuals that fit; the rest wait in their threads' rows for the next turn.
+            u32 ready = __ballot_sync(FULL, phase == READY);
+            if (ready) {
+                u32 r = 0, k = 0;
+                for (;;) {
+                    if (lane == 0) r = *(volatile u32*)&q_resv;
+                    r = __shfl_sync(FULL, r, 0);
+                    u32 free = __ballot_sync(FULL, lane < QSIZE && ((volatile u32*)q_seq)[(r + lane) % QSIZE] == r + lane);
+                    k = min((u32)__popc(ready), ~free ? (u32)__ffs(~free) - 1 : 32u);
+                    if (k == 0) break;
+                    u32 seen = 0;
+                    if (lane == 0) seen = atomicCAS(&q_resv, r, r + k);
+                    if (__shfl_sync(FULL, seen, 0) == r) break;
+                }
+                if (phase == READY && __popc(ready & below_me) < k) {
+                    u32 i = r + __popc(ready & below_me), slot = i % QSIZE;
+                    u64 lo, hi;
+                    load_residual(s_row, t, len, lo, hi);
+                    q_lo[slot] = lo; q_hi[slot] = hi; q_present[slot] = present;
+                    q_rng[slot] = rng; q_a[slot] = a; q_moves[slot] = (u8)moves;
+                    __threadfence_block();             // the entry before its number
+                    ((volatile u32*)q_seq)[slot] = i + 1;
+                    phase = FETCH;
+                }
+                if (k == 0 && __all_sync(FULL, phase == READY || phase == DONE)) __nanosleep(200);
+            }
+            WLAP(P_GATE);
+            PROF(u32 nw = __popc(__ballot_sync(FULL, phase == READY)); if (lane == 0) waited += nw;)
+            if (__all_sync(FULL, phase == DONE)) break;
+        }
+        if (lane == 0) atomicAdd(&q_closed, 1u);
+        PROF(if (lane == 0) {
+                 for (int i = P_FETCH; i <= P_GATE; i++) atomicAdd(&profile[i], pf[i]);
+                 atomicAdd(&profile[P_PREFIX_WARP_STEPS], turns); atomicAdd(&profile[P_PREFIX_STEPS], stepping);
+                 atomicAdd(&profile[P_BLOCKED], waited);
+             }
+             atomicAdd(&profile[P_FETCHES], taken); atomicAdd(&profile[P_SKIPS], skipped);)
+    } else {
+        // Slots P_RESULT (taking residuals and writing results), P_SEARCH and P_SKIP (waiting for residuals) of pf.
+        enum { TAKE, SEARCH, FINISH, DONE };
+        int phase = TAKE;
+        u32 a = 0, deal = 0, rng = 1;
+        int moves = 0, len = 0, depth = 0;
+        u64 present = 0, lo = 0, hi = 0, via_lo = 0, via_hi = 0, cov_lo = 0, cov_hi = 0;
+        u32 us = 0, ul = 0, used = 0, z = 0;   // z: the current depth's asleep moves (slides | leaps << 16)
+        bool win = false;
+        for (;;) {
+            u32 need = __ballot_sync(FULL, phase == TAKE);
+            if (need) {
+                // Take the run of written entries from the next untaken one. The count of prefix warps done is read
+                // before the head, and the head before the reserved count: once all are done, every entry reserved is
+                // written, and none is left once the head has reached them.
+                u32 closed = *(volatile u32*)&q_closed, head = 0, k = 0, drained = 0;
+                for (;;) {
+                    if (lane == 0) head = *(volatile u32*)&q_head;
+                    head = __shfl_sync(FULL, head, 0);
+                    u32 full = __ballot_sync(FULL, lane < QSIZE && ((volatile u32*)q_seq)[(head + lane) % QSIZE] == head + lane + 1);
+                    k = min((u32)__popc(need), ~full ? (u32)__ffs(~full) - 1 : 32u);
+                    if (k == 0) break;
+                    u32 seen = 0;
+                    if (lane == 0) seen = atomicCAS(&q_head, head, head + k);
+                    if (__shfl_sync(FULL, seen, 0) == head) break;
+                }
+                if (k == 0 && closed == prefix_warps) {
+                    if (lane == 0) drained = head == *(volatile u32*)&q_resv;
+                    drained = __shfl_sync(FULL, drained, 0);
+                }
+                if (phase == TAKE && __popc(need & below_me) < k) {
+                    u32 i = head + __popc(need & below_me), slot = i % QSIZE;
+                    lo = q_lo[slot]; hi = q_hi[slot]; present = q_present[slot];
+                    rng = q_rng[slot]; a = q_a[slot]; moves = q_moves[slot];
+                    __threadfence_block();             // the copy before the slot is freed
+                    ((volatile u32*)q_seq)[slot] = i + QSIZE;
+                    u32 unused;
+                    deal_and_try(a, n_deals, inv_deals, deal, unused);
+                    len = __popcll(present);
+                    u32 ms, ml;
+                    masks(lo, hi, len, ms, ml);
+                    us = ms; ul = ml;
+                    z = 0; depth = 0; used = 0;
+                    via_lo = via_hi = cov_lo = cov_hi = 0;
+                    phase = *((volatile u32*)&won[deal]) ? FINISH : SEARCH;   // won meanwhile: skip it
+                }
+                if (drained && phase == TAKE) phase = DONE;
+                PROF(if (lane == 0) waited += __popc(need) - k;)
+                WLAP(P_RESULT);
+                if (k == 0 && !drained && __all_sync(FULL, phase != SEARCH)) __nanosleep(200);
+                WLAP(P_SKIP);
+            }
+            PROF(u32 n = __popc(__ballot_sync(FULL, phase == SEARCH)); if (lane == 0) { turns++; stepping += n; })
+            if (phase == SEARCH) {
+                if ((us | ul) == 0) {
+                    if (depth == 0) {
+                        phase = FINISH;               // the residual is lost
+                    } else {
+                        depth--;
+                        u32 via = pop_byte(via_lo, via_hi), cov = pop_byte(cov_lo, cov_hi);
+                        int pile = via >> 1, dd = (via & 1) ? 3 : 1;
+                        u32 mover = card_at(lo, hi, pile - dd);
+                        insert_card(lo, hi, pile, mover);
+                        set_card(lo, hi, pile - dd, cov);
+                        present |= 1ull << cov;
+                        len++;
+                        u32 ms, ml;
+                        masks(lo, hi, len, ms, ml);
+                        z = SH16(DS + 2 * depth) | SH16(DL + 2 * depth) << 16;
+                        us = ms & ~(z & 0xFFFF);
+                        ul = ml & ~(z >> 16);
+                    }
+                } else if (used >= budget) {
+                    phase = FINISH;
+                } else {
+                    u32 n1 = __popc(us), n3 = __popc(ul);
+                    u32 k = below(rng, n1 + n3);
+                    bool leap = k >= n1;
+                    int pile = leap ? select_bit16(ul, k - n1) : select_bit16(us, k);
+                    u32 sleep_s, sleep_l;
+                    asleep_after(z & 0xFFFF, z >> 16, pile, leap, sleep_s, sleep_l);
+                    u32 bit = 1u << pile;
+                    if (leap) ul &= ~bit; else us &= ~bit;
+                    z |= leap ? bit << 16 : bit;
+                    int dd = leap ? 3 : 1;
+                    u32 mover = card_at(lo, hi, pile), cov = card_at(lo, hi, pile - dd);
+                    set_card(lo, hi, pile - dd, mover);
+                    delete_card(lo, hi, pile);
+                    int parent_len = len;
+                    len--;
+                    present &= ~(1ull << cov);
+                    used++;
+                    if (len == 1) {
+                        push_byte(via_lo, via_hi, pile << 1 | (leap ? 1 : 0));
+                        win = true;
+                        depth++;
+                        phase = FINISH;
+                    } else {
+                        bool dead;
+                        if (leftmost) {
+                            // Also when pile 0's card changed, or the move broke a link among the other cards.
+                            // Every thread computes the trigger and the test (both branch-free), which ran faster than
+                            // testing only where the trigger fired.
+                            u32 left = card_at(lo, hi, 0);
+                            bool trigger = breaks_link(present, cov) | (parent_len > (int)conn_gate) | (pile == dd)
+                                           | breaks_link(present & ~(1ull << left), cov);
+                            dead = (len <= (int)conn_gate) & trigger & !connected_without_leftmost(present, left, len);
+                        } else {
+                            dead = len <= (int)conn_gate && (breaks_link(present, cov) || parent_len > (int)conn_gate)
+                                   && !connected(present);
+                        }
+                        if (dead) {                   // undo at once
+                            insert_card(lo, hi, pile, mover);
+                            set_card(lo, hi, pile - dd, cov);
+                            present |= 1ull << cov;
+                            len++;
+                        } else {
+                            push_byte(via_lo, via_hi, pile << 1 | (leap ? 1 : 0));
+                            push_byte(cov_lo, cov_hi, cov);
+                            SET16(DS + 2 * depth, z & 0xFFFF); SET16(DL + 2 * depth, z >> 16);
+                            depth++;
+                            z = sleep_s | sleep_l << 16;
+                            u32 ms, ml;
+                            masks(lo, hi, len, ms, ml);
+                            us = ms & ~sleep_s; ul = ml & ~sleep_l;
+                        }
+                    }
+                }
+            }
+            WLAP(P_SEARCH);
+
+            if (phase == FINISH) {
+                atomicAdd(&deal_counts[deal], (u64)(moves + used) << 16 | 1u);
+                if (win && atomicCAS(&won[deal], 0u, 1u) == 0u)
+                    write_line(s_row, t, deals, deal_masks, lines, deal, a, seed, moves, depth, via_lo, via_hi,
+                               leap_shift);
+                win = false;
+                phase = TAKE;
+            }
+            WLAP(P_RESULT);
+            if (__all_sync(FULL, phase == DONE)) break;
+        }
+        PROF(if (lane == 0) {
+                 atomicAdd(&profile[P_SEARCH], pf[P_SEARCH]); atomicAdd(&profile[P_RESULT], pf[P_RESULT]);
+                 atomicAdd(&profile[P_SKIP], pf[P_SKIP]);
+                 atomicAdd(&profile[P_WARP_STEPS], turns); atomicAdd(&profile[P_STEPS], stepping);
+                 atomicAdd(&profile[P_STARVED], waited);
+             })
+    }
+    #undef WLAP
+    PROF(
         const u64 t_end = now_ns();
         atomicAdd(&profile[P_BUSY_NS], t_end - t_start);
         atomicMax(&profile[P_END_NS], t_end);
