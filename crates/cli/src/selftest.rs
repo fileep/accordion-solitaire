@@ -1,13 +1,15 @@
 //! `acc selftest`: the Phase 2 gates at full size, on all cores, plus the Phase 5 pruning check (PLAN.md §6.3):
-//! sleep sets and endgame tables must give the same verdict as plain search.
+//! sleep sets and endgame tables must give the same verdict as plain search; and the exhaustive prover checked
+//! against a plain recursive search.
 
 use accordion_core::fast::Position;
 use accordion_core::rng::Xoshiro256StarStar;
 use accordion_core::selfcheck::{Soundness, differential_playout, soundness_sample};
-use accordion_core::{Deal, Game};
-use accordion_solver::{Endgame, Gates, Search, SearchOptions, SearchResult};
+use accordion_core::{Deal, Game, Move};
+use accordion_solver::{Endgame, Gates, Proof, ProveOptions, Search, SearchOptions, SearchResult, prove};
 use rayon::prelude::*;
 use std::cell::RefCell;
+use std::collections::HashSet;
 use std::path::Path;
 use std::sync::Arc;
 use std::time::Instant;
@@ -16,7 +18,13 @@ use std::time::Instant;
 const SOUNDNESS_SEED_BASE: u64 = 1 << 40;
 const REFERENCE_BUDGET: usize = 200_000;
 
-pub fn run(playouts: u64, positions: u64, residuals: u64, endgame_dir: &Path) -> Result<bool, String> {
+pub fn run(
+    playouts: u64,
+    positions: u64,
+    residuals: u64,
+    proofs: u64,
+    endgame_dir: &Path,
+) -> Result<bool, String> {
     let threads = rayon::current_num_threads();
     let start = Instant::now();
     let moves = (0..playouts)
@@ -66,7 +74,16 @@ pub fn run(playouts: u64, positions: u64, residuals: u64, endgame_dir: &Path) ->
         confirmed + inconclusive,
         start.elapsed().as_secs_f64()
     );
-    pruning(residuals, endgame_dir)
+    if residuals == 0 && proofs == 0 {
+        return Ok(true);
+    }
+    let piles = crate::runner::available_endgame(endgame_dir);
+    let tables = Arc::new(if piles > 0 {
+        Endgame::load(endgame_dir, piles)?
+    } else {
+        Endgame::build(8, crate::runner::all_threads(), |_, _, _| {})
+    });
+    Ok(pruning(residuals, &tables)? & proof_check(proofs, &tables)?)
 }
 
 /// Seeds for the pruning check's residuals.
@@ -80,17 +97,11 @@ thread_local! {
 /// Random residuals of 10–24 piles, each searched to the end twice: plain (no dead-end tests, no sleep sets, no
 /// tables, fixed order) and with everything the solver uses (sleep sets, gated tests, endgame tables, random
 /// order). The verdicts must agree, and every win must replay on the reference engine.
-fn pruning(residuals: u64, endgame_dir: &Path) -> Result<bool, String> {
+fn pruning(residuals: u64, tables: &Arc<Endgame>) -> Result<bool, String> {
     if residuals == 0 {
         return Ok(true);
     }
     let start = Instant::now();
-    let piles = crate::runner::available_endgame(endgame_dir);
-    let tables = Arc::new(if piles > 0 {
-        Endgame::load(endgame_dir, piles)?
-    } else {
-        Endgame::build(8, crate::runner::all_threads(), |_, _, _| {})
-    });
     let reach = tables.max_piles();
     let counts = (0..residuals)
         .into_par_iter()
@@ -151,6 +162,109 @@ fn pruning(residuals: u64, endgame_dir: &Path) -> Result<bool, String> {
         }
         Err(e) => {
             println!("FAILED pruning check: {e}");
+            Ok(false)
+        }
+    }
+}
+
+/// Seeds for the proof check's positions.
+const PROOF_SEED_BASE: u64 = 3 << 40;
+/// Distinct positions the reference search may store before a position counts as too large.
+const PROOF_REFERENCE_BUDGET: usize = 1_000_000;
+const PROOF_BUDGET: u64 = 50_000_000;
+
+/// Whether a win is reachable from `pos`, by the plainest search there is: recursion and a standard hash set of
+/// the positions found dead. `None` past `budget` of them.
+fn reference(pos: &Position, dead: &mut HashSet<Vec<u8>>, budget: usize) -> Option<bool> {
+    if pos.is_won() {
+        return Some(true);
+    }
+    if dead.contains(pos.codes()) {
+        return Some(false);
+    }
+    for mv in pos.legal_moves() {
+        if reference(&pos.play(mv), dead, budget)? {
+            return Some(true);
+        }
+    }
+    dead.insert(pos.codes().to_vec());
+    (dead.len() <= budget).then_some(false)
+}
+
+fn replay(pos: &Position, line: &[Move]) -> Result<(), String> {
+    let mut game = Game::from_piles(pos.tops().into_iter().map(|c| vec![c]).collect());
+    for &mv in line {
+        game.apply(mv).map_err(|e| format!("move rejected: {e}"))?;
+    }
+    if game.is_won() { Ok(()) } else { Err("the line doesn't end in one pile".into()) }
+}
+
+/// Random positions of 14-44 piles, each proved four ways: by [`reference`], and by the prover's plain run, its
+/// independent run (with the endgame tables), and an independent run with a set far too small for it, so that
+/// forgetting positions is exercised (it must only cost time). The verdicts must agree, every win must replay on
+/// the reference engine, and in a lost position the plain run must store exactly the positions the reference did.
+fn proof_check(n: u64, tables: &Endgame) -> Result<bool, String> {
+    if n == 0 {
+        return Ok(true);
+    }
+    let start = Instant::now();
+    let counts = (0..n)
+        .into_par_iter()
+        .map(|i| {
+            let seed = PROOF_SEED_BASE + i;
+            let mut rng = Xoshiro256StarStar::from_seed(seed);
+            let mut pos = Position::from_deal(&Deal::from_seed(seed));
+            for _ in 0..8 + rng.below(31) {
+                match pos.random_move(&mut rng) {
+                    Some(mv) => pos = pos.play(mv),
+                    None => break,
+                }
+            }
+            let mut reached = HashSet::new();
+            let Some(winnable) = reference(&pos, &mut reached, PROOF_REFERENCE_BUDGET) else {
+                return Ok([0, 0, 1, 0]);
+            };
+            let small = ProveOptions { max_bytes: 0, ..ProveOptions::independent(!seed, PROOF_BUDGET) };
+            let runs = [
+                ("plain", prove(&pos, &ProveOptions::plain(PROOF_BUDGET), None)),
+                ("independent", prove(&pos, &ProveOptions::independent(seed, PROOF_BUDGET), Some(tables))),
+                ("small-memory", prove(&pos, &small, None)),
+            ];
+            let fail = |name: &str, what: String| {
+                format!("position {seed} ({} piles), {name} run: {what}", pos.len())
+            };
+            let mut evicted = 0;
+            for (name, r) in &runs {
+                match (&r.proof, winnable) {
+                    (Proof::Won(line), true) => replay(&pos, line).map_err(|e| fail(name, e))?,
+                    (Proof::Lost, false) => {}
+                    (Proof::Unfinished, _) => return Ok([0, 0, 1, 0]),
+                    (p, _) => {
+                        return Err(fail(
+                            name,
+                            format!("{p:?}, but the reference found winnable = {winnable}"),
+                        ));
+                    }
+                }
+                evicted += r.evicted;
+            }
+            if !winnable && runs[0].1.dead != reached.len() {
+                let what = format!("stored {} positions, the reference {}", runs[0].1.dead, reached.len());
+                return Err(fail("plain", what));
+            }
+            Ok(if winnable { [1, 0, 0, evicted] } else { [0, 1, 0, evicted] })
+        })
+        .try_reduce(|| [0u64; 4], |x, y| Ok([x[0] + y[0], x[1] + y[1], x[2] + y[2], x[3] + y[3]]));
+    match counts {
+        Ok([wins, lost, inconclusive, evicted]) => {
+            println!(
+                "proofs: {n} positions of 14-44 piles; the prover's plain, independent and small-memory runs agree with a plain recursive search on every one: {wins} won (every line replayed), {lost} lost (the plain run storing exactly the positions the reference reached), {inconclusive} too large; the small-memory runs forgot {evicted} positions ({:.1}s)",
+                start.elapsed().as_secs_f64()
+            );
+            Ok(true)
+        }
+        Err(e) => {
+            println!("FAILED proof check: {e}");
             Ok(false)
         }
     }

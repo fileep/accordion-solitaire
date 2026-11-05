@@ -154,6 +154,10 @@ The independent run stores slightly fewer dead positions where its endgame table
 a search. The `loss` records are in `hard-deals/proofs/` (`acc verify` checks their moves; a loss can't be confirmed by
 replay), and the dossiers in `hard-deals/` say `loss (proven)`.
 
+Since this run, `acc batch` proves the deals it doesn't win itself, while the run goes on, and the prover is 2.4× faster
+(both runs on seed 112,249,515 now take 16 s; docs/BENCHMARKS.md, "After Phase 8 — proving losses"). A future run's
+undecided deals are only those a proof of 10 billion positions a run can't settle.
+
 **Why they're lost.** The Python search also prints what it saw:
 
 - **Seed 202,346,720 locks up at its left end.** It opens 3H 5S QH, and none of the three ever moves: 5S doesn't match

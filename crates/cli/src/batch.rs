@@ -1,20 +1,23 @@
 //! `acc batch`: solve a range of seeded deals on every core, one deal per thread at a time, and on the GPU when
 //! there is one (PLAN.md Phases 4, 5 and 8). Every win is verified by the reference engine before it counts; every
-//! deal that isn't won gets a dossier. The summary gives the win rate with a Wilson 95% interval, counting not-won
-//! deals both ways, and checks that the deals are all different games.
+//! deal that isn't won gets a dossier, and a proof attempt on a thread of its own while the run goes on: two
+//! exhaustive runs that must agree before a loss counts ([`prove::prove_both`]). The summary gives the win rate with
+//! a Wilson 95% interval, counting undecided deals both ways, and checks that the deals are all different games.
 
 use crate::dossier;
 use crate::progress::Meter;
+use crate::prove::{self, Finding, Limits};
 use crate::runner::{self, Options, Seeds, percentile, wilson};
 use accordion_core::Deal;
 use accordion_core::fast::Position;
 use accordion_gpu::Settings;
-use accordion_solver::{Config, Search, Stage, Verdict, solve};
+use accordion_solver::{Config, Endgame, Search, Stage, Verdict, solve};
 use clap::Args;
 use std::cmp::Reverse;
 use std::collections::{BTreeMap, BinaryHeap, HashMap};
 use std::io::{BufWriter, Write};
 use std::path::PathBuf;
+use std::sync::{Arc, mpsc};
 use std::time::Instant;
 
 #[derive(Args)]
@@ -71,6 +74,84 @@ pub struct BatchArgs {
     /// Don't write the speed log.
     #[arg(long)]
     no_log: bool,
+    /// Positions each of the two exhaustive runs may generate when proving a deal the solver didn't win (0: don't
+    /// prove). Proofs run one at a time on a thread of their own while the run goes on, and the run waits for the
+    /// last; one can take an hour.
+    #[arg(long, default_value_t = prove::DEFAULT_POSITIONS)]
+    prove: u64,
+    /// Memory each proof run's set of dead positions may take, in GB.
+    #[arg(long, default_value_t = 8)]
+    prove_memory: usize,
+}
+
+/// What the proofs of the deals the solver didn't win found.
+#[derive(Default)]
+struct Proofs {
+    lost: u64,
+    won: u64,
+    undecided: u64,
+    /// The runs disagreed, or a winning line failed the reference engine: bugs.
+    failed: u64,
+}
+
+/// Proves the deals sent to it, one at a time, and records each in its dossier (with a loss record in
+/// `<dossiers>/proofs/` for a proven loss) when there are dossiers.
+fn prover(
+    seeds: mpsc::Receiver<u64>,
+    limits: Limits,
+    tables: Option<Arc<Endgame>>,
+    dossiers: Option<PathBuf>,
+) -> Proofs {
+    let mut tally = Proofs::default();
+    for seed in seeds {
+        let deal = Deal::from_seed(seed);
+        eprintln!("\nseed {seed}: not won; proving it lost, up to {} positions a run", limits.positions);
+        let say = |line: String| eprintln!("seed {seed}: {line}");
+        let proved = prove::prove_both(&Position::from_deal(&deal), &limits, tables.as_deref(), say)
+            .and_then(|p| p.record(&deal, Some(seed)).map(|record| (p, record)));
+        let (p, record) = match proved {
+            Ok(x) => x,
+            Err(e) => {
+                tally.failed += 1;
+                eprintln!("seed {seed}: PROOF FAILED: {e}");
+                continue;
+            }
+        };
+        eprintln!(
+            "seed {seed}: {}",
+            match p.finding {
+                Finding::Lost => {
+                    tally.lost += 1;
+                    "proven lost"
+                }
+                Finding::Won(_) => {
+                    tally.won += 1;
+                    "won by the exhaustive search (the line verified)"
+                }
+                Finding::Undecided => {
+                    tally.undecided += 1;
+                    "undecided: a run hit its limit"
+                }
+            }
+        );
+        let Some(dir) = &dossiers else { continue };
+        let written = dossier::record_proof(dir, &deal, Some(seed), &p.finding, p.best(), p.json.clone())
+            .and_then(|_| {
+                if p.finding != Finding::Lost {
+                    return Ok(());
+                }
+                let proofs = dir.join("proofs");
+                std::fs::create_dir_all(&proofs)
+                    .map_err(|e| format!("creating {}: {e}", proofs.display()))?;
+                let path = proofs.join(format!("seed-{seed}-loss.json"));
+                std::fs::write(&path, record.to_json() + "\n")
+                    .map_err(|e| format!("writing {}: {e}", path.display()))
+            });
+        if let Err(e) = written {
+            eprintln!("seed {seed}: {e}");
+        }
+    }
+    tally
 }
 
 pub fn run(args: &BatchArgs) -> Result<bool, String> {
@@ -115,6 +196,16 @@ pub fn run(args: &BatchArgs) -> Result<bool, String> {
     let mut meter = Meter::new(seeds.count(), (!args.no_log).then_some(args.log_dir.as_path()), &about)?;
     stay_awake();
     let opts = Options { threads: workers, table_log2: args.table, endgame, records: out.is_some(), gpu };
+    let (to_prover, proving) = if args.prove > 0 {
+        let (tx, rx) = mpsc::channel();
+        let limits =
+            Limits { positions: args.prove, bytes: args.prove_memory << 30, rng_seed: 1, pattern_piles: 16 };
+        let (tables, dir) = (opts.endgame.clone(), (!args.no_dossiers).then(|| args.dossiers.clone()));
+        (Some(tx), Some(std::thread::spawn(move || prover(rx, limits, tables, dir))))
+    } else {
+        (None, None)
+    };
+    let mut sent = 0u64;
     let start = Instant::now();
     let (mut won, mut exhausted, mut unknown, mut failed) = (0u64, 0u64, 0u64, 0u64);
     let mut stages: HashMap<String, u64> = HashMap::new();
@@ -167,6 +258,12 @@ pub fn run(args: &BatchArgs) -> Result<bool, String> {
                     dossier::record(&args.dossiers, &Deal::from_seed(s.seed), Some(s.seed), &attempt)?;
                     any_dossier = true;
                 }
+                if !matches!(s.report.verdict, Verdict::Win(_))
+                    && let Some(tx) = &to_prover
+                {
+                    tx.send(s.seed).map_err(|_| "the prover thread stopped".to_string())?;
+                    sent += 1;
+                }
             }
             if let Some(w) = out.as_mut() {
                 pending.insert(s.index, s.verified.is_ok().then_some(s.record).flatten());
@@ -187,6 +284,13 @@ pub fn run(args: &BatchArgs) -> Result<bool, String> {
     if let Some(mut w) = out {
         w.flush().map_err(|e| e.to_string())?;
     }
+    drop(to_prover);
+    match sent {
+        0 => {}
+        1 => eprintln!("finishing the proof of the deal not won"),
+        _ => eprintln!("finishing the proofs of the {sent} deals not won"),
+    }
+    let proofs = proving.map(|h| h.join().expect("the prover panicked")).unwrap_or_default();
     if any_dossier {
         dossier::write_index(&args.dossiers)?;
     }
@@ -238,8 +342,16 @@ pub fn run(args: &BatchArgs) -> Result<bool, String> {
     }
 
     let n = args.count;
+    // Deals the solver didn't win count as wins once a proof wins them, as losses once proven lost, and both ways
+    // in the interval while undecided.
+    let undecided = if args.prove > 0 { proofs.undecided + proofs.failed } else { exhausted + unknown };
+    if proofs.won > 0 {
+        stages.insert("prove".into(), proofs.won);
+    }
+    let won_by_solver = won;
+    let won = won + proofs.won;
     let (lo, _) = wilson(won, n);
-    let (_, hi) = wilson(won + exhausted + unknown, n);
+    let (_, hi) = wilson(won + undecided, n);
     nodes.sort_unstable();
     micros.sort_unstable();
     let mut by_stage: Vec<_> = stages.into_iter().collect();
@@ -257,9 +369,20 @@ pub fn run(args: &BatchArgs) -> Result<bool, String> {
         }
     );
     println!(
-        "not won          {} exhausted, {unknown} hit the limit of {} positions",
-        exhausted, args.max_nodes
+        "not won          {} by the solver ({exhausted} exhausted, {unknown} hit the limit of {} positions)",
+        n - won_by_solver - failed,
+        args.max_nodes
     );
+    if args.prove > 0 {
+        println!(
+            "proofs           {} proven lost, {} won, {} undecided (two exhaustive runs of up to {} positions each){}",
+            proofs.lost,
+            proofs.won,
+            proofs.undecided,
+            args.prove,
+            if proofs.failed > 0 { format!("; {} FAILED", proofs.failed) } else { String::new() }
+        );
+    }
     println!("failed to verify {failed}");
     if same.is_empty() {
         println!("distinct games   all {n} deals differ, even with suits and ranks renamed");
@@ -272,7 +395,7 @@ pub fn run(args: &BatchArgs) -> Result<bool, String> {
         );
     }
     println!(
-        "win rate         {:.6}%   95% CI [{:.6}%, {:.6}%] (Wilson; not-won deals counted as losses for the lower bound, wins for the upper)",
+        "win rate         {:.6}%   95% CI [{:.6}%, {:.6}%] (Wilson; undecided deals counted as losses for the lower bound, wins for the upper)",
         100.0 * won as f64 / n as f64,
         100.0 * lo,
         100.0 * hi
@@ -329,7 +452,7 @@ pub fn run(args: &BatchArgs) -> Result<bool, String> {
         n as f64 / elapsed,
         total_nodes as f64 / elapsed / 1e6
     );
-    Ok(failed == 0 && gpu_totals.is_none_or(|t| t.failed == 0))
+    Ok(failed == 0 && proofs.failed == 0 && gpu_totals.is_none_or(|t| t.failed == 0))
 }
 
 /// Keeps the computer from going to sleep while this thread (the run's) lives, as a video player does; the screen

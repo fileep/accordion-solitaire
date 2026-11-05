@@ -755,6 +755,14 @@ A deal that hits its cap is **`unknown`, never `loss`**. Each one gets a dossier
 Wins found at any stage are verified and written back to the dossier, and the deal moves to "solved (hard)" in the index. That keeps the record of
 what made it hard.
 
+**Built so far (after Phase 8):** `acc batch` runs stages 3 and 5 itself on every deal it doesn't win, on a thread of its own while the run goes on
+(`--prove`, 10 billion positions a run by default, up to about half an hour of one core each); `acc prove` does the same for one deal or position.
+- **Stage 3 as built:** a lossless table of whole positions (it starts small and doubles; past its memory cap it forgets the positions with the
+  fewest piles, which only costs time), every dead-end test at every position, sleep sets, the endgame tables, and a canonical (suit/rank
+  pattern) cache for 12–16 piles. Not built: splitting the root across threads, disk backing and checkpoints.
+- **Stage 5 as built:** that run goes first; the plain run (rules only, fixed order, its own table) confirms a loss.
+- `acc selftest --proofs` checks the prover against a plain recursive search, including runs whose memory is far too small.
+
 ---
 
 ## 6. Rules compliance and testing (all phases)

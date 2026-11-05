@@ -2,13 +2,15 @@
 //!
 //! The workload is the brute-force half of the Masten-style attempt: from each of `--deals` seeded deals, play
 //! `k` uniformly random moves (for each `k` in `--depths`), then run the first-win search on what is left.
-//! Every configuration sees exactly the same positions.
+//! Every configuration sees exactly the same positions. With `--prove`, the exhaustive prover's runs are timed on
+//! them instead.
 
 use accordion_core::Deal;
 use accordion_core::fast::Position;
 use accordion_core::rng::Xoshiro256StarStar;
-use accordion_solver::{Gates, Search, SearchResult, Stats};
+use accordion_solver::{Endgame, Gates, Proof, ProveOptions, Search, SearchResult, Stats, prove};
 use clap::Args;
+use std::path::Path;
 use std::time::Instant;
 
 #[derive(Args)]
@@ -28,6 +30,10 @@ pub struct BenchArgs {
     /// Compare dead-end gate settings instead of measuring only the default.
     #[arg(long)]
     sweep: bool,
+    /// Time the exhaustive prover instead (`acc prove`'s runs, with the endgame tables in ./endgame), with --budget
+    /// positions a run; totals are over the positions every run proves lost.
+    #[arg(long)]
+    prove: bool,
 }
 
 fn residuals(deals: u64, k: usize) -> Vec<Position> {
@@ -79,7 +85,61 @@ fn label(g: Gates) -> String {
     }
 }
 
+fn prove_bench(args: &BenchArgs) -> Result<(), String> {
+    let dir = Path::new("endgame");
+    let piles = crate::runner::available_endgame(dir).min(11);
+    let tables = if piles > 0 { Some(Endgame::load(dir, piles)?) } else { None };
+    let independent = ProveOptions::independent(1, args.budget);
+    let configs = [
+        ("independent, by pattern to 16 piles", independent, true),
+        ("independent, by cards only", ProveOptions { pattern_piles: 0, ..independent }, true),
+        ("plain", ProveOptions::plain(args.budget), false),
+    ];
+    println!(
+        "exhaustive prover, up to {} positions a run, endgame tables to {piles} piles, single thread",
+        args.budget
+    );
+    for &k in &args.depths {
+        let work = residuals(args.deals, k);
+        let runs: Vec<Vec<_>> = configs
+            .iter()
+            .map(|(_, opts, use_tables)| {
+                let tables = if *use_tables { tables.as_ref() } else { None };
+                work.iter()
+                    .map(|pos| {
+                        let t = Instant::now();
+                        let r = prove(pos, opts, tables);
+                        (r, t.elapsed().as_secs_f64())
+                    })
+                    .collect()
+            })
+            .collect();
+        let lost: Vec<usize> =
+            (0..work.len()).filter(|&i| runs.iter().all(|r| r[i].0.proof == Proof::Lost)).collect();
+        let won = (0..work.len()).filter(|&i| matches!(runs[0][i].0.proof, Proof::Won(_))).count();
+        println!(
+            "\n{} positions after {k} random moves: {} lost in every run, {won} won",
+            work.len(),
+            lost.len()
+        );
+        println!("{:<38} {:>14} {:>12} {:>9} {:>10}", "run", "positions", "dead", "s", "Mpos/s");
+        for ((name, ..), r) in configs.iter().zip(&runs) {
+            let positions: u64 = lost.iter().map(|&i| r[i].0.positions).sum();
+            let dead: usize = lost.iter().map(|&i| r[i].0.dead).sum();
+            let secs: f64 = lost.iter().map(|&i| r[i].1).sum();
+            println!(
+                "{name:<38} {positions:>14} {dead:>12} {secs:>9.2} {:>10.1}",
+                positions as f64 / secs.max(1e-9) / 1e6
+            );
+        }
+    }
+    Ok(())
+}
+
 pub fn run(args: &BenchArgs) -> Result<(), String> {
+    if args.prove {
+        return prove_bench(args);
+    }
     let configs: Vec<Gates> = if args.sweep {
         let mut c = vec![Gates::OFF, Gates::ALWAYS];
         for connectivity in [52, 22, 19, 16, 13] {

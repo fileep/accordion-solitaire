@@ -158,6 +158,12 @@ impl Position {
         &self.buf[OFF..OFF + self.len as usize]
     }
 
+    /// The whole layout: the top cards at bytes 3.., [`SENTINEL`] in every other byte. Two positions are the same
+    /// exactly when their rows are equal, and a row never starts with a zero byte.
+    pub fn row(&self) -> &[u8; 64] {
+        &self.buf
+    }
+
     pub fn tops(&self) -> Vec<Card> {
         self.codes().iter().map(|&c| Card::from_code(c).expect("only cards between the sentinels")).collect()
     }

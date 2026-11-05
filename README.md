@@ -73,9 +73,14 @@ cargo run --release -p accordion-cli -- batch --from 0 --count 100000 --out resu
 Add `--gallery 20` to keep a run's 20 hardest deals as verified solve files in `hard-deals/gallery/`, listed in
 `hard-deals/INDEX.md` and loadable in the visualizer. Results of the big runs are in [docs/RESULTS.md](docs/RESULTS.md).
 
+A deal `batch` doesn't win is then proved lost if it can be, on a thread of its own while the run goes on, the way
+`prove` does it (below). The run waits for the last proof, which can take an hour; `--prove <positions a run>` sets the
+limit and `--prove 0` turns proofs off. A proven loss gets a `loss` record in `hard-deals/proofs/`.
+
 Prove a deal or position lost by two independent exhaustive searches, each with an exact (lossless) set of dead
-positions. This is for small or nearly stuck positions; a whole random deal is far out of reach. A proven loss is written
-as a `loss` record, and the deal's dossier says `loss (proven)`:
+positions. A typical winnable deal is far out of reach, but lost deals tend to be small: the two found in a billion
+deals took 75 thousand and 19 million positions. A proven loss is written as a `loss` record, and the deal's dossier
+says `loss (proven)`:
 
 ```bash
 cargo run --release -p accordion-cli -- prove --cards "KS 7H 10d ..."

@@ -2,6 +2,7 @@
 //! to reproduce and continue the work, and `<dir>/INDEX.md` lists them all. Running a deal again appends to its
 //! history instead of starting over; a later win marks it solved (hard) and keeps the record of what was tried.
 
+use crate::prove::Finding;
 use accordion_core::fast::Position;
 use accordion_core::notation::CardMove;
 use accordion_core::solve_file::Rules;
@@ -107,19 +108,24 @@ fn save(path: &Path, d: &Value) -> Result<(), String> {
     std::fs::write(path, text).map_err(|e| format!("writing {}: {e}", path.display()))
 }
 
-/// Records an exhaustive proof run (`acc prove`) in the deal's dossier. A proven loss sets the status to
-/// `loss (proven)`; anything else only adds to the history.
+/// Records an exhaustive proof (`acc prove`, or `acc batch` for a deal it didn't win) in the deal's dossier. A proven
+/// loss sets the status to `loss (proven)` and a win to `solved (hard)`; an undecided proof only adds to the history.
 pub fn record_proof(
     dir: &Path,
     deal: &Deal,
     seed: Option<u64>,
-    lost: bool,
+    finding: &Finding,
     best: (usize, &[Move]),
     entry: Value,
 ) -> Result<PathBuf, String> {
     let (path, mut d) = load_or_new(dir, deal, seed)?;
-    if lost {
-        d["status"] = json!("loss (proven)");
+    match finding {
+        Finding::Lost => d["status"] = json!("loss (proven)"),
+        Finding::Won(line) => {
+            d["status"] = json!("solved (hard)");
+            d["solution"] = json!(line_text(deal, line));
+        }
+        Finding::Undecided => {}
     }
     if (best.0 as u64) < d["best"]["piles_left"].as_u64().unwrap_or(52) {
         d["best"] = json!({ "piles_left": best.0, "moves": line_text(deal, best.1) });
@@ -296,7 +302,7 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
         let deal = Deal::from_seed(3);
         let entry = json!({ "plain": { "positions": 10 }, "independent": { "run": { "positions": 5 } } });
-        record_proof(&dir, &deal, Some(3), true, (40, &[]), entry).unwrap();
+        record_proof(&dir, &deal, Some(3), &Finding::Lost, (40, &[]), entry).unwrap();
         let d: Value =
             serde_json::from_str(&std::fs::read_to_string(dir.join("seed-3.json")).unwrap()).unwrap();
         assert_eq!(d["status"], "loss (proven)");

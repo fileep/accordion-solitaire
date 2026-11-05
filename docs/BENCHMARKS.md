@@ -569,3 +569,53 @@ waits on them. Making it pay would need the lookups gathered across a warp's thr
 **CPU and GPU together, before and after this round** (`acc batch`, 1M fresh deals a run, alternated): within the
 laptop's heat drift (36,143–47,948 against 34,313–40,745 deals/s, whichever ran first in a pair winning); the GPU
 went from 268–300M to 295–306M positions/s and verification's share of CPU time halved.
+
+## After Phase 8 — proving losses (`acc prove`, and `acc batch` for the deals it doesn't win)
+
+**The prover's set of dead positions.** It held each dead position as a heap-allocated byte string in a standard hash
+set (SipHash, unbounded). Now it is an open-addressing table of whole positions, one 64-byte slot each (the position's
+row, with its pile count and the engine's incremental hash in the row's spare sentinel bytes), indexed by that hash, so
+nothing is hashed twice or allocated. When a position is pushed, its children's slots are prefetched. The table starts
+at 256 KB and doubles at half full, up to a memory cap (8 GB by default); there it fills to three quarters, and then a
+newcomer replaces the position with the fewest piles near its home, which only costs time (that position may be searched
+again). The independent run also uses the leftmost-card test at every position, and keeps positions of 12–16 piles
+by suit/rank pattern in a second, 8-byte-key set; positions the endgame tables answer aren't stored.
+
+**Seed 112,249,515** (the billion-deal run's 19.4M-position loss, docs/RESULTS.md), one thread, two runs each:
+
+| Run | Before | After | |
+|---|---|---|---|
+| Independent (tests, sleep sets, tables, random order) | 12.15–12.35 s, 31.8M positions | 5.87–5.94 s, 31.7M positions | 2.1× |
+| Plain (rules only, fixed order) | 25.86–26.17 s, 111.0M positions | 9.74–9.94 s, 111.0M positions | 2.65× |
+| Both | 38.3 s | 15.8 s | 2.4× |
+
+The plain run still stores exactly the 19,386,305 positions the Python check counts. Each run's table reached 4 GB
+(67M slots for 19.4M positions). At the new rates, about 5.6M positions/s
+for the independent run and 11M/s for the plain one, the default limit of 10 billion positions a run is up to about
+half an hour of one core each.
+
+**Pattern keys for 12–16 piles** (`acc bench --prove`, 300 deals per depth, lost positions after k random moves, one
+thread; totals over the positions every run proved lost):
+
+| Random moves | Lost | By pattern to 16 piles | By cards only | Plain run |
+|---|---|---|---|---|
+| 22 (30 piles) | 13 | 720,151 positions, 476,185 stored, 0.13 s | 799,273, 545,765, 0.13 s | 8,700,427, 2,956,790, 0.86 s |
+| 26 (26 piles) | 60 | 1,270,747, 818,901, 0.27 s | 1,518,888, 1,021,356, 0.31 s | 14,135,515, 4,891,505, 1.38 s |
+| 30 (22 piles) | 178 | 809,882, 533,031, 0.14 s | 900,349, 603,317, 0.12 s | 13,909,412, 5,107,262, 1.27 s |
+
+Pattern keys search 10–16% fewer positions and store 13–20% fewer, at about the same time (computing a pattern costs
+about what it saves); on seed 112,249,515 they make no difference (0.3% fewer positions). They stay on for the memory.
+After 14 or 18 random moves almost every position is won (299 of 300), and the few lost ones are tiny.
+
+**Checks.** `acc selftest --proofs 10000`: on 10,000 random positions of 14–44 piles, the plain, independent and
+small-memory runs (a 256 KB set, which forgot 1.19 billion positions between them) all agree with a plain recursive
+search: 6,771 won (every line replayed), 3,082 lost with the plain run storing exactly the positions the recursive
+search reached, 147 too large for it (183 s). The default 3,000 take about 40 s. The solver crate's tests check the
+same on 400 positions, and that the set finds everything it holds and forgets only at its cap.
+
+**In `acc batch`.** A deal the solver doesn't win goes to a prover thread while the run goes on: the independent run,
+then, if it found no win, the plain run. A proven loss gets a `loss` record in `hard-deals/proofs/`, a win is verified
+by the reference engine and counted (stage `prove`), and an undecided deal counts both ways in the interval as before.
+Seeds 202,346,000–202,347,999 (2,000 deals): the run finished in 0.1 s and seed 202,346,720 was proven lost 0.05 s
+later. With the solver squeezed to 300 positions a deal (`--gpu off --max-nodes 300`), the prover won all 33 deals the
+solver left (within 3M positions a run); with a 2,000-position proof limit it won 8 and left 25 undecided.

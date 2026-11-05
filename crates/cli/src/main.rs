@@ -32,8 +32,8 @@ enum Command {
         #[arg(long, short)]
         quiet: bool,
     },
-    /// Check the fast engine against the reference engine (lockstep random playouts), dead-end soundness, and that
-    /// sleep sets and endgame tables never change a verdict.
+    /// Check the fast engine against the reference engine (lockstep random playouts), dead-end soundness, that
+    /// sleep sets and endgame tables never change a verdict, and the exhaustive prover against plain search.
     Selftest {
         /// Random games played with both engines in lockstep.
         #[arg(long, default_value_t = 100_000)]
@@ -44,6 +44,9 @@ enum Command {
         /// Random residuals on which sleep sets and endgame tables must agree with plain search.
         #[arg(long, default_value_t = 100_000)]
         residuals: u64,
+        /// Random positions on which the exhaustive prover must agree with a plain recursive search.
+        #[arg(long, default_value_t = 3_000)]
+        proofs: u64,
         /// Endgame tables to check (the largest found here; tables to 8 piles are built if there are none).
         #[arg(long, default_value = "endgame")]
         endgame_dir: PathBuf,
@@ -158,8 +161,8 @@ fn main() -> ExitCode {
     let result = match Cli::parse().command {
         Command::Deal { source, json } => deal_command(source, json).map(|()| true),
         Command::Verify { path, quiet } => verify_command(path, quiet),
-        Command::Selftest { playouts, positions, residuals, endgame_dir } => {
-            selftest::run(playouts, positions, residuals, &endgame_dir)
+        Command::Selftest { playouts, positions, residuals, proofs, endgame_dir } => {
+            selftest::run(playouts, positions, residuals, proofs, &endgame_dir)
         }
         Command::Bench(args) => bench::run(&args).map(|()| true),
         Command::Solve(args) => solve::run(&args),
