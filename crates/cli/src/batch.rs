@@ -5,7 +5,7 @@
 
 use crate::dossier;
 use crate::progress::Meter;
-use crate::runner::{self, Options, percentile, wilson};
+use crate::runner::{self, Options, Seeds, percentile, wilson};
 use accordion_core::Deal;
 use accordion_core::fast::Position;
 use accordion_gpu::Settings;
@@ -104,7 +104,7 @@ pub fn run(args: &BatchArgs) -> Result<bool, String> {
         args.count,
         args.max_nodes
     );
-    let seeds: Vec<u64> = (args.from..args.from + args.count).collect();
+    let seeds = Seeds::Range { from: args.from, count: args.count as usize };
     let about = format!(
         "acc batch: seeds {}..{} ({} deals), {hardware}, commit {}",
         args.from,
@@ -112,26 +112,26 @@ pub fn run(args: &BatchArgs) -> Result<bool, String> {
         args.count,
         crate::experiment::commit()
     );
-    let mut meter = Meter::new(seeds.len(), (!args.no_log).then_some(args.log_dir.as_path()), &about)?;
+    let mut meter = Meter::new(seeds.count(), (!args.no_log).then_some(args.log_dir.as_path()), &about)?;
+    stay_awake();
     let opts = Options { threads: workers, table_log2: args.table, endgame, records: out.is_some(), gpu };
     let start = Instant::now();
     let (mut won, mut exhausted, mut unknown, mut failed) = (0u64, 0u64, 0u64, 0u64);
     let mut stages: HashMap<String, u64> = HashMap::new();
-    let mut nodes = Vec::with_capacity(seeds.len());
-    let mut micros = Vec::with_capacity(seeds.len());
+    // Grown as needed: only the CPU's deals have them (a fifth or so), and a billion deals' worth is 16 GB.
+    let mut nodes = Vec::new();
+    let mut micros = Vec::new();
     let mut total_nodes = 0u64;
-    let mut fingerprints = vec![0u64; seeds.len()];
     // Output in seed order: hold records that finish early until the ones before them are in.
     let mut pending: BTreeMap<usize, Option<String>> = BTreeMap::new();
     let mut written = 0usize;
     let mut any_dossier = false;
     let mut hardest: BinaryHeap<Reverse<(u64, u64)>> = BinaryHeap::new();
     let gpu_totals = runner::run(
-        &seeds,
+        seeds,
         &config,
         &opts,
         |s| {
-            fingerprints[s.index] = s.fingerprint;
             // Per-deal costs are the CPU solver's; the GPU works in batches and counts its own positions.
             if s.report.stage != Stage::Gpu {
                 nodes.push(s.report.nodes);
@@ -183,8 +183,7 @@ pub fn run(args: &BatchArgs) -> Result<bool, String> {
     )?;
     eprintln!();
     let elapsed = start.elapsed().as_secs_f64();
-    let same = runner::same_games(&seeds, &fingerprints);
-    drop(fingerprints);
+    let same = runner::same_games(seeds, |s| runner::fingerprint(&Deal::from_seed(s)));
     if let Some(mut w) = out {
         w.flush().map_err(|e| e.to_string())?;
     }
@@ -332,3 +331,22 @@ pub fn run(args: &BatchArgs) -> Result<bool, String> {
     );
     Ok(failed == 0 && gpu_totals.is_none_or(|t| t.failed == 0))
 }
+
+/// Keeps the computer from going to sleep while this thread (the run's) lives, as a video player does; the screen
+/// may still turn off, and closing the lid still sleeps.
+#[cfg(windows)]
+fn stay_awake() {
+    #[link(name = "kernel32")]
+    unsafe extern "system" {
+        fn SetThreadExecutionState(flags: u32) -> u32;
+    }
+    const ES_CONTINUOUS: u32 = 0x8000_0000;
+    const ES_SYSTEM_REQUIRED: u32 = 0x0000_0001;
+    // SAFETY: takes flags only; the request ends when this thread exits. It returns the previous state, 0 on failure.
+    if unsafe { SetThreadExecutionState(ES_CONTINUOUS | ES_SYSTEM_REQUIRED) } == 0 {
+        eprintln!("note: Windows refused to stay awake for the run; it may go to sleep");
+    }
+}
+
+#[cfg(not(windows))]
+fn stay_awake() {}

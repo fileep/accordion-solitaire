@@ -14,6 +14,7 @@ use accordion_core::verify::verify;
 use accordion_core::{Deal, Game, Move, Outcome, SolveRecord};
 use accordion_gpu::{Gpu, Settings, deal_codes};
 use accordion_solver::{Config, Endgame, Report, Search, Stage, Stats, Verdict, solve};
+use rayon::iter::{IntoParallelIterator, ParallelIterator};
 use rayon::slice::ParallelSliceMut;
 use serde_json::json;
 use std::collections::{HashMap, HashSet, VecDeque};
@@ -22,6 +23,30 @@ use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use std::sync::mpsc::{self, RecvTimeoutError};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
+
+/// The deals of a run, by position: a range of seeds (nothing to hold, for runs of billions) or a list.
+#[derive(Clone, Copy)]
+pub enum Seeds<'a> {
+    Range { from: u64, count: usize },
+    List(&'a [u64]),
+}
+
+impl Seeds<'_> {
+    pub fn count(&self) -> usize {
+        match *self {
+            Seeds::Range { count, .. } => count,
+            Seeds::List(seeds) => seeds.len(),
+        }
+    }
+
+    /// The seed at position `i`.
+    pub fn seed(&self, i: usize) -> u64 {
+        match *self {
+            Seeds::Range { from, .. } => from + i as u64,
+            Seeds::List(seeds) => seeds[i],
+        }
+    }
+}
 
 pub struct Options {
     /// CPU worker threads (a GPU feeder, if any, is one more).
@@ -47,8 +72,6 @@ pub struct Solved {
     pub verified: Result<(), String>,
     /// The solve record as one JSON line, when asked for.
     pub record: Option<String>,
-    /// [`fingerprint`] of the deal.
-    pub fingerprint: u64,
 }
 
 /// What the GPU did in a run.
@@ -191,7 +214,7 @@ pub fn open_gpu(flag: &str, settings: Settings) -> Result<Option<Arc<Gpu>>, Stri
 /// `progress` is called about once a second, results or not, and once at the end. Stops early if `sink` fails.
 /// Returns what the GPU did, if there was one.
 pub fn run(
-    seeds: &[u64],
+    seeds: Seeds,
     config: &Config,
     opts: &Options,
     mut sink: impl FnMut(Solved) -> Result<(), String>,
@@ -229,7 +252,7 @@ pub fn run(
                     let t = Instant::now();
                     let solved = match job {
                         Some(job) => {
-                            let seed = seeds[job.index];
+                            let seed = seeds.seed(job.index);
                             match gpu_win(&job, seed, opts.records) {
                                 Some(Ok(solved)) => {
                                     gpu_won.fetch_add(1, Ordering::Relaxed);
@@ -251,8 +274,8 @@ pub fn run(
                         }
                         None => {
                             let index = next.fetch_add(1, Ordering::Relaxed);
-                            if index < seeds.len() {
-                                let solved = solve_one(index, seeds[index], config, &mut search, opts.records);
+                            if index < seeds.count() {
+                                let solved = solve_one(index, seeds.seed(index), config, &mut search, opts.records);
                                 time.own += us(t);
                                 solved
                             } else if !feeding.load(Ordering::Acquire)
@@ -328,7 +351,7 @@ pub fn run(
 /// into `queue`. If the GPU fails, the deals it had in hand go into the queue as not won.
 fn feed(
     gpu: &Gpu,
-    seeds: &[u64],
+    seeds: Seeds,
     next: &AtomicUsize,
     abort: &AtomicBool,
     queue: &Mutex<VecDeque<FromGpu>>,
@@ -337,13 +360,13 @@ fn feed(
     let mut totals = GpuTotals::default();
     let batch = gpu.settings.batch;
     let result = gpu.feed(
-        |&index: &usize| deal_codes(&Deal::from_seed(seeds[index])),
+        |&index: &usize| deal_codes(&Deal::from_seed(seeds.seed(index))),
         || {
             if abort.load(Ordering::Relaxed) {
                 return None;
             }
             let first = next.fetch_add(batch, Ordering::Relaxed);
-            (first < seeds.len()).then(|| (first..(first + batch).min(seeds.len())).collect())
+            (first < seeds.count()).then(|| (first..(first + batch).min(seeds.count())).collect())
         },
         |indices, result| {
             totals.launches += 1;
@@ -412,7 +435,7 @@ fn finish(index: usize, seed: u64, deal: &Deal, report: Report, us: u64, records
     // Nothing counts as a win until the reference engine has replayed it.
     if !records {
         let verified = replay(deal, line, outcome == Outcome::Win);
-        return Solved { index, seed, report, us, verified, record: None, fingerprint: fingerprint(deal) };
+        return Solved { index, seed, report, us, verified, record: None };
     }
     let (verified, record) = match SolveRecord::new(deal, Some(seed), outcome, line) {
         Err(e) => (Err(e.to_string()), None),
@@ -434,7 +457,7 @@ fn finish(index: usize, seed: u64, deal: &Deal, report: Report, us: u64, records
             (verified, text)
         }
     };
-    Solved { index, seed, report, us, verified, record, fingerprint: fingerprint(deal) }
+    Solved { index, seed, report, us, verified, record }
 }
 
 /// The reference engine's replay of `line` from `deal`: every move legal, and one pile at the end when `won` is
@@ -463,17 +486,28 @@ pub fn fingerprint(deal: &Deal) -> u64 {
     })
 }
 
-/// The pairs of seeds (from `seeds`, with `fingerprints` in the same order) whose deals are the same game, even with
-/// suits and ranks renamed. Deals whose fingerprints agree are compared card by card.
-pub fn same_games(seeds: &[u64], fingerprints: &[u64]) -> Vec<(u64, u64)> {
-    let mut sorted = fingerprints.to_vec();
-    sorted.par_sort_unstable();
-    let repeated: HashSet<u64> = sorted.windows(2).filter(|w| w[0] == w[1]).map(|w| w[0]).collect();
+/// The pairs of seeds whose deals are the same game, even with suits and ranks renamed: deals whose fingerprints
+/// (`print`: [`fingerprint`], but for tests) agree, compared card by card. Holds one fingerprint per deal, sorted in
+/// place (8 GB for a billion deals); the few seeds behind a repeated one are found by fingerprinting again.
+pub fn same_games(seeds: Seeds, print: impl Fn(u64) -> u64 + Sync) -> Vec<(u64, u64)> {
+    let mut prints: Vec<u64> = (0..seeds.count()).into_par_iter().map(|i| print(seeds.seed(i))).collect();
+    prints.par_sort_unstable();
+    let repeated: HashSet<u64> = prints.windows(2).filter(|w| w[0] == w[1]).map(|w| w[0]).collect();
+    drop(prints);
+    if repeated.is_empty() {
+        return Vec::new();
+    }
+    let members: Vec<(u64, u64)> = (0..seeds.count())
+        .into_par_iter()
+        .filter_map(|i| {
+            let seed = seeds.seed(i);
+            let f = print(seed);
+            repeated.contains(&f).then_some((f, seed))
+        })
+        .collect();
     let mut groups: HashMap<u64, Vec<u64>> = HashMap::new();
-    for (&seed, f) in seeds.iter().zip(fingerprints) {
-        if repeated.contains(f) {
-            groups.entry(*f).or_default().push(seed);
-        }
+    for (f, seed) in members {
+        groups.entry(f).or_default().push(seed);
     }
     let mut pairs = Vec::new();
     for group in groups.values() {
@@ -526,7 +560,7 @@ mod tests {
         let mut seen = vec![0u32; seeds.len()];
         let mut stages: HashMap<String, u32> = HashMap::new();
         let totals = run(
-            &seeds,
+            Seeds::List(&seeds),
             &Config::default(),
             &opts,
             |s| {
@@ -534,7 +568,6 @@ mod tests {
                 assert_eq!(s.seed, seeds[s.index]);
                 assert!(s.verified.is_ok() && matches!(s.report.verdict, Verdict::Win(_)));
                 assert!(s.record.is_some());
-                assert_eq!(s.fingerprint, fingerprint(&Deal::from_seed(s.seed)));
                 *stages.entry(s.report.stage.to_string()).or_default() += 1;
                 Ok(())
             },
@@ -567,16 +600,14 @@ mod tests {
 
     #[test]
     fn the_same_game_is_found_under_new_names() {
+        let print = |s: u64| fingerprint(&Deal::from_seed(s));
         let seeds = [1, 2, 3, 4];
-        let mut prints: Vec<u64> = seeds.iter().map(|&s| fingerprint(&Deal::from_seed(s))).collect();
-        assert!(same_games(&seeds, &prints).is_empty());
+        assert!(same_games(Seeds::List(&seeds), print).is_empty());
         // Seed 4 given seed 2's fingerprint: compared card by card, they still differ.
-        prints[3] = prints[1];
-        assert!(same_games(&seeds, &prints).is_empty());
+        assert!(same_games(Seeds::List(&seeds), |s| print(if s == 4 { 2 } else { s })).is_empty());
         // The same seed twice is the same game.
-        let seeds = [1, 2, 1];
-        let prints: Vec<u64> = seeds.iter().map(|&s| fingerprint(&Deal::from_seed(s))).collect();
-        assert_eq!(same_games(&seeds, &prints), vec![(1, 1)]);
+        assert_eq!(same_games(Seeds::List(&[1, 2, 1]), print), vec![(1, 1)]);
+        assert!(same_games(Seeds::Range { from: 0, count: 10_000 }, print).is_empty());
     }
 
     #[test]

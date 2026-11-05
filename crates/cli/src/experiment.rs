@@ -6,7 +6,7 @@
 //! position and time percentiles cover the deals solved on the CPU.
 
 use crate::dossier::now_utc;
-use crate::runner::{self, GpuTotals, Options, percentile};
+use crate::runner::{self, GpuTotals, Options, Seeds, percentile};
 use accordion_gpu::{Gpu, Settings};
 use accordion_solver::{Config, Endgame, Stage, Stats, Verdict};
 use clap::Args;
@@ -188,7 +188,7 @@ pub fn run(args: &ExperimentArgs) -> Result<bool, String> {
         let opts = v.options(args.threads, args.table, &endgame, &gpus[0]);
         let start = Instant::now();
         while start.elapsed().as_secs_f64() < args.warmup {
-            runner::run(&seeds, &v.solver, &opts, |_| Ok(()), |_| {})?;
+            runner::run(Seeds::List(&seeds), &v.solver, &opts, |_| Ok(()), |_| {})?;
         }
         eprintln!("warmed up for {:.0} s", start.elapsed().as_secs_f64());
     }
@@ -223,7 +223,7 @@ pub fn run(args: &ExperimentArgs) -> Result<bool, String> {
             let start = Instant::now();
             let label = format!("{} (run {}/{})", v.name, rep + 1, args.repeat);
             o.gpu = runner::run(
-                &seeds,
+                Seeds::List(&seeds),
                 &v.solver,
                 &opts,
                 |s| {
