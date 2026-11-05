@@ -422,7 +422,7 @@ pub fn prove(root: &Position, opts: &ProveOptions, endgame: Option<&Endgame>) ->
                 let pile = (top.slides | top.leaps).trailing_zeros();
                 (pile, top.slides >> pile & 1 == 0)
             }
-            Some(r) => pick(&top.pos, top.slides, top.leaps, Order::Uniform, r),
+            Some(r) => pick(&top.pos, top.slides, top.leaps, Order::Uniform, 1, r),
         };
         let bit = 1u64 << pile;
         let sleep =

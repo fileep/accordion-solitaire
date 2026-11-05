@@ -897,6 +897,10 @@ Biased orders were tried inside the search and for the prefix. All lost or tied:
 
 Even without the ladder, mobility ordering saved positions (20,814 against 27,170), but each position cost about 2.5× more.
 
+After Phase 8 a soft bias did pay for the prefix: a leap 8 times as likely as a slide took 16% off the CPU's positions a
+deal and made the GPU 1.25× faster. Inside the search it still ties (BENCHMARKS.md, "After Phase 8 — less random
+prefixes").
+
 ### 10.4 Commutation: sleep sets
 
 **The fact.** Two moves commute whenever the left move's pile lies strictly left of the right move's target. Both stay legal,

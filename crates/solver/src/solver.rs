@@ -51,13 +51,28 @@ pub struct Ladder {
     pub growth: u32,
     /// How the prefix moves are chosen.
     pub prefix: Order,
+    /// With the uniform `prefix`, how much likelier a leap is than a slide (1: every legal move alike).
+    pub leap_weight: u32,
+    /// Take back a prefix move that leaves no legal move with more than one pile (it loses), and choose another.
+    pub unstuck: bool,
 }
 
 impl Default for Ladder {
     /// Tuned in PLAN.md Phase 5 (docs/BENCHMARKS.md): many cheap tries at 36 random moves (16 piles left) win
     /// 94% of deals on the first rung; the optimum is flat around 36 moves, 256 tries, a 1,000–4,000 budget.
+    /// Leaps 8 times as likely as slides in the prefix: 16% fewer positions a deal ("less random prefixes").
     fn default() -> Ladder {
-        Ladder { start: 36, end: 24, step: 2, tries: 256, budget: 4_000, growth: 200, prefix: Order::Uniform }
+        Ladder {
+            start: 36,
+            end: 24,
+            step: 2,
+            tries: 256,
+            budget: 4_000,
+            growth: 200,
+            prefix: Order::Uniform,
+            leap_weight: 8,
+            unstuck: false,
+        }
     }
 }
 
@@ -211,16 +226,26 @@ impl Run<'_> {
     }
 }
 
-/// One prefix move by `order` (uniform is the O(1) random move), or `None` when stuck.
-fn prefix_move(pos: &Position, order: Order, rng: &mut Xoshiro256StarStar) -> Option<Move> {
-    if pos.move_count() == 0 {
-        return None;
+/// One prefix move by the ladder's order, played on `pos`, or `None` when there is none. With `unstuck`, a move that
+/// leaves no move with more than one pile is taken back and another chosen, and `None` also means every move did
+/// that (each loses, so `pos` does too). Uniform with a leap weight of 1 draws exactly as `Position::random_move`.
+fn prefix_move(pos: &mut Position, l: &Ladder, rng: &mut Xoshiro256StarStar) -> Option<Move> {
+    let (mut slides, mut leaps) = (pos.slides(), pos.leaps());
+    while slides | leaps != 0 {
+        let (pile, leap) = pick(pos, slides, leaps, l.prefix, l.leap_weight, rng);
+        let before = *pos;
+        pos.apply(pile as usize, leap);
+        if !l.unstuck || pos.move_count() > 0 || pos.len() == 1 {
+            return Some(Move { pile: pile as u8, leap });
+        }
+        *pos = before;
+        if leap {
+            leaps &= !(1u64 << pile);
+        } else {
+            slides &= !(1u64 << pile);
+        }
     }
-    if order == Order::Uniform {
-        return pos.random_move(rng);
-    }
-    let (pile, leap) = pick(pos, pos.slides(), pos.leaps(), order, rng);
-    Some(Move { pile: pile as u8, leap })
+    None
 }
 
 /// Solves `root` with `search` (whose dead-position table is kept and grown). With `shared`, the run stops when
@@ -246,8 +271,7 @@ pub fn solve(root: &Position, cfg: &Config, search: &mut Search, shared: Option<
                     let mut pos = *root;
                     prefix.clear();
                     while prefix.len() < k as usize {
-                        let Some(mv) = prefix_move(&pos, l.prefix, &mut rng) else { break };
-                        pos.apply(mv.pile as usize, mv.leap);
+                        let Some(mv) = prefix_move(&mut pos, &l, &mut rng) else { break };
                         prefix.push(mv);
                     }
                     search.reset_best();
@@ -411,10 +435,46 @@ mod tests {
     }
 
     #[test]
+    fn prefixes_favour_leaps_and_unstuck_ones_stop_only_when_every_move_sticks() {
+        let mut rng = Xoshiro256StarStar::from_seed(3);
+        let mut leap_share = |ladder: Ladder| {
+            let (mut leaps, mut moves) = (0, 0);
+            for seed in 0..200 {
+                let mut pos = Position::from_deal(&Deal::from_seed(seed));
+                let mut before = pos;
+                while let Some(mv) = prefix_move(&mut pos, &ladder, &mut rng) {
+                    assert!(before.legal_moves().contains(&mv), "seed {seed}");
+                    assert_eq!(pos.codes(), before.play(mv).codes(), "seed {seed}");
+                    assert!(!ladder.unstuck || pos.move_count() > 0 || pos.len() == 1, "seed {seed}");
+                    (leaps, moves, before) = (leaps + u32::from(mv.leap), moves + 1, pos);
+                }
+                assert_eq!(pos.codes(), before.codes(), "seed {seed}: a refused move must be taken back");
+                assert_eq!(
+                    (pos.slides(), pos.leaps(), pos.hash()),
+                    (before.slides(), before.leaps(), before.hash())
+                );
+                if ladder.unstuck {
+                    let stuck = |mv: &Move| {
+                        let child = pos.play(*mv);
+                        child.move_count() == 0 && child.len() > 1
+                    };
+                    assert!(pos.legal_moves().iter().all(stuck), "seed {seed}");
+                } else {
+                    assert_eq!(pos.move_count(), 0, "seed {seed}");
+                }
+            }
+            f64::from(leaps) / f64::from(moves)
+        };
+        let uniform = leap_share(Ladder { leap_weight: 1, ..Ladder::default() });
+        let weighted = leap_share(Ladder { unstuck: true, ..Ladder::default() });
+        assert!(weighted > uniform + 0.2, "{uniform} {weighted}");
+    }
+
+    #[test]
     fn configs_read_from_partial_json() {
         let cfg: Config = serde_json::from_str(
-            r#"{"luby_unit": 3000, "search": {"sleep_sets": true}, "ladder": {"start": 34, "prefix": "mobility"},
-                "restarts": {"geometric": {"percent": 150}}}"#,
+            r#"{"luby_unit": 3000, "search": {"sleep_sets": true}, "ladder": {"start": 34, "prefix": "mobility",
+                "unstuck": true}, "restarts": {"geometric": {"percent": 150}}}"#,
         )
         .unwrap();
         assert_eq!(cfg.luby_unit, 3000);
@@ -422,6 +482,8 @@ mod tests {
         assert_eq!(cfg.search.gates, Config::default().search.gates);
         assert_eq!(cfg.ladder.unwrap().start, 34);
         assert_eq!(cfg.ladder.unwrap().prefix, Order::Mobility);
+        assert!(cfg.ladder.unwrap().unstuck);
+        assert_eq!(cfg.ladder.unwrap().leap_weight, 8);
         assert_eq!(cfg.restarts, Restarts::Geometric { percent: 150 });
         assert!(serde_json::from_str::<Config>(r#"{"lubyunit": 1}"#).is_err());
     }

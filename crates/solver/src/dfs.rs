@@ -382,7 +382,9 @@ impl Search {
                     let pile = (top.slides | top.leaps).trailing_zeros();
                     (pile, top.slides >> pile & 1 == 0)
                 }
-                Some(r) => pick(&top.pos, top.slides, top.leaps, opts.order, r),
+                // Every move alike: weighting leaps tied here, though it pays in the ladder's prefix
+                // (docs/BENCHMARKS.md).
+                Some(r) => pick(&top.pos, top.slides, top.leaps, opts.order, 1, r),
             };
             let bit = 1u64 << pile;
             let (sleep_slides, sleep_leaps) = if opts.sleep_sets {
@@ -498,19 +500,22 @@ impl Search {
     }
 }
 
-/// The next move to try at `pos` among the `slides` and `leaps` still untried there (not both empty).
+/// The next move to try at `pos` among the `slides` and `leaps` still untried there (not both empty). Where the
+/// order picks at random among them, a leap is `leap_weight` times as likely as a slide (1: every move alike).
 #[inline]
 pub(crate) fn pick(
     pos: &Position,
     slides: u64,
     leaps: u64,
     order: Order,
+    leap_weight: u32,
     rng: &mut Xoshiro256StarStar,
 ) -> (u32, bool) {
     let (n1, n3) = (slides.count_ones(), leaps.count_ones());
     let uniform = |rng: &mut Xoshiro256StarStar| {
-        let k = rng.below(u64::from(n1 + n3)) as u32;
-        if k < n1 { (select_bit(slides, k), false) } else { (select_bit(leaps, k - n1), true) }
+        let w = leap_weight.max(1);
+        let k = rng.below(u64::from(n1) + u64::from(n3) * u64::from(w)) as u32;
+        if k < n1 { (select_bit(slides, k), false) } else { (select_bit(leaps, (k - n1) / w), true) }
     };
     match order {
         Order::Uniform => uniform(rng),

@@ -188,8 +188,9 @@ undecided deals are only those a proof of 10 billion positions a run can't settl
 
 The defaults since Phase 5 (docs/BENCHMARKS.md has the measurements):
 
-- **Ladder:** up to 256 attempts of 36 uniform random moves, then a first-win depth-first search of the remaining 16 piles
-  with a 4,000-position budget. Then 34 moves and 8,000 positions, and so on down to 24 moves.
+- **Ladder:** up to 256 attempts of 36 random moves, then a first-win depth-first search of the remaining 16 piles
+  with a 4,000-position budget. Then 34 moves and 8,000 positions, and so on down to 24 moves. Since after Phase 8 the
+  random moves favour leaps, 8 to 1 against a slide.
 - **Thorough search** if the ladder fails: randomized first-win DFS from the start with Luby restarts of 1,000 positions.
 - **Throughout:**
   - a dead-position table kept across attempts;
@@ -198,8 +199,8 @@ The defaults since Phase 5 (docs/BENCHMARKS.md has the measurements):
   - sleep sets (commuting moves are tried in one order only);
   - complete endgame tables keyed by suit/rank pattern for ≤11 piles.
 - **GPU**, when there is one (since Phase 8): before any of the above, up to 256 attempts of 38 random moves and then up
-  to 1,024 of 36, each followed by a 2,000-position search. A deal it misses goes to the CPU, which solves it from the
-  start.
+  to 1,024 of 36, each followed by a 2,000-position search. Its random moves also favour leaps 8 to 1, and never
+  play a move that leaves no move. A deal it misses goes to the CPU, which solves it from the start.
 
 ## Reproducing
 

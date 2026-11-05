@@ -810,3 +810,58 @@ return, its replayed prefix included, passes the Rust verifier.
 - **Longer prefixes** (rungs of 40 then 38 moves, not 38 then 36): 69,700.
 - **One rung** of 38 moves for all 1,280 tries: 91,000 deals/s on the GPU alone, but 1,646 deals missed per 100,000
   against 171, each of them left to the much slower CPU.
+
+**Considered, not tried:**
+- **Choosing moves by how many moves they leave** (each legal move weighted by the moves after it, or always the
+  move that leaves the most). The floors found that count by playing each candidate and taking it back, shifting the
+  row both ways. A move changes only the links near the mover's new place and the gap it leaves, so a peek could
+  count them in about 8 match tests a candidate without shifting anything; but at 5–10 candidates for each of 36–38
+  moves, in a prefix already about 30% of the warp's time (profile above), it would have to save many attempts, and
+  at 8:1 there are few left to save: a floor of 2 took the attempts a deal (attempts/s over deals/s) only from 130 to
+  125, where at uniform weights a floor of 4 took them from 169 to 116.
+- **Why leaps help** is a guess, not measured. A slide removes only the covered card, so the others keep their order
+  and one new pair of neighbours forms; a leap carries a card three places left over two cards that stay, and three
+  new pairs form, each a fresh chance of a match. Counting the legal moves left after leaps and after slides, or the
+  stuck and disconnected prefixes at weights 1 and 8, would test it.
+
+### The CPU ladder
+
+The CPU's ladder (36 random moves, then a search of 4,000 positions, 256 tries a rung, rungs down to 24 moves) got the
+same two options: `Ladder::leap_weight` (now 8) and `Ladder::unstuck` (the stuck move taken back; off). A weight of 1
+draws exactly as before: the same positions, deal for deal. `acc experiment`, test set (100,000 deals, seeds
+1,000,000–1,099,999), 16 threads, endgame tables to 11 piles; positions are the same in every run, the rates move
+with the laptop's heat:
+
+| Prefix | Mean positions | p99 positions | Won |
+|---|---|---|---|
+| Uniform (before) | 4,789 | 36,423 | all |
+| Stuck moves taken back | 4,778 | 36,890 | all |
+| Leaps 4:1 | 4,064 | 30,825 | all |
+| **Leaps 8:1** (the default) | **4,034** | **30,379** | all |
+| Leaps 16:1 | 4,115 | 32,334 | all |
+| Leaps 8:1, stuck moves taken back | 4,009 | 30,458 | all |
+
+Timed in five interleaved pairs after a 20-second warm-up, leaps at 8:1 ran 24,241–26,478 deals/s against
+22,818–24,483, faster in every pair (uniform ran first in each, on the cooler laptop): **median 25,852 against 23,296
+(+11%)**, 0.59 against 0.66 ms a deal. The validation set agreed (3,937 against 4,886 positions).
+
+**In `acc batch`** (1M deals, seeds 5,000,000,000–5,000,999,999 every run, the GPU in front; the old prefix by
+`--config '{"ladder": {"leap_weight": 1}}'`, in the order new, old, old, new, new, old): 106,156, 95,653 and 95,811
+deals/s against 104,763, 98,249 and 95,762, so no change that heat doesn't hide. The GPU took 82–93% of the deals.
+The CPU's own deals took 4,340–4,742 positions on average against 5,133–5,493, but a CPU 11% faster on a tenth to a
+fifth of the deals is worth only 1–2% in all. Every deal was won, and no line failed verification.
+
+**Tried, not kept:**
+- **Taking back stuck moves** (`unstuck`): no fewer positions on the CPU (4,778 against 4,789; with leaps at 8:1,
+  4,009 against 4,034, inside the spread of the weights around it), so not worth checking each move. Left as an
+  option, off; on the GPU it paid about 4%.
+- **Leaps weighted in the search's own move order** (weights 2, 4 and 8, with leaps at 8:1 in the prefix): 4,064, 4,043
+  and 4,008 positions against 4,034, a tie, as leaps first was in Phase 5 (Track C). Taken back out; the search
+  passes a weight of 1.
+
+**Considered, not tried:**
+- **Re-tuning the ladder** (start, tries, budget) around the new prefix. Phase 5 found the optimum flat, and with the
+  GPU in front the CPU solves only a tenth to a fifth of the deals, so even a large CPU gain barely moves `acc batch`.
+- **Why taking back stuck moves pays on the GPU but not on the CPU** is not known. Counting the attempts each deal
+  needs with and without it, on both, would show whether it saves attempts on the CPU at all or only time on the GPU.
+
