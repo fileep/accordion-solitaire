@@ -5,12 +5,12 @@ See PLAN.md §5 for the dossier format and the escalation stages. `acc` rewrites
 
 | Deal | Status | Stages run | Best (piles left) | Positions searched | Last attempt |
 |---|---|---|---|---|---|
-
-None yet: every deal attempted so far has been won.
+| [seed-112249515](seed-112249515.json) | loss (proven) | batch, solve, escalate-1, escalate-2, prove | 2 | 19554348964 | 2026-11-05 |
+| [seed-202346720](seed-202346720.json) | loss (proven) | batch, prove | 32 | 612771 | 2026-11-05 |
 
 ## Gallery: the hardest deals won
 
-The deals that took the most positions in `acc batch` over seeds 0–99999999 (100000000 deals, commit af14316+dirty; only the 18176386 solved on the CPU are ranked). Each file is a verified solve file: open it in the visualizer to replay the win.
+The deals that took the most positions in `acc batch` over seeds 0–99999999 (100000000 deals, commit af14316+dirty). Each file is a verified solve file: open it in the visualizer to replay the win.
 
 | Rank | Deal | Positions | Won in stage |
 |---|---|---|---|

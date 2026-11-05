@@ -12,8 +12,8 @@ we know each piece is done.
 across thousands of games in parallel. Targets are 100% of deals on a 1M-deal benchmark, and
 then a 10M+ deal run reported with a Wilson 95% confidence interval.
 
-**Priority: find wins, don't prove losses.** No random deal has ever been shown unwinnable,
-so the solver is tuned for time to first win.
+**Priority: find wins, don't prove losses.** Until this project's billion-deal run (2 proven lost, docs/RESULTS.md) no
+random deal had been shown unwinnable, so the solver is tuned for time to first win.
 
 **Solve any deck a user enters.** A user can type or paste a 52-card order, or build one in the visualizer, and
 the program validates it and tries to solve it with the same solver and schedule used for batch runs. You get the
@@ -643,7 +643,8 @@ Its symmetry work (endgame tables, the symmetry-keyed cache and canonical deal I
   - **No checkpointing:** the 10M run took 11 minutes, so it wasn't needed.
   - **No disk-backed exhaustive search:** proving a whole random deal is out of reach anyway (about 10^17 positions).
   - **Python re-verification:** the plan asked for any proven loss of a random deal to be re-verified in Python. There
-    were none to check.
+    were none to check in Phase 7. The billion-deal run's two were, by an exhaustive Python search of the whole deal
+    (`testdata/tools/check_loss.py`; docs/RESULTS.md).
 
 **Plan:**
 
@@ -747,8 +748,9 @@ A deal that hits its cap is **`unknown`, never `loss`**. Each one gets a dossier
    - checkpointed so it can be paused and resumed.
 4. **Human attempt** in the visualizer, starting from the dossier's best line.
 5. **Loss classification.** Only if stage 3 **completes** with no win, and a **second, independent run** with a different traversal order and fresh TT
-   agrees, is the deal marked `loss`. The proof record stores node counts, configs and commits. No random deal has ever been proven unwinnable, so any loss is
-   treated as a notable result: re-verify it with the Python reference engine on the residual subproblems.
+   agrees, is the deal marked `loss`. The proof record stores node counts, configs and commits. Proven losses of random deals are rare (2 in the first
+   billion), so any loss is treated as a notable result: re-verify it with the Python reference engine
+   (`testdata/tools/check_loss.py`).
 
 Wins found at any stage are verified and written back to the dossier, and the deal moves to "solved (hard)" in the index. That keeps the record of
 what made it hard.
