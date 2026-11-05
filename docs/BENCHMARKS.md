@@ -689,3 +689,50 @@ Both win the same 99,513 deals (99.51%), and no line failed verification.
 The laptop's heat moves these runs a lot (the CPU did 115M positions/s in the first, cool run and 64–76M in the
 others), so pair 2 is the fairer one. No GPU line failed verification. The GPU tests now run every attempt check on
 both kernels, and also check that a deal's tries stop only once it is won.
+
+## After Phase 8 — the GPU's bit operations
+
+**Tools.** `accgpu --ptx <file>` writes the kernels' PTX; `accgpu --kernel <file>` compiles another kernel.cu at run
+time, so a change can be timed without rebuilding (and without a new binary for Windows' Smart App Control to judge).
+The profile now also says how prefixes end: 49.2% are searched, 25.9% get stuck (after 32.7 of their 36–38 moves on
+average) and 24.9% leave a disconnected residual. Counting PTX instructions between markers put the attempt start at
+1,340 instructions (the loader's per-card match test, unrolled 52 times), the prefix branch at 731 and the search
+branch at 862. The attempt start ran on most turns of the loop, since some thread of the warp nearly always starts one.
+
+**Kept** (`accgpu`, 100,000 deals, GPU alone; the laptop's GPU slows by up to 5% as it warms, so changes were timed
+in alternation with the kernel before them):
+
+| Change | Before | After |
+|---|---|---|
+| Move masks four cards at a time, in the loader (from the 13 words it loads, each against itself shifted by one or three cards with `__funnelshift_l`) and in the search (four 32-bit words, not byte tests on two 64-bit halves with a 64-bit multiply). `match4`: per byte, `(d & 0x0F) + 0x7F` and `(d & 0x70) + 0x7F` carry into bit 7 exactly when rank and suit differ; `gather4`: one 32-bit multiply moves the four flags together. A deal's cards-present mask is a constant | 50,100 deals/s | 62,500 (+25%) |
+| The k-th legal move by halving on popcounts, not by clearing the lowest bit k times (a loop that made the warp wait for its largest k), for the prefix's 52-bit and the search's 16-bit masks | 62,000 | 70,000 (+13%) |
+| The current depth's asleep moves in a register; shared memory only holds the depths above (written when the search goes deeper, read when it backs up) | 68,300 | 69,700 (+2%) |
+| The host works out each position's move masks and cards present once (`fast.rs`, the reference for them anyway), and the kernel divides attempt numbers by the deal count with a 64-bit multiply-high by a reciprocal | 96 registers, 10 blocks a multiprocessor | 72 registers, 14 blocks; about +2% |
+| The dead-end test's trigger (`breaks_link`) on all four suits at once in 16-bit lanes: the covered card's suit row copied to every lane with one multiply, "shares a rank" read from bit 15 after adding 0x7FFF | 69,600 | 70,600 (+1.5%) |
+
+All of them give the same wins (99,513 of 100,000) and the same moves for the same random numbers; the GPU tests'
+move-by-move playouts check the loader's masks, the search's masks and the link test against the Rust engines.
+Together: **about 70,200 deals/s and 760M positions/s, against 50,100 and 536M at the step-at-a-time kernel's
+start (1.4×)**. The old one-attempt-per-thread kernel shares the helpers and went from 35,800 to 40,300 deals/s.
+
+**In `acc batch`** (1M fresh deals a run from seed 2,000,000,000, alternated with the previous commit's build): 86,696
+against 62,668 deals/s (+38%), then 74,617 against 55,704 (+34%). The GPU did 700–757M positions/s against
+489–511M and took 81–87% of the deals; no GPU line failed verification.
+
+**Tried, not kept:**
+- **Ending a prefix as soon as the cards disconnect** (exact: a disconnected position can't be won). The test fired on
+  4.8M prefixes, but only 1.4 moves before their end on average, and checking after every move cost more: 43,700
+  against 50,100.
+- **Piles by slot.** Each pile keeps the slot it started in, a 52-bit mask says which slots still hold one, and a move
+  writes the mover over its target and clears its own bit: no shifting, neighbours by one `clz` or `ffs`, and since
+  slot order is pile order, exactly the same moves. But it needs more registers (95) and more arithmetic per move
+  than shifting about 25 bytes: 52,000 against 62,000 at the same occupancy; capped at 80, 72 or 64 registers it
+  spilled (50,500, 47,900, 30,600).
+- **Shifting the prefix's row four bytes a turn** (independent loads): 61,500 against 62,000.
+- **Branch-free card helpers in the search**: 68,300 against 68,100; the compiler already used selects.
+- **Fewer registers for more threads**: capped at 80 or 72 registers the 96-register kernel spilled and lost (57,500,
+  54,200); the 72-register kernel capped at 64 broke even (66,000 against 65,700).
+
+**What is left.** Each turn of the loop still runs the prefix branch and the search branch one after the other, each
+with about half the warp's threads. Splitting them (prefixes in some warps or a kernel of their own, searches of the
+residuals they leave in others) would let each warp run one branch; it is the next large step, and a larger change.

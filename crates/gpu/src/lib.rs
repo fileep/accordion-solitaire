@@ -7,6 +7,7 @@
 //! `acc batch --gpu` runs this next to the CPU solver (crates/cli/src/runner.rs); `accgpu` measures it alone.
 
 use accordion_core::Deal;
+use accordion_core::fast::Position;
 use cudarc::driver::{
     CudaContext, CudaFunction, CudaSlice, CudaStream, DriverError, LaunchConfig, PushKernelArg,
 };
@@ -30,8 +31,10 @@ const MIN_DRIVER: i32 = 12090;
 /// position, playing the prefix, the dead-end gate, searching, writing the result and skipping a won deal's attempt
 /// (summed over threads); steps of the search loop by warps and by threads, and of the prefix loop; attempts taken
 /// and skipped; searches by positions generated (0-15, 16-63, 64-255, 256-1023, 1024 up to the budget, the budget);
-/// thread spans summed (ns); the latest end (ns); and the earliest start, bit-inverted (ns).
-pub const PROFILE_SLOTS: usize = 22;
+/// prefixes that got stuck, left more than [`RESIDUAL`] piles, or left a disconnected residual, and the moves the
+/// stuck ones played (`attempts_stepwise` only); thread spans summed (ns); the latest end (ns); and the earliest
+/// start, bit-inverted (ns).
+pub const PROFILE_SLOTS: usize = 26;
 
 /// How `acc batch` uses the GPU (`--gpu-config`, JSON; fields left out keep these defaults, measured in Phase 5
 /// track F).
@@ -59,7 +62,7 @@ pub struct Settings {
     pub seed: u64,
     /// Compile the kernel with its profile counters ([`BatchResult::profile`]); slower, for measuring only.
     pub profile: bool,
-    /// Run attempts a step at a time (kernel.cu `attempts_stepwise`), so a warp's threads step together: 1.4 times
+    /// Run attempts a step at a time (kernel.cu `attempts_stepwise`), so a warp's threads step together: 1.7 times
     /// as many deals a second on the T550 as `attempts`, where each thread runs its own attempts start to finish.
     pub stepwise: bool,
 }
@@ -159,7 +162,7 @@ pub struct Pending {
     counts: CudaSlice<u64>,
     profile: Option<CudaSlice<u64>>,
     // Kept alive until the kernel is done with them.
-    _inputs: (CudaSlice<u8>, CudaSlice<u32>),
+    _inputs: (CudaSlice<u8>, CudaSlice<u64>, CudaSlice<u32>),
 }
 
 /// What [`Gpu::playouts`] recorded for one playout, step by step (kernel.cu `playouts`).
@@ -204,6 +207,23 @@ pub fn position_codes(codes: &[u8]) -> [u8; 52] {
 
 fn piles(position: &[u8; 52]) -> usize {
     position.iter().position(|&c| c == SENTINEL).unwrap_or(52)
+}
+
+/// Each position's slide and leap masks and cards present, as the kernels take them (worked out once here, where a
+/// deal is tried many times there).
+fn masks(positions: &[[u8; 52]]) -> Vec<u64> {
+    positions
+        .iter()
+        .flat_map(|p| {
+            let pos = Position::from_codes(&p[..piles(p)]);
+            [pos.slides(), pos.leaps(), pos.present()]
+        })
+        .collect()
+}
+
+/// ceil(2^64 / n), for the kernels to divide attempt numbers by n with a multiply (unused for n = 1).
+fn reciprocal(n: usize) -> u64 {
+    if n <= 1 { 0 } else { (u64::MAX / n as u64) + 1 }
 }
 
 /// Finds the NVIDIA driver and NVRTC without letting cudarc panic when one is missing, adding the copy of NVRTC
@@ -265,9 +285,35 @@ fn add_bundled_nvrtc() {
 #[cfg(not(windows))]
 fn add_bundled_nvrtc() {}
 
+/// The kernels (`source`: kernel.cu) compiled to PTX for `ctx`'s device with `settings` (its block size, and
+/// profiling).
+fn compile(ctx: &CudaContext, settings: &Settings, source: &str) -> Result<cudarc::nvrtc::Ptx, String> {
+    use cudarc::driver::sys::CUdevice_attribute as A;
+    let major = ctx.attribute(A::CU_DEVICE_ATTRIBUTE_COMPUTE_CAPABILITY_MAJOR).map_err(err)?;
+    let minor = ctx.attribute(A::CU_DEVICE_ATTRIBUTE_COMPUTE_CAPABILITY_MINOR).map_err(err)?;
+    let arch: &'static str = Box::leak(format!("compute_{major}{minor}").into_boxed_str());
+    compile_ptx_with_opts(
+        source,
+        CompileOptions {
+            arch: Some(arch),
+            options: [format!("-DBLOCK={}", settings.block)]
+                .into_iter()
+                .chain(settings.profile.then(|| "-DPROFILE".to_string()))
+                .collect(),
+            ..Default::default()
+        },
+    )
+    .map_err(|e| format!("compiling the kernel: {e:?}"))
+}
+
 impl Gpu {
     /// Compiles the kernels for device 0 with `settings` (its block size), or says why there is no usable GPU.
     pub fn new(settings: Settings) -> Result<Gpu, String> {
+        Gpu::with_source(settings, SOURCE)
+    }
+
+    /// [`Gpu::new`] with another version of kernel.cu (`accgpu --kernel`, for trying changes without a rebuild).
+    pub fn with_source(settings: Settings, source: &str) -> Result<Gpu, String> {
         use cudarc::driver::sys::CUdevice_attribute as A;
         settings.check()?;
         find_libraries()?;
@@ -276,21 +322,7 @@ impl Gpu {
         ctx.set_blocking_synchronize().map_err(err)?;
         let name = ctx.name().unwrap_or_default();
         let sms = ctx.attribute(A::CU_DEVICE_ATTRIBUTE_MULTIPROCESSOR_COUNT).map_err(err)? as u32;
-        let major = ctx.attribute(A::CU_DEVICE_ATTRIBUTE_COMPUTE_CAPABILITY_MAJOR).map_err(err)?;
-        let minor = ctx.attribute(A::CU_DEVICE_ATTRIBUTE_COMPUTE_CAPABILITY_MINOR).map_err(err)?;
-        let arch: &'static str = Box::leak(format!("compute_{major}{minor}").into_boxed_str());
-        let ptx = compile_ptx_with_opts(
-            SOURCE,
-            CompileOptions {
-                arch: Some(arch),
-                options: [format!("-DBLOCK={}", settings.block)]
-                    .into_iter()
-                    .chain(settings.profile.then(|| "-DPROFILE".to_string()))
-                    .collect(),
-                ..Default::default()
-            },
-        )
-        .map_err(|e| format!("compiling the kernel: {e:?}"))?;
+        let ptx = compile(&ctx, &settings, source)?;
         let module = ctx.load_module(ptx).map_err(|e| format!("loading the kernel: {e:?}"))?;
         let attempts = module
             .load_function(if settings.stepwise { "attempts_stepwise" } else { "attempts" })
@@ -302,6 +334,13 @@ impl Gpu {
     /// Thread blocks per launch.
     pub fn blocks(&self) -> u32 {
         self.sms * self.settings.blocks_per_sm
+    }
+
+    /// The kernels' PTX for these settings, as NVRTC writes it (to read what the code compiles to).
+    pub fn ptx(settings: &Settings, source: Option<&str>) -> Result<String, String> {
+        find_libraries()?;
+        let ctx = CudaContext::new(0).map_err(|e| format!("no CUDA device: {e:?}"))?;
+        Ok(compile(&ctx, settings, source.unwrap_or(SOURCE))?.to_src())
     }
 
     /// The attempt kernel's registers and local memory per thread, and how many of its blocks a multiprocessor holds.
@@ -339,6 +378,8 @@ impl Gpu {
         let flat: Vec<u8> = positions.iter().flatten().copied().collect();
         let s = stream;
         let d_positions = s.clone_htod(&flat).map_err(err)?;
+        let d_masks = s.clone_htod(&masks(positions)).map_err(err)?;
+        let inv = reciprocal(positions.len());
         let mut next = s.alloc_zeros::<u32>(1).map_err(err)?;
         let mut won = s.alloc_zeros::<u32>(positions.len()).map_err(err)?;
         let mut lines = s.alloc_zeros::<u8>(positions.len() * 51).map_err(err)?;
@@ -348,7 +389,9 @@ impl Gpu {
         let mut launch = s.launch_builder(&self.attempts);
         launch
             .arg(&d_positions)
+            .arg(&d_masks)
             .arg(&n)
+            .arg(&inv)
             .arg(&a.tries)
             .arg(&a.prefix)
             .arg(&a.tries2)
@@ -377,7 +420,7 @@ impl Gpu {
             lines,
             counts,
             profile: self.settings.profile.then_some(profile),
-            _inputs: (d_positions, next),
+            _inputs: (d_positions, d_masks, next),
         })
     }
 
@@ -432,12 +475,20 @@ impl Gpu {
         let s = self.ctx.default_stream();
         let flat: Vec<u8> = positions.iter().flatten().copied().collect();
         let d_positions = s.clone_htod(&flat).map_err(err)?;
+        let d_masks = s.clone_htod(&masks(positions)).map_err(err)?;
         let mut masks = s.alloc_zeros::<u64>(n * 52 * 2).map_err(err)?;
         let mut moves = s.alloc_zeros::<u8>(n * 52).map_err(err)?;
         let mut flags = s.alloc_zeros::<u8>(n * 52).map_err(err)?;
         let count = n as u32;
         let mut launch = s.launch_builder(&self.playouts);
-        launch.arg(&d_positions).arg(&count).arg(&seed).arg(&mut masks).arg(&mut moves).arg(&mut flags);
+        launch
+            .arg(&d_positions)
+            .arg(&d_masks)
+            .arg(&count)
+            .arg(&seed)
+            .arg(&mut masks)
+            .arg(&mut moves)
+            .arg(&mut flags);
         let block = self.settings.block;
         let cfg = LaunchConfig {
             grid_dim: (count.div_ceil(block), 1, 1),

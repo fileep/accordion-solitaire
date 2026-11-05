@@ -5,9 +5,12 @@
 // `playouts` kernel at the end lets the tests (crates/gpu/tests) check this rules code against the Rust engines.
 //
 // Everything stays on chip. The prefix plays on a 64-byte row in shared memory (stored byte-major, so a warp's 32
-// threads touch 32 different banks). The search keeps its at most 16 cards in two 64-bit registers, recomputes the
-// legal-move masks with byte-parallel bit tricks, and undoes moves instead of copying positions. Its moves and
-// covered cards are byte stacks in registers; the only per-depth state in shared memory is the asleep moves.
+// threads touch 32 different banks), starting from legal-move masks the host works out once per position. The
+// search keeps its at most 16 cards in two 64-bit registers, recomputes the legal-move masks four cards at a time in
+// 32-bit words (match4), and undoes moves instead of copying positions. Its moves and covered cards are byte stacks in
+// registers, and so are the current depth's asleep moves; shared memory holds only the asleep moves of the depths
+// above it. Choosing the k-th legal move halves the mask by popcount (no loop that runs k times), and the dead-end
+// test's trigger looks at all four suits at once in 16-bit lanes.
 //
 // Shared memory per thread decides how many attempts a multiprocessor holds at once, so the kernel keeps only 64 bytes
 // there, enough for 1,024 attempts per multiprocessor on the T550 (its maximum). The untried moves at a depth are
@@ -24,8 +27,8 @@
 // There are two attempt kernels with the same arguments and results. `attempts` runs each thread's attempts start to
 // finish; its threads soon drift apart, and a warp then runs them nearly one at a time. `attempts_stepwise`, the
 // default, moves every thread one step (a prefix move or a search position) each turn of its loop, so the threads
-// doing the same thing step together: 1.4 times the deals per second (docs/BENCHMARKS.md, "After Phase 8 — where
-// the GPU's time goes").
+// doing the same thing step together: 1.7 times the deals per second (docs/BENCHMARKS.md, "After Phase 8 — where
+// the GPU's time goes" and "the GPU's bit operations").
 //
 // A position is 52 bytes of engine codes (suit << 4 | rank), SENTINEL after its last pile; a deal fills all 52.
 
@@ -43,8 +46,22 @@ typedef unsigned long long u64;
 #define RES 16            // residual piles a search can hold (two 64-bit registers)
 #define MAX_PREFIX 48
 
-#define ONES 0x0101010101010101ull
-#define HIGHS 0x8080808080808080ull
+// Four cards at once (bytes of a word, each a card code or SENTINEL, all below 0x80): 0x80 in each byte where a and b
+// share a suit or a rank. A byte of (d & 0x0F) + 0x7F has its top bit set when the ranks differ, and of
+// (d & 0x70) + 0x7F when the suits differ; neither sum carries into the next byte. Two sentinels match.
+__device__ __forceinline__ u32 match4(u32 a, u32 b) {
+    u32 d = a ^ b;
+    return ~(((d & 0x0F0F0F0Fu) + 0x7F7F7F7Fu) & ((d & 0x70707070u) + 0x7F7F7F7Fu)) & 0x80808080u;
+}
+// The top bits of m's four bytes (each 0x80 or 0) as four bits, byte 0 lowest: one multiply puts bits 7, 15, 23
+// and 31 at bits 28 to 31, with nothing else landing there.
+__device__ __forceinline__ u32 gather4(u32 m) { return (m * 0x00204081u) >> 28; }
+// Bit i: card i of the words (w0 lowest) matches card i - 1 (d = 8) or card i - 3 (d = 24), with `before` the word
+// before w0. 16 cards.
+__device__ __forceinline__ u32 match16(u32 before, u32 w0, u32 w1, u32 w2, u32 w3, int d) {
+    return gather4(match4(w0, __funnelshift_l(before, w0, d))) | gather4(match4(w1, __funnelshift_l(w0, w1, d))) << 4
+           | gather4(match4(w2, __funnelshift_l(w1, w2, d))) << 8 | gather4(match4(w3, __funnelshift_l(w2, w3, d))) << 12;
+}
 
 __device__ __forceinline__ bool codes_match(u32 a, u32 b) {
     u32 x = a ^ b;
@@ -77,27 +94,39 @@ __device__ __forceinline__ u32 seed_u32(u64 z) {
     z = (z ^ (z >> 27)) * 0x94D049BB133111EBull;
     return (u32)(z ^ (z >> 31)) | 1u;
 }
-// The position of the k-th set bit of m (k from 0), by the hardware's find-n-th-set instruction.
+// The position of the k-th set bit of m (k from 0; m has more than k), by halving: if the low half of the bits
+// still to search holds no more than k set bits, skip it. Every thread takes the same few steps, where clearing the
+// lowest bit k times made a warp wait for its largest k (branch-free, the kernel ran 13% faster).
+// `w` is the width searched: 16 for the search's masks (at most RES piles), 32 for a word.
+template <int W>
+__device__ __forceinline__ int select_bits(u32 m, u32 k) {
+    int pos = 0;
+    #pragma unroll
+    for (int w = W / 2; w >= 1; w >>= 1) {
+        u32 c = __popc(m & ((1u << w) - 1));
+        bool up = k >= c;
+        k -= up ? c : 0;
+        m = up ? m >> w : m;
+        pos += up ? w : 0;
+    }
+    return pos;
+}
 __device__ __forceinline__ int select_bit64(u64 m, u32 k) {
-    for (u32 i = 0; i < k; i++) m &= m - 1;
-    return __ffsll((long long)m) - 1;
+    u32 lo = (u32)m, c = __popc(lo);
+    return k < c ? select_bits<32>(lo, k) : 32 + select_bits<32>((u32)(m >> 32), k - c);
 }
-__device__ __forceinline__ int select_bit32(u32 m, u32 k) {
-    for (u32 i = 0; i < k; i++) m &= m - 1;
-    return __ffs((int)m) - 1;
-}
+__device__ __forceinline__ int select_bit16(u32 m, u32 k) { return select_bits<16>(m, k); }
 
-// Covering `covered` broke the last rank its suit shared with another suit (fast.rs breaks_link).
+// Covering `covered` broke the last rank its suit shared with another suit (fast.rs breaks_link): some other suit
+// has the covered card's rank and now shares no rank with the covered card's suit. All four suits at once, one per
+// 16-bit lane of `present`: the suit's row copied into every lane by one multiply, and "shares a rank" read from bit
+// 15 of each lane after adding 0x7FFF (a 13-bit lane can't carry into the next).
 __device__ __forceinline__ bool breaks_link(u64 present, u32 covered) {
     u32 s = covered >> 4, r = covered & 0x0F;
     u64 row = (present >> (16 * s)) & ROW;
-    bool broken = false;
-    #pragma unroll
-    for (u32 s2 = 0; s2 < 4; s2++) {
-        u64 other = (present >> (16 * s2)) & ROW;
-        broken |= (s2 != s) & (((other >> r) & 1) == 1) & ((other & row) == 0);
-    }
-    return broken & (row != 0);
+    u64 shares = ((present & (row * 0x0001000100010001ull)) + 0x7FFF7FFF7FFF7FFFull) & 0x8000800080008000ull;
+    u64 has_rank = ((present >> r) & 0x0001000100010001ull) << 15;
+    return (has_rank & ~shares & ~(0x8000ull << (16 * s))) != 0 && row != 0;
 }
 
 __device__ bool connected(u64 present) {
@@ -130,29 +159,28 @@ __device__ bool connected_without_leftmost(u64 present, u32 left, int len) {
 
 // ---- The row: piles 0.. at row[OFF..], SENTINEL around them, and the legal-move masks l1 (slides) and l3 (leaps).
 
-// Loads a position onto the row; returns its pile count and sets `present` and the masks. The 52 bytes come in as
-// 13 words loaded at once (a byte-at-a-time loop that stops at the first sentinel waits on each load in turn, and
-// took a fifth of the warps' time in `attempts_stepwise`); a sentinel matches no card, so the masks need no length.
-__device__ __forceinline__ int row_load(u8 (*row)[BLOCK], int t, const u8* cards, u64& present, u64& l1, u64& l3) {
+// Loads a position onto the row; returns its pile count and sets `present` and the masks, which the host worked
+// out once per position (`m`: slides, leaps, cards present; a deal is tried many times). The 52 bytes come in as 13
+// words loaded at once.
+__device__ __forceinline__ int row_load(u8 (*row)[BLOCK], int t, const u8* cards, const u64* m, u64& present, u64& l1,
+                                        u64& l3) {
     u32 w[13];
     #pragma unroll
     for (int j = 0; j < 13; j++) w[j] = __ldg((const u32*)cards + j);
+    l1 = __ldg(m); l3 = __ldg(m + 1); present = __ldg(m + 2);
     #pragma unroll
     for (int i = 0; i < OFF; i++) row[i][t] = SENTINEL;
     #pragma unroll
-    for (int i = OFF + 52; i < 64; i++) row[i][t] = SENTINEL;
-    present = 0; l1 = 0; l3 = 0;
-    u32 b1 = SENTINEL, b2 = SENTINEL, b3 = SENTINEL;   // the cards 1, 2 and 3 places to the left
+    for (int i = 0; i < 52; i++) row[OFF + i][t] = (u8)(w[i >> 2] >> (8 * (i & 3)));
     #pragma unroll
-    for (int i = 0; i < 52; i++) {
-        u32 c = (w[i >> 2] >> (8 * (i & 3))) & 0xFF;
-        row[OFF + i][t] = (u8)c;
-        if (c != SENTINEL) present |= 1ull << c;
-        l1 |= (u64)codes_match(c, b1) << i;
-        l3 |= (u64)codes_match(c, b3) << i;
-        b3 = b2; b2 = b1; b1 = c;
-    }
+    for (int i = OFF + 52; i < 64; i++) row[i][t] = SENTINEL;
     return __popcll(present);
+}
+
+// Attempt a's deal and try: a / n by multiplying by inv = ceil(2^64 / n) (exact for a below 2^32), not dividing.
+__device__ __forceinline__ void deal_and_try(u32 a, u32 n, u64 inv, u32& deal, u32& attempt_try) {
+    attempt_try = n == 1 ? a : (u32)__umul64hi(a, inv);
+    deal = a - attempt_try * n;
 }
 
 // Plays a legal move on the row and updates the masks incrementally (fast.rs apply); returns the covered card.
@@ -216,23 +244,13 @@ __device__ __forceinline__ void insert_card(u64& lo, u64& hi, int i, u32 c) {
         hi = (hi & keep) | ((hi << 8) & ~keep & ~(0xFFull << (8 * j))) | ((u64)c << (8 * j));
     }
 }
-// 0x80 in every byte of t (bytes <= 0x7F) that is zero.
-__device__ __forceinline__ u64 zero_bytes(u64 t) { return ~((t + 0x7F7F7F7F7F7F7F7Full) | t) & HIGHS; }
-// Bit j set for every byte j of m that has 0x80 set.
-__device__ __forceinline__ u32 gather(u64 m) { return (u32)((((m >> 7) & ONES) * 0x0102040810204080ull) >> 56); }
-__device__ __forceinline__ u32 match_mask(u64 a_lo, u64 a_hi, u64 b_lo, u64 b_hi) {
-    u64 d_lo = a_lo ^ b_lo, d_hi = a_hi ^ b_hi;
-    u64 m_lo = zero_bytes(d_lo & 0x0F0F0F0F0F0F0F0Full) | zero_bytes(d_lo & 0x7070707070707070ull);
-    u64 m_hi = zero_bytes(d_hi & 0x0F0F0F0F0F0F0F0Full) | zero_bytes(d_hi & 0x7070707070707070ull);
-    return gather(m_lo) | (gather(m_hi) << 8);
-}
-// Legal-move masks of the residual: bit i of s, pile i may slide; of l, leap.
+// Legal-move masks of the residual: bit i of s, pile i may slide; of l, leap. Four piles at a time in 32-bit words
+// (match16); pile 0 can't slide and piles 0 to 2 can't leap, since sentinels lie before them.
 __device__ __forceinline__ void masks(u64 lo, u64 hi, int len, u32& s, u32& l) {
-    u64 p1_lo = (lo << 8) | 0x7Full, p1_hi = (hi << 8) | (lo >> 56);
-    u64 p3_lo = (lo << 24) | 0x7F7F7Full, p3_hi = (hi << 24) | (lo >> 40);
+    u32 w0 = (u32)lo, w1 = (u32)(lo >> 32), w2 = (u32)hi, w3 = (u32)(hi >> 32);
     u32 valid = (1u << len) - 1;
-    s = match_mask(lo, hi, p1_lo, p1_hi) & valid & ~1u;
-    l = match_mask(lo, hi, p3_lo, p3_hi) & valid & ~7u;
+    s = match16(0x7F7F7F7Fu, w0, w1, w2, w3, 8) & valid;
+    l = match16(0x7F7F7F7Fu, w0, w1, w2, w3, 24) & valid;
 }
 // The row's piles (at most RES of them) into registers.
 __device__ __forceinline__ void load_residual(u8 (*row)[BLOCK], int t, int len, u64& lo, u64& hi) {
@@ -261,6 +279,9 @@ enum {
     P_FETCHES, P_SKIPS,                                      // attempts taken, and skipped
     P_H0, P_H16, P_H64, P_H256, P_H1024, P_HMAX,             // searches by positions: 0-15, 16-63, 64-255, 256-1023,
                                                              // 1024 up to the budget, the budget
+    P_STUCK, P_LARGE, P_CUT,                                 // prefixes ending with no move left, with more than
+                                                             // RES piles, or with the residual disconnected
+    P_STUCK_MOVES,                                           // prefix moves played by the attempts that got stuck
     P_BUSY_NS, P_END_NS, P_START_NS_INV,                     // thread spans summed; latest end; ~earliest start
     P_SLOTS
 };
@@ -283,7 +304,9 @@ __device__ __forceinline__ u64 now_ns() { u64 t; asm volatile("mov.u64 %0, %%glo
 // attempts run.
 extern "C" __global__ void __launch_bounds__(BLOCK) attempts(
     const u8* __restrict__ deals,      // 52 bytes per position
-    u32 n_deals, u32 tries, u32 prefix, u32 tries2, u32 prefix2, u32 budget, u32 conn_gate,
+    const u64* __restrict__ deal_masks, // 3 per position: slides, leaps, cards present
+    u32 n_deals, u64 inv_deals,        // positions, and ceil(2^64 / n_deals)
+    u32 tries, u32 prefix, u32 tries2, u32 prefix2, u32 budget, u32 conn_gate,
     u32 leftmost,                      // 1: the connectivity test leaves pile 0's card out (stronger)
     u64 seed,
     u32* next_attempt,                 // global work counter, starts at 0
@@ -307,8 +330,9 @@ extern "C" __global__ void __launch_bounds__(BLOCK) attempts(
     for (;;) {
         u32 a = atomicAdd(next_attempt, 1u);
         if (a >= total) break;
-        u32 deal = a % n_deals;
-        const u32 k_moves = (a / n_deals < tries) ? prefix : prefix2;
+        u32 deal, attempt_try;
+        deal_and_try(a, n_deals, inv_deals, deal, attempt_try);
+        const u32 k_moves = attempt_try < tries ? prefix : prefix2;
         PROF(pf[P_FETCHES]++;)
         if (*((volatile u32*)&won[deal])) { PROF(pf[P_SKIPS]++;) LAP(P_SKIP); continue; }
         u32 rng = seed_u32(seed ^ (0x9E3779B97F4A7C15ull * (a + 1)));
@@ -317,7 +341,7 @@ extern "C" __global__ void __launch_bounds__(BLOCK) attempts(
 
         // The position and its random prefix.
         u64 present, l1, l3;
-        int len = row_load(s_row, t, deals + (u64)deal * 52, present, l1, l3);
+        int len = row_load(s_row, t, deals + (u64)deal * 52, deal_masks + 3 * (u64)deal, present, l1, l3);
         LAP(P_LOAD);
         int moves = 0;
         while (moves < (int)k_moves) {
@@ -370,7 +394,7 @@ extern "C" __global__ void __launch_bounds__(BLOCK) attempts(
                 u32 n1 = __popc(us), n3 = __popc(ul);
                 u32 k = below(rng, n1 + n3);
                 bool leap = k >= n1;
-                int pile = leap ? select_bit32(ul, k - n1) : select_bit32(us, k);
+                int pile = leap ? select_bit16(ul, k - n1) : select_bit16(us, k);
                 u32 ds = SH16(DS + 2 * depth), dl = SH16(DL + 2 * depth);
                 u32 sleep_s, sleep_l;
                 asleep_after(ds, dl, pile, leap, sleep_s, sleep_l);
@@ -429,7 +453,7 @@ extern "C" __global__ void __launch_bounds__(BLOCK) attempts(
             for (int d = 0; d < depth; d++) out[moves + d] = (u8)card_at(via_lo, via_hi, depth - 1 - d);
             // Replay the prefix: the same random numbers on the same position choose the same moves.
             u32 r = prefix_rng;
-            int n = row_load(s_row, t, deals + (u64)deal * 52, present, l1, l3);
+            int n = row_load(s_row, t, deals + (u64)deal * 52, deal_masks + 3 * (u64)deal, present, l1, l3);
             for (int i = 0; i < moves; i++) {
                 u32 n1 = __popcll(l1), n3 = __popcll(l3);
                 u32 k = below(r, n1 + n3);
@@ -459,7 +483,8 @@ extern "C" __global__ void __launch_bounds__(BLOCK) attempts(
 // one atomic and one load of their deals' won flags; attempts it can't use yet wait, one per thread, for the next
 // threads that need one.
 extern "C" __global__ void __launch_bounds__(BLOCK) attempts_stepwise(
-    const u8* __restrict__ deals, u32 n_deals, u32 tries, u32 prefix, u32 tries2, u32 prefix2, u32 budget,
+    const u8* __restrict__ deals, const u64* __restrict__ deal_masks, u32 n_deals, u64 inv_deals, u32 tries,
+    u32 prefix, u32 tries2, u32 prefix2, u32 budget,
     u32 conn_gate, u32 leftmost, u64 seed, u32* next_attempt, u32* won, u8* lines, u64* deal_counts, u64* profile)
 {
     enum { DS = 0, DL = 2 * RES, BYTES = 4 * RES };
@@ -482,7 +507,7 @@ extern "C" __global__ void __launch_bounds__(BLOCK) attempts_stepwise(
     u32 a = 0, deal = 0, k_moves = 0, rng = 1, prefix_rng = 1;
     int moves = 0, len = 0, depth = 0;
     u64 present = 0, l1 = 0, l3 = 0, lo = 0, hi = 0, via_lo = 0, via_hi = 0, cov_lo = 0, cov_hi = 0;
-    u32 us = 0, ul = 0, used = 0;
+    u32 us = 0, ul = 0, used = 0, z = 0;   // z: the current depth's asleep moves (slides | leaps << 16)
     bool win = false;
 
     for (;;) {
@@ -495,7 +520,9 @@ extern "C" __global__ void __launch_bounds__(BLOCK) attempts_stepwise(
                 if (lane == 0) base = atomicAdd(next_attempt, 32u);
                 base = __shfl_sync(FULL, base, 0);
                 u64 s = (u64)base + lane;
-                bool ok = s < total && !*((volatile u32*)&won[(u32)(s % n_deals)]);
+                u32 d, unused;
+                deal_and_try((u32)s, n_deals, inv_deals, d, unused);
+                bool ok = s < total && !*((volatile u32*)&won[d]);
                 PROF(if (s < total) { pf[P_FETCHES]++; if (!ok) pf[P_SKIPS]++; })
                 pend = __ballot_sync(FULL, ok);
                 held = (u32)s;
@@ -512,14 +539,15 @@ extern "C" __global__ void __launch_bounds__(BLOCK) attempts_stepwise(
         if ((need >> lane) & 1) phase = DONE;
         WLAP(P_FETCH);
         if ((got >> lane) & 1) {
-            deal = a % n_deals;
+            u32 attempt_try;
+            deal_and_try(a, n_deals, inv_deals, deal, attempt_try);
             if (*((volatile u32*)&won[deal])) {
                 PROF(pf[P_SKIPS]++;)                  // won since the warp took it
             } else {
-                k_moves = (a / n_deals < tries) ? prefix : prefix2;
+                k_moves = attempt_try < tries ? prefix : prefix2;
                 rng = seed_u32(seed ^ (0x9E3779B97F4A7C15ull * (a + 1)));
                 prefix_rng = rng;
-                len = row_load(s_row, t, deals + (u64)deal * 52, present, l1, l3);
+                len = row_load(s_row, t, deals + (u64)deal * 52, deal_masks + 3 * (u64)deal, present, l1, l3);
                 moves = 0;
                 phase = PREFIX;
             }
@@ -540,6 +568,9 @@ extern "C" __global__ void __launch_bounds__(BLOCK) attempts_stepwise(
                 // Stuck before the residual got small, or already disconnected: lost anyway.
                 bool linked = leftmost ? connected_without_leftmost(present, s_row[OFF][t], len) : connected(present);
                 bool search = len <= RES && !(len > 1 && len <= (int)conn_gate && !linked);
+                PROF(if (moves < (int)k_moves && len > 1) { pf[P_STUCK]++; pf[P_STUCK_MOVES] += moves; }
+                     else if (len > RES) pf[P_LARGE]++;
+                     else if (!search) pf[P_CUT]++;)
                 win = search && len == 1;
                 depth = 0;
                 used = 0;
@@ -550,7 +581,7 @@ extern "C" __global__ void __launch_bounds__(BLOCK) attempts_stepwise(
                     u32 ms, ml;
                     masks(lo, hi, len, ms, ml);
                     us = ms; ul = ml;
-                    SET16(DS, 0); SET16(DL, 0);
+                    z = 0;
                     PROF(searched = true;)
                     phase = SEARCH;
                 }
@@ -573,8 +604,9 @@ extern "C" __global__ void __launch_bounds__(BLOCK) attempts_stepwise(
                     len++;
                     u32 ms, ml;
                     masks(lo, hi, len, ms, ml);
-                    us = ms & ~SH16(DS + 2 * depth);
-                    ul = ml & ~SH16(DL + 2 * depth);
+                    z = SH16(DS + 2 * depth) | SH16(DL + 2 * depth) << 16;
+                    us = ms & ~(z & 0xFFFF);
+                    ul = ml & ~(z >> 16);
                 }
             } else if (used >= budget) {
                 phase = FINISH;
@@ -582,13 +614,12 @@ extern "C" __global__ void __launch_bounds__(BLOCK) attempts_stepwise(
                 u32 n1 = __popc(us), n3 = __popc(ul);
                 u32 k = below(rng, n1 + n3);
                 bool leap = k >= n1;
-                int pile = leap ? select_bit32(ul, k - n1) : select_bit32(us, k);
-                u32 ds = SH16(DS + 2 * depth), dl = SH16(DL + 2 * depth);
+                int pile = leap ? select_bit16(ul, k - n1) : select_bit16(us, k);
                 u32 sleep_s, sleep_l;
-                asleep_after(ds, dl, pile, leap, sleep_s, sleep_l);
+                asleep_after(z & 0xFFFF, z >> 16, pile, leap, sleep_s, sleep_l);
                 u32 bit = 1u << pile;
-                if (leap) { ul &= ~bit; dl |= bit; } else { us &= ~bit; ds |= bit; }
-                SET16(DS + 2 * depth, ds); SET16(DL + 2 * depth, dl);
+                if (leap) ul &= ~bit; else us &= ~bit;
+                z |= leap ? bit << 16 : bit;
                 int dd = leap ? 3 : 1;
                 u32 mover = card_at(lo, hi, pile), cov = card_at(lo, hi, pile - dd);
                 set_card(lo, hi, pile - dd, mover);
@@ -623,11 +654,12 @@ extern "C" __global__ void __launch_bounds__(BLOCK) attempts_stepwise(
                     } else {
                         push_byte(via_lo, via_hi, pile << 1 | (leap ? 1 : 0));
                         push_byte(cov_lo, cov_hi, cov);
+                        SET16(DS + 2 * depth, z & 0xFFFF); SET16(DL + 2 * depth, z >> 16);
                         depth++;
+                        z = sleep_s | sleep_l << 16;
                         u32 ms, ml;
                         masks(lo, hi, len, ms, ml);
                         us = ms & ~sleep_s; ul = ml & ~sleep_l;
-                        SET16(DS + 2 * depth, sleep_s); SET16(DL + 2 * depth, sleep_l);
                     }
                 }
             }
@@ -643,7 +675,7 @@ extern "C" __global__ void __launch_bounds__(BLOCK) attempts_stepwise(
                 u8* out = lines + (u64)deal * 51;
                 for (int d = 0; d < depth; d++) out[moves + d] = (u8)card_at(via_lo, via_hi, depth - 1 - d);
                 u32 r = prefix_rng;
-                int n = row_load(s_row, t, deals + (u64)deal * 52, present, l1, l3);
+                int n = row_load(s_row, t, deals + (u64)deal * 52, deal_masks + 3 * (u64)deal, present, l1, l3);
                 for (int i = 0; i < moves; i++) {
                     u32 n1 = __popcll(l1), n3 = __popcll(l3);
                     u32 k = below(r, n1 + n3);
@@ -676,7 +708,7 @@ extern "C" __global__ void __launch_bounds__(BLOCK) attempts_stepwise(
 // there is none, which ends the playout), and flags: bit 0 connected(present), bit 1 the last move broke a link
 // (breaks_link), bit 2 undoing the move did not restore the position, bit 3 connected_without_leftmost.
 extern "C" __global__ void __launch_bounds__(BLOCK) playouts(
-    const u8* __restrict__ positions, u32 n, u64 seed,
+    const u8* __restrict__ positions, const u64* __restrict__ position_masks, u32 n, u64 seed,
     u64* masks_out,                    // 52 steps × 2 per playout
     u8* moves_out, u8* flags_out)      // 52 steps per playout
 {
@@ -686,7 +718,7 @@ extern "C" __global__ void __launch_bounds__(BLOCK) playouts(
     if (p >= n) return;
     u32 rng = seed_u32(seed ^ (0x9E3779B97F4A7C15ull * (p + 1)));
     u64 present, l1, l3, lo = 0, hi = 0;
-    int len = row_load(s_row, t, positions + (u64)p * 52, present, l1, l3);
+    int len = row_load(s_row, t, positions + (u64)p * 52, position_masks + 3 * (u64)p, present, l1, l3);
     bool regs = false, link = false;
     for (int step = 0; step < 52; step++) {
         const u64 at = (u64)p * 52 + step;

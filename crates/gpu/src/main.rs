@@ -43,6 +43,12 @@ struct Args {
     /// Compile the kernel with its profile counters and report where its time goes (slower; for measuring).
     #[arg(long)]
     profile: bool,
+    /// Write the kernels' PTX here and stop (to read what the code compiles to).
+    #[arg(long)]
+    ptx: Option<PathBuf>,
+    /// Compile this kernel source instead of the built-in kernel.cu (to try a change without rebuilding).
+    #[arg(long)]
+    kernel: Option<PathBuf>,
 }
 
 fn main() -> ExitCode {
@@ -62,8 +68,20 @@ fn run(args: &Args) -> Result<bool, String> {
         None => Settings::default(),
     };
     settings.profile |= args.profile;
+    let source = match &args.kernel {
+        Some(path) => Some(std::fs::read_to_string(path).map_err(|e| format!("{}: {e}", path.display()))?),
+        None => None,
+    };
+    if let Some(path) = &args.ptx {
+        let ptx = Gpu::ptx(&settings, source.as_deref())?;
+        std::fs::write(path, ptx).map_err(|e| format!("{}: {e}", path.display()))?;
+        return Ok(true);
+    }
     let t = Instant::now();
-    let gpu = Gpu::new(settings)?;
+    let gpu = match &source {
+        Some(text) => Gpu::with_source(settings, text)?,
+        None => Gpu::new(settings)?,
+    };
     eprintln!(
         "{} ({} multiprocessors); kernel compiled in {:.2} s",
         gpu.name,
@@ -237,6 +255,17 @@ fn print_profile(p: &[u64; PROFILE_SLOTS], gpu_time: f64, threads: u64, attempts
         p[12],
         100.0 * p[12] as f64 / p[11].max(1) as f64
     );
+    let ended = p[13..19].iter().sum::<u64>() + p[19] + p[20] + p[21];
+    if p[19] + p[20] + p[21] > 0 {
+        println!(
+            "                   prefixes: {:.1}% stuck (after {:.1} moves on average), {:.1}% left more than 16 piles, {:.1}% left a disconnected residual, {:.1}% searched",
+            100.0 * p[19] as f64 / ended.max(1) as f64,
+            p[22] as f64 / p[19].max(1) as f64,
+            100.0 * p[20] as f64 / ended.max(1) as f64,
+            100.0 * p[21] as f64 / ended.max(1) as f64,
+            100.0 * p[13..19].iter().sum::<u64>() as f64 / ended.max(1) as f64
+        );
+    }
     let searches: u64 = p[13..19].iter().sum();
     let share = |i: usize| 100.0 * p[i] as f64 / searches.max(1) as f64;
     println!(
@@ -254,6 +283,6 @@ fn print_profile(p: &[u64; PROFILE_SLOTS], gpu_time: f64, threads: u64, attempts
     );
     println!(
         "                   threads busy {:.1}% of the GPU time ({threads} threads resident, {gpu_time:.2} s)",
-        100.0 * p[19] as f64 / 1e9 / (threads as f64 * gpu_time)
+        100.0 * p[23] as f64 / 1e9 / (threads as f64 * gpu_time)
     );
 }
