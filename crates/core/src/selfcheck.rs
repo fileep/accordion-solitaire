@@ -135,7 +135,7 @@ pub fn soundness_sample(seed: u64, budget: usize) -> Result<Soundness, String> {
         game.apply(mv).map_err(|e| format!("seed {seed}: {e}"))?;
         pos.apply(mv.pile as usize, mv.leap);
     }
-    if connected(pos.present()) && !pos.left_leaf_pair() {
+    if connected(pos.present()) && !pos.left_leaf_pair() && pos.connected_without_leftmost() {
         return Ok(Soundness::NotFired);
     }
     match reference_winnable(&game, budget) {

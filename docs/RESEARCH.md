@@ -388,8 +388,15 @@ dead positions, but it must never flag a winnable one, or the solver would throw
 - A corollary: *x* covering *y* leaves *x* orphaned, so that must be the game's very last move.
 
 Each of these tests is a special case of the rule that a card must eventually be covered by a match approaching from its right.
-A related fact, not yet used as a test: **the leftmost card can never be the final card**, because the final card made the last move
-and the leftmost card can never move.
+A related fact: **the leftmost card can never be the final card**, because the final card made the last move and the leftmost
+card can never move.
+
+**Connected without the leftmost card** (added after Phase 8, now on by default). Pile 0's top card never moves, so it never
+covers anything, and every other top card can only be covered by a matching card that moves. So the other top cards must
+be connected among themselves, and pile 0's card must match one of them; plain connectivity lets pile 0's card link groups
+that can never meet (`AH 2H AS`: 2H can only slide onto AH, stranding AS). At the root of a 16-pile ladder residual it cuts
+another 6.9% of residuals (plain connectivity cuts 7.6%), and inside the searches it removes 17% of positions; the solver
+is about 30% faster on the CPU and 50% on the GPU (docs/BENCHMARKS.md, after Phase 8).
 
 **Soundness check.** 628 residual positions were labelled by DFS with no pruning, at random-prefix depths *k* = 26, 30, 34.
 

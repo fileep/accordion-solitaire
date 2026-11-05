@@ -17,7 +17,7 @@
 use crate::endgame::{Endgame, RANK_PILES, pattern_key};
 use crate::table::DeadTable;
 use accordion_core::Move;
-use accordion_core::fast::{Position, connected, select_bit};
+use accordion_core::fast::{Position, breaks_link, connected, select_bit};
 use accordion_core::rng::Xoshiro256StarStar;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
@@ -34,20 +34,25 @@ pub struct Gates {
     /// Run the connectivity closure at every gated position instead of only on trigger events
     /// (for measuring what the triggers save; the answers are the same).
     pub every_node: bool,
+    /// Within the connectivity gate, use the stronger test that leaves out pile 0's card
+    /// ([`Position::connected_without_leftmost`]); it also runs when a pile moves onto pile 0, or a move breaks a link
+    /// among the other cards.
+    pub leftmost: bool,
 }
 
 impl Gates {
-    pub const OFF: Gates = Gates { connectivity: 0, left_leaf: 0, every_node: false };
+    pub const OFF: Gates = Gates { connectivity: 0, left_leaf: 0, every_node: false, leftmost: false };
     /// Every test at every position: the "check continuously" baseline.
-    pub const ALWAYS: Gates = Gates { connectivity: 52, left_leaf: 52, every_node: true };
+    pub const ALWAYS: Gates = Gates { connectivity: 52, left_leaf: 52, every_node: true, leftmost: true };
 }
 
 impl Default for Gates {
     /// Tuned with `acc bench --sweep` (docs/BENCHMARKS.md): connectivity on trigger at <= 19 piles was fastest or
     /// within noise of it at every depth. The left-leaf test cuts 5–9% of nodes but costs more time than it saves,
-    /// so it is off by default.
+    /// so it is off by default. Leaving pile 0's card out of the connectivity test cuts 17% of positions and is
+    /// about 30% faster (docs/BENCHMARKS.md, after Phase 8).
     fn default() -> Gates {
-        Gates { connectivity: 19, left_leaf: 0, every_node: false }
+        Gates { connectivity: 19, left_leaf: 0, every_node: false, leftmost: true }
     }
 }
 
@@ -271,15 +276,30 @@ impl Search {
 
     /// Dead-end tests for a new position, gated by its pile count. `parent_len` tells whether the position just
     /// entered the connectivity zone: connected positions only become disconnected on a link-broken move, so
-    /// inside the zone the full check runs only on entry and on those moves.
+    /// inside the zone the full check runs only on entry and on those moves. With `gates.leftmost`, the move into
+    /// `pos` covered `covered`, and `onto_leftmost` says whether it landed on pile 0: the stronger test leaves pile
+    /// 0's card out, so it also runs when that card changes or a move breaks a link among the others.
     #[inline]
-    fn dead_end(&mut self, pos: &Position, parent_len: usize) -> bool {
+    fn dead_end(&mut self, pos: &Position, parent_len: usize, onto_leftmost: bool, covered: u8) -> bool {
         let n = pos.len();
         let g = self.opts.gates;
-        if n <= g.connectivity && (g.every_node || pos.link_broken() || parent_len > g.connectivity) {
-            self.stats.tests_run += 1;
-            if !connected(pos.present()) {
-                return true;
+        let triggered = g.every_node || pos.link_broken() || parent_len > g.connectivity;
+        if n <= g.connectivity {
+            if g.leftmost {
+                if triggered
+                    || onto_leftmost
+                    || breaks_link(pos.present() & !(1u64 << pos.leftmost()), covered)
+                {
+                    self.stats.tests_run += 1;
+                    if !pos.connected_without_leftmost() {
+                        return true;
+                    }
+                }
+            } else if triggered {
+                self.stats.tests_run += 1;
+                if !connected(pos.present()) {
+                    return true;
+                }
             }
         }
         if n <= g.left_leaf {
@@ -330,7 +350,7 @@ impl Search {
         let root_key = if in_patterns(root.len()) { pattern_key(root.codes()) } else { 0 };
         if (root.len() > table_min && self.table.contains(root.hash()))
             || (in_patterns(root.len()) && self.patterns.as_ref().is_some_and(|t| t.contains(root_key)))
-            || self.dead_end(root, usize::MAX)
+            || self.dead_end(root, usize::MAX, true, 0)
         {
             return SearchResult::Dead;
         }
@@ -411,6 +431,8 @@ impl Search {
                 }
             }
             let top = self.stack.last().expect("non-empty");
+            let target = pile as usize - if leap { 3 } else { 1 };
+            let covered = top.pos.codes()[target];
             let mut child = top.pos;
             child.apply_with_hash(pile as usize, leap, hash);
 
@@ -439,7 +461,7 @@ impl Search {
             } else {
                 0
             };
-            if self.dead_end(&child, parent_len) {
+            if self.dead_end(&child, parent_len, target == 0, covered) {
                 self.stats.dead_end_cuts += 1;
                 if probe {
                     self.table.insert(hash);

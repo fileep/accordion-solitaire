@@ -37,12 +37,16 @@ pub struct Settings {
     pub budget: u32,
     /// Deals per launch: keep launches well under Windows' 2 s GPU watchdog.
     pub batch: usize,
-    /// Threads per block (the kernel's shared memory is sized for it: 272 bytes per thread).
+    /// Threads per block (the kernel's shared memory is sized for it: 96 bytes per thread). Shared memory sets how
+    /// many attempts a multiprocessor holds; on the T550, 64 fits 640 (32 fits 512, the most blocks it takes).
     pub block: u32,
     /// Thread blocks per multiprocessor.
     pub blocks_per_sm: u32,
     /// Connectivity test at positions with at most this many piles.
     pub conn_gate: u32,
+    /// The stronger connectivity test that leaves pile 0's card out (accordion_core::fast's
+    /// `connected_without_leftmost`): about 50% faster on the T550.
+    pub leftmost: bool,
     pub seed: u64,
 }
 
@@ -52,9 +56,10 @@ impl Default for Settings {
             rungs: vec![[38, 256], [36, 1024]],
             budget: 2000,
             batch: 4096,
-            block: 32,
+            block: 64,
             blocks_per_sm: 16,
             conn_gate: 19,
+            leftmost: true,
             seed: 0x5EED,
         }
     }
@@ -87,6 +92,7 @@ impl Settings {
             prefix2,
             budget: self.budget,
             conn_gate: self.conn_gate,
+            leftmost: self.leftmost,
             seed: self.seed.wrapping_add(launch),
         }
     }
@@ -105,6 +111,8 @@ pub struct Attempts {
     pub budget: u32,
     /// Connectivity test at positions with at most this many piles.
     pub conn_gate: u32,
+    /// The stronger test without pile 0's card.
+    pub leftmost: bool,
     pub seed: u64,
 }
 
@@ -289,6 +297,7 @@ impl Gpu {
         let mut lines = s.alloc_zeros::<u8>(positions.len() * 51).map_err(err)?;
         let mut nodes = s.alloc_zeros::<u64>(positions.len()).map_err(err)?;
         let mut tries = s.alloc_zeros::<u32>(positions.len()).map_err(err)?;
+        let leftmost = u32::from(a.leftmost);
         let mut launch = s.launch_builder(&self.attempts);
         launch
             .arg(&d_positions)
@@ -299,6 +308,7 @@ impl Gpu {
             .arg(&a.prefix2)
             .arg(&a.budget)
             .arg(&a.conn_gate)
+            .arg(&leftmost)
             .arg(&a.seed)
             .arg(&mut next)
             .arg(&mut won)

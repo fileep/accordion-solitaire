@@ -84,10 +84,10 @@ pub fn run(args: &BenchArgs) -> Result<(), String> {
         let mut c = vec![Gates::OFF, Gates::ALWAYS];
         for connectivity in [52, 22, 19, 16, 13] {
             for left_leaf in [0, 19, 16, 13] {
-                c.push(Gates { connectivity, left_leaf, every_node: false });
+                c.push(Gates { connectivity, left_leaf, every_node: false, leftmost: false });
             }
         }
-        c.push(Gates { connectivity: 19, left_leaf: 16, every_node: true });
+        c.push(Gates { connectivity: 19, left_leaf: 16, every_node: true, leftmost: false });
         c
     } else {
         vec![Gates::default()]

@@ -94,6 +94,11 @@ fn check_playout(name: &str, tops: &[Card], p: &accordion_gpu::Playout) {
             "{name}, step {k}: connectivity test differs"
         );
         assert_eq!(p.flags[k] & 2 != 0, pos.link_broken(), "{name}, step {k}: link-broken trigger differs");
+        assert_eq!(
+            p.flags[k] & 8 != 0,
+            pos.connected_without_leftmost(),
+            "{name}, step {k}: connectivity without the leftmost card differs"
+        );
         assert_eq!(p.flags[k] & 4, 0, "{name}, step {k}: undo did not restore the position");
         if p.moves[k] == 0xFF {
             assert_eq!(k, steps - 1);
@@ -138,11 +143,27 @@ fn playouts_match_the_rust_engines() {
 #[test]
 fn golden_positions_get_the_right_verdict() {
     let Some(gpu) = gpu() else { return };
-    for (name, tops, winnable) in golden_positions() {
+    for (name, tops, winnable) in golden_positions()
+        .into_iter()
+        .flat_map(|g| [(g.clone(), false), (g, true)])
+        .map(|((name, tops, winnable), leftmost)| {
+            (format!("{name} (leftmost test {leftmost})"), tops, (winnable, leftmost))
+        })
+    {
+        let (winnable, leftmost) = winnable;
         // Small positions: no prefix and no budget, so every try is a complete search. Large ones: long random
         // prefixes, which never find a win on an unwinnable position.
         let a = if tops.len() <= accordion_gpu::RESIDUAL {
-            Attempts { tries: 8, prefix: 0, tries2: 0, prefix2: 0, budget: u32::MAX, conn_gate: 19, seed: 1 }
+            Attempts {
+                tries: 8,
+                prefix: 0,
+                tries2: 0,
+                prefix2: 0,
+                budget: u32::MAX,
+                conn_gate: 19,
+                leftmost,
+                seed: 1,
+            }
         } else {
             assert!(!winnable, "{name}: no large winnable golden position to test");
             Attempts {
@@ -152,6 +173,7 @@ fn golden_positions_get_the_right_verdict() {
                 prefix2: 40,
                 budget: 100_000,
                 conn_gate: 19,
+                leftmost,
                 seed: 1,
             }
         };
@@ -177,9 +199,21 @@ fn golden_and_random_deals_are_won_with_lines_that_verify() {
     let mut deals: Vec<(String, Deal, Option<Outcome>)> = golden_deals();
     deals.extend((0..4096u64).map(|s| (format!("seed {s}"), Deal::from_seed(s), None)));
     let positions: Vec<[u8; 52]> = deals.iter().map(|(_, deal, _)| deal_codes(deal)).collect();
-    let result = gpu.run(&positions, &gpu.settings.attempts(0)).unwrap();
+    for leftmost in [false, true] {
+        let result = gpu.run(&positions, &Attempts { leftmost, ..gpu.settings.attempts(0) }).unwrap();
+        let won = check_deals(&deals, &result.lines);
+        assert!(
+            won as f64 > 0.98 * deals.len() as f64,
+            "leftmost test {leftmost}: won {won} of {}",
+            deals.len()
+        );
+    }
+}
+
+/// Every recorded win is won, no recorded loss is, and every line verifies; returns the wins.
+fn check_deals(deals: &[(String, Deal, Option<Outcome>)], lines: &[Option<Vec<u8>>]) -> usize {
     let mut won = 0;
-    for ((name, deal, recorded), line) in deals.iter().zip(&result.lines) {
+    for ((name, deal, recorded), line) in deals.iter().zip(lines) {
         match line {
             Some(line) => {
                 assert_ne!(*recorded, Some(Outcome::Loss), "{name}: the GPU won an unwinnable deal");
@@ -192,5 +226,5 @@ fn golden_and_random_deals_are_won_with_lines_that_verify() {
             None => assert_ne!(*recorded, Some(Outcome::Win), "{name}: a winnable golden deal was not won"),
         }
     }
-    assert!(won as f64 > 0.98 * deals.len() as f64, "won {won} of {}", deals.len());
+    won
 }

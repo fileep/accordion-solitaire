@@ -7,7 +7,14 @@
 // Everything stays on chip. The prefix plays on a 64-byte row in shared memory (stored byte-major, so a warp's 32
 // threads touch 32 different banks). The search keeps its at most 16 cards in two 64-bit registers, recomputes the
 // legal-move masks with byte-parallel bit tricks, and undoes moves instead of copying positions; the only per-depth
-// state (untried and asleep moves, the move, the covered card) lives in shared memory.
+// state (asleep moves, the move, the covered card) lives in shared memory.
+//
+// Shared memory per thread decides how many attempts a multiprocessor holds at once, and the kernel is faster the
+// more it holds, so it keeps only what it can't recompute. The untried moves at a depth are always its legal moves
+// minus its asleep ones (a move tried there joins the asleep set), so they live in registers for the current depth
+// and are recomputed when the search backs up. The row and the search's state share the same bytes (the row is done
+// with once the residual is in registers), and the prefix's moves are not kept: a winning attempt replays its prefix
+// from the same random numbers to write its line.
 //
 // Threads are persistent: each keeps taking the next attempt from a global counter. Attempt i is try i / deals of
 // deal i % deals, so a deal's tries are spread over the run; once some thread has won a deal, its later tries are
@@ -85,6 +92,15 @@ __device__ bool connected(u64 present) {
         if (next == reached) return reached == nonempty;
         reached = next;
     }
+}
+
+// fast.rs connected_without_leftmost: pile 0 never moves, so the other top cards must be connected among themselves
+// and pile 0's card `left` must match one of them.
+__device__ bool connected_without_leftmost(u64 present, u32 left, int len) {
+    if (len < 2) return true;
+    u64 rest = present & ~(1ull << left);
+    bool matched = (((rest >> (16 * (left >> 4))) & ROW) | ((rest >> (left & 0x0F)) & 0x0001000100010001ull)) != 0;
+    return matched && connected(rest);
 }
 
 // ---- The row: piles 0.. at row[OFF..], SENTINEL around them, and the legal-move masks l1 (slides) and l3 (leaps).
@@ -202,20 +218,32 @@ __device__ __forceinline__ void asleep_after(u32 ds, u32 dl, int pile, bool leap
     l = (dl & left) | ((dl >> 1) & ~((1u << (pile + 3)) - 1));
 }
 
+// Shared memory in `attempts` is byte-major: byte i of thread t is s_mem[i * BLOCK + t], whatever it holds, so a
+// thread's row and its search state, which overlay each other, never touch another thread's bytes (threads in a block
+// are in different phases at any moment, the prefix or the search). A warp's 32 threads reading byte i read 32
+// consecutive bytes, so no bank conflicts.
+#define SH(i) s_mem[(i) * BLOCK + t]
+#define SH16(i) ((u32)SH(i) | (u32)SH((i) + 1) << 8)
+#define SET16(i, v) do { u32 v_ = (v); SH(i) = (u8)v_; SH((i) + 1) = (u8)(v_ >> 8); } while (0)
+
 // Results per position: won flag (0/1), the winning line (51 bytes: pile << 1 | leap), positions generated and
 // attempts run.
 extern "C" __global__ void __launch_bounds__(BLOCK) attempts(
     const u8* __restrict__ deals,      // 52 bytes per position
-    u32 n_deals, u32 tries, u32 prefix, u32 tries2, u32 prefix2, u32 budget, u32 conn_gate, u64 seed,
+    u32 n_deals, u32 tries, u32 prefix, u32 tries2, u32 prefix2, u32 budget, u32 conn_gate,
+    u32 leftmost,                      // 1: the connectivity test leaves pile 0's card out (stronger)
+    u64 seed,
     u32* next_attempt,                 // global work counter, starts at 0
     u32* won,                          // per position: 0, or 1 once some attempt has won it
     u8* lines,                         // 51 bytes per position
     u64* deal_nodes, u32* deal_tries)  // per position
 {
-    __shared__ u8 s_row[64][BLOCK];        // the prefix's row, byte-major
-    __shared__ u8 s_line[MAX_PREFIX][BLOCK];
-    __shared__ u16 s_us[RES][BLOCK], s_ul[RES][BLOCK], s_ds[RES][BLOCK], s_dl[RES][BLOCK];
-    __shared__ u8 s_via[RES][BLOCK], s_cov[RES][BLOCK];
+    // Per depth d, at these byte offsets: asleep slides (DS + 2d, u16), asleep leaps (DL + 2d, u16), the move (VIA + d)
+    // and the covered card (COV + d). The prefix's 64-byte row overlays the asleep moves.
+    enum { DS = 0, DL = 2 * RES, VIA = 4 * RES, COV = 5 * RES, BYTES = 6 * RES };
+    __shared__ u8 s_mem[BYTES * BLOCK];
+    u8 (*s_row)[BLOCK] = (u8 (*)[BLOCK])s_mem;
+    static_assert(64 <= VIA, "the row fits over the asleep moves");
     const int t = threadIdx.x;
     const u64 total = n_deals * (u64)(tries + tries2);
     if (prefix > MAX_PREFIX) prefix = MAX_PREFIX;
@@ -228,6 +256,7 @@ extern "C" __global__ void __launch_bounds__(BLOCK) attempts(
         if (*((volatile u32*)&won[deal])) continue;
         u64 rng = seed ^ (0x9E3779B97F4A7C15ull * (a + 1));
         for (int i = 0; i < 3; i++) next_u64(rng);
+        const u64 prefix_rng = rng;
 
         // The position and its random prefix.
         u64 present, l1, l3;
@@ -241,11 +270,11 @@ extern "C" __global__ void __launch_bounds__(BLOCK) attempts(
             int pile = leap ? select_bit64(l3, k - n1) : select_bit64(l1, k);
             u32 covered = row_move(s_row, t, len, l1, l3, pile, leap);
             present &= ~(1ull << covered);
-            s_line[moves][t] = (u8)(pile << 1 | (leap ? 1 : 0));
             moves++;
         }
         // Stuck before the residual got small, or already disconnected: lost anyway.
-        bool search = len <= RES && !(len > 1 && len <= (int)conn_gate && !connected(present));
+        bool linked = leftmost ? connected_without_leftmost(present, s_row[OFF][t], len) : connected(present);
+        bool search = len <= RES && !(len > 1 && len <= (int)conn_gate && !linked);
 
         bool win = search && len == 1;
         int depth = 0;
@@ -255,20 +284,23 @@ extern "C" __global__ void __launch_bounds__(BLOCK) attempts(
             load_residual(s_row, t, len, lo, hi);
             u32 ms, ml;
             masks(lo, hi, len, ms, ml);
-            s_us[0][t] = (u16)ms; s_ul[0][t] = (u16)ml; s_ds[0][t] = 0; s_dl[0][t] = 0;
+            u32 us = ms, ul = ml;                 // untried slides and leaps at the current depth
+            SET16(DS, 0); SET16(DL, 0);
             // Depth-first search with undo: level d is the position after d search moves.
             while (!win) {
-                u32 us = s_us[depth][t], ul = s_ul[depth][t];
                 if ((us | ul) == 0) {
                     if (depth == 0) break;        // the residual is lost
                     depth--;
-                    u32 via = s_via[depth][t], cov = s_cov[depth][t];
+                    u32 via = SH(VIA + depth), cov = SH(COV + depth);
                     int pile = via >> 1, dd = (via & 1) ? 3 : 1;
                     u32 mover = card_at(lo, hi, pile - dd);
                     insert_card(lo, hi, pile, mover);
                     set_card(lo, hi, pile - dd, cov);
                     present |= 1ull << cov;
                     len++;
+                    masks(lo, hi, len, ms, ml);
+                    us = ms & ~SH16(DS + 2 * depth);
+                    ul = ml & ~SH16(DL + 2 * depth);
                     continue;
                 }
                 if (used >= budget) break;
@@ -276,12 +308,12 @@ extern "C" __global__ void __launch_bounds__(BLOCK) attempts(
                 u32 k = below(rng, n1 + n3);
                 bool leap = k >= n1;
                 int pile = leap ? select_bit32(ul, k - n1) : select_bit32(us, k);
-                u32 ds = s_ds[depth][t], dl = s_dl[depth][t];
+                u32 ds = SH16(DS + 2 * depth), dl = SH16(DL + 2 * depth);
                 u32 sleep_s, sleep_l;
                 asleep_after(ds, dl, pile, leap, sleep_s, sleep_l);
                 u32 bit = 1u << pile;
                 if (leap) { ul &= ~bit; dl |= bit; } else { us &= ~bit; ds |= bit; }
-                s_us[depth][t] = (u16)us; s_ul[depth][t] = (u16)ul; s_ds[depth][t] = (u16)ds; s_dl[depth][t] = (u16)dl;
+                SET16(DS + 2 * depth, ds); SET16(DL + 2 * depth, dl);
                 // Make the move.
                 int dd = leap ? 3 : 1;
                 u32 mover = card_at(lo, hi, pile), cov = card_at(lo, hi, pile - dd);
@@ -290,12 +322,22 @@ extern "C" __global__ void __launch_bounds__(BLOCK) attempts(
                 int parent_len = len;
                 len--;
                 present &= ~(1ull << cov);
-                s_via[depth][t] = (u8)(pile << 1 | (leap ? 1 : 0));
-                s_cov[depth][t] = (u8)cov;
+                SH(VIA + depth) = (u8)(pile << 1 | (leap ? 1 : 0));
+                SH(COV + depth) = (u8)cov;
                 used++;
                 if (len == 1) { win = true; depth++; break; }
-                bool dead = len <= (int)conn_gate && (breaks_link(present, cov) || parent_len > (int)conn_gate)
-                            && !connected(present);
+                bool dead;
+                if (leftmost) {
+                    // Also when pile 0's card changed, or the move broke a link among the other cards.
+                    u32 left = card_at(lo, hi, 0);
+                    dead = len <= (int)conn_gate
+                           && (breaks_link(present, cov) || parent_len > (int)conn_gate || pile == dd
+                               || breaks_link(present & ~(1ull << left), cov))
+                           && !connected_without_leftmost(present, left, len);
+                } else {
+                    dead = len <= (int)conn_gate && (breaks_link(present, cov) || parent_len > (int)conn_gate)
+                           && !connected(present);
+                }
                 if (dead) {                       // undo at once
                     insert_card(lo, hi, pile, mover);
                     set_card(lo, hi, pile - dd, cov);
@@ -305,16 +347,26 @@ extern "C" __global__ void __launch_bounds__(BLOCK) attempts(
                 }
                 depth++;
                 masks(lo, hi, len, ms, ml);
-                s_us[depth][t] = (u16)(ms & ~sleep_s); s_ul[depth][t] = (u16)(ml & ~sleep_l);
-                s_ds[depth][t] = (u16)sleep_s; s_dl[depth][t] = (u16)sleep_l;
+                us = ms & ~sleep_s; ul = ml & ~sleep_l;
+                SET16(DS + 2 * depth, sleep_s); SET16(DL + 2 * depth, sleep_l);
             }
         }
         atomicAdd(&deal_nodes[deal], (u64)(moves + used));
         atomicAdd(&deal_tries[deal], 1u);
         if (win && atomicCAS(&won[deal], 0u, 1u) == 0u) {
             u8* out = lines + (u64)deal * 51;
-            for (int i = 0; i < moves; i++) out[i] = s_line[i][t];
-            for (int d = 0; d < depth; d++) out[moves + d] = s_via[d][t];
+            for (int d = 0; d < depth; d++) out[moves + d] = SH(VIA + d);
+            // Replay the prefix: the same random numbers on the same position choose the same moves.
+            u64 r = prefix_rng;
+            int n = row_load(s_row, t, deals + (u64)deal * 52, present, l1, l3);
+            for (int i = 0; i < moves; i++) {
+                u32 n1 = __popcll(l1), n3 = __popcll(l3);
+                u32 k = below(r, n1 + n3);
+                bool leap = k >= n1;
+                int pile = leap ? select_bit64(l3, k - n1) : select_bit64(l1, k);
+                row_move(s_row, t, n, l1, l3, pile, leap);
+                out[i] = (u8)(pile << 1 | (leap ? 1 : 0));
+            }
         }
     }
 }
@@ -324,7 +376,7 @@ extern "C" __global__ void __launch_bounds__(BLOCK) attempts(
 // prefix's code); from RES piles down, in registers (the search's code), where every move is also undone and redone.
 // Per step, the position's slide and leap masks (two u64), the move played from it (pile << 1 | leap, or 0xFF when
 // there is none, which ends the playout), and flags: bit 0 connected(present), bit 1 the last move broke a link
-// (breaks_link), bit 2 undoing the move did not restore the position.
+// (breaks_link), bit 2 undoing the move did not restore the position, bit 3 connected_without_leftmost.
 extern "C" __global__ void __launch_bounds__(BLOCK) playouts(
     const u8* __restrict__ positions, u32 n, u64 seed,
     u64* masks_out,                    // 52 steps × 2 per playout
@@ -353,7 +405,8 @@ extern "C" __global__ void __launch_bounds__(BLOCK) playouts(
         }
         masks_out[2 * at] = ms;
         masks_out[2 * at + 1] = ml;
-        u8 flags = (connected(present) ? 1 : 0) | (link ? 2 : 0);
+        u32 left = regs ? card_at(lo, hi, 0) : s_row[OFF][t];
+        u8 flags = (connected(present) ? 1 : 0) | (link ? 2 : 0) | (connected_without_leftmost(present, left, len) ? 8 : 0);
         u8 mv = 0xFF;
         u32 n1 = __popcll(ms), n3 = __popcll(ml);
         if (n1 + n3 > 0) {

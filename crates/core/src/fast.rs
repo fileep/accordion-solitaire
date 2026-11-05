@@ -206,6 +206,28 @@ impl Position {
         self.link_broken
     }
 
+    /// The top card of pile 0.
+    pub fn leftmost(&self) -> u8 {
+        self.buf[OFF]
+    }
+
+    /// Dead-end test, stronger than [`connected`]: pile 0 never moves (nothing lies to its left), so its top card
+    /// never covers anything. Every other top card can only be covered by a matching card that moves, so within any
+    /// group of them that shares no suit or rank with the rest, covers stay inside the group and its last card is
+    /// never covered. So the top cards other than pile 0's must be connected among themselves, and pile 0's card
+    /// must match one of them, since it has to be covered for one pile to remain. Holds in every position: whatever
+    /// card is on pile 0 never moves again.
+    pub fn connected_without_leftmost(&self) -> bool {
+        if self.len < 2 {
+            return true;
+        }
+        let left = self.buf[OFF];
+        let rest = self.present & !(1u64 << left);
+        let suit = (rest >> (16 * u32::from(left >> 4))) & ROW;
+        let rank = (rest >> (left & 0x0F)) & RANK_COLUMN;
+        (suit | rank) != 0 && connected(rest)
+    }
+
     /// Legal-move masks computed from scratch (the incremental update must always agree).
     pub fn full_masks(&self) -> (u64, u64) {
         let (mut l1, mut l3) = (0u64, 0u64);
@@ -402,7 +424,7 @@ impl Position {
 /// Branch-free over the four suits. If the covered card was its suit's last, the suits it linked still share its
 /// rank directly, so that can't disconnect anything.
 #[inline]
-fn breaks_link(present: u64, covered: u8) -> bool {
+pub fn breaks_link(present: u64, covered: u8) -> bool {
     let (s, r) = (u32::from(covered >> 4), u32::from(covered & 0x0F));
     let row = (present >> (16 * s)) & ROW;
     let mut broken = false;
@@ -490,5 +512,26 @@ mod tests {
         let pos = Position::from_tops(&cards("5S 9C 9S 5H 2C 2H"));
         assert!(connected(pos.present()));
         assert!(!pos.left_leaf_pair());
+    }
+
+    #[test]
+    fn the_leftmost_card_cannot_link_the_others() {
+        // AH links 2H and AS, but pile 0 never moves: 2H can only slide onto AH, which leaves AS stranded.
+        let pos = Position::from_tops(&cards("AH 2H AS"));
+        assert!(connected(pos.present()));
+        assert!(!pos.connected_without_leftmost());
+        assert!(!explore_won(pos));
+        // AS and 2S share a suit, and AH matches AS: AS slides onto AH, then 2S onto AS.
+        let pos = Position::from_tops(&cards("AH AS 2S"));
+        assert!(pos.connected_without_leftmost());
+        assert!(explore_won(pos));
+        // Pile 0's card must match one of the others, even when they are connected among themselves.
+        assert!(!Position::from_tops(&cards("AH 2S 3S")).connected_without_leftmost());
+        assert!(Position::from_tops(&cards("AH")).connected_without_leftmost());
+    }
+
+    /// Whether any line from `pos` wins (exhaustive; small positions only).
+    fn explore_won(pos: Position) -> bool {
+        pos.is_won() || pos.legal_moves().into_iter().any(|mv| explore_won(pos.play(mv)))
     }
 }

@@ -14,7 +14,7 @@ use clap::Parser;
 use std::path::PathBuf;
 use std::process::ExitCode;
 use std::sync::Arc;
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::time::Instant;
 
 #[derive(Parser)]
@@ -37,6 +37,9 @@ struct Args {
     cpu_threads: usize,
     #[arg(long, default_value = "endgame")]
     endgame_dir: PathBuf,
+    /// Write the seeds of the deals the GPU did not win here, one per line.
+    #[arg(long)]
+    misses: Option<PathBuf>,
 }
 
 fn main() -> ExitCode {
@@ -101,6 +104,9 @@ fn run(args: &Args) -> Result<bool, String> {
     let next = AtomicUsize::new(0);
     let (won, failed, cpu_won, left) =
         (AtomicUsize::new(0), AtomicUsize::new(0), AtomicUsize::new(0), AtomicUsize::new(0));
+    // Thread time spent verifying GPU lines and solving the GPU's misses, in microseconds.
+    let (verify_us, left_us) = (AtomicU64::new(0), AtomicU64::new(0));
+    let missed = std::sync::Mutex::new(Vec::new());
     std::thread::scope(|scope| {
         for _ in 0..cpu_threads {
             scope.spawn(|| {
@@ -118,8 +124,11 @@ fn run(args: &Args) -> Result<bool, String> {
                             .and_then(|rec| verify(&rec).map(|_| ()).map_err(|e| e.to_string()))
                     };
                     if let Some(line) = &lines[i] {
+                        let t = Instant::now();
                         let moves: Vec<Move> = line.iter().map(|&b| Move::from_byte(b)).collect();
-                        match verifies(&moves) {
+                        let verified = verifies(&moves);
+                        verify_us.fetch_add(t.elapsed().as_micros() as u64, Ordering::Relaxed);
+                        match verified {
                             Ok(()) => {
                                 won.fetch_add(1, Ordering::Relaxed);
                                 continue;
@@ -131,12 +140,15 @@ fn run(args: &Args) -> Result<bool, String> {
                         }
                     }
                     left.fetch_add(1, Ordering::Relaxed);
+                    missed.lock().unwrap().push(seed);
+                    let t = Instant::now();
                     search.clear_table();
                     let report =
                         solve(&Position::from_deal(&deal), &Config { seed, ..cpu }, &mut search, None);
                     if matches!(&report.verdict, Verdict::Win(line) if verifies(line).is_ok()) {
                         cpu_won.fetch_add(1, Ordering::Relaxed);
                     }
+                    left_us.fetch_add(t.elapsed().as_micros() as u64, Ordering::Relaxed);
                 }
             });
         }
@@ -159,6 +171,18 @@ fn run(args: &Args) -> Result<bool, String> {
     println!(
         "CPU                verified the GPU wins and solved {left} deals ({cpu_won} won) in {cpu_time:.2} s on {cpu_threads} threads"
     );
+    let (verify_s, left_s) = (verify_us.into_inner() as f64 / 1e6, left_us.into_inner() as f64 / 1e6);
+    println!(
+        "CPU thread time    verifying {verify_s:.2} s ({:.1} us a line), the GPU's misses {left_s:.2} s ({:.1} ms each)",
+        verify_s / won.max(1) as f64 * 1e6,
+        left_s / left.max(1) as f64 * 1e3
+    );
+    if let Some(path) = &args.misses {
+        let mut seeds = missed.into_inner().unwrap();
+        seeds.sort_unstable();
+        let text: String = seeds.iter().map(|s| format!("{s}\n")).collect();
+        std::fs::write(path, text).map_err(|e| format!("{}: {e}", path.display()))?;
+    }
     println!("all won            {}", if won + cpu_won == n { "yes" } else { "NO" });
     Ok(failed == 0 && won + cpu_won == n)
 }

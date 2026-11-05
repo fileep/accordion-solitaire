@@ -364,3 +364,152 @@ over each stretch of 10M deals after the first two minutes, 19,281 deals/s overa
 | Golden positions | With no prefix and no budget, every GPU try is a complete search: it wins the winnable 12-pile golden position (the line replays) and never wins the 16-pile dead end. 8,192 long random prefixes never win either unwinnable 52-pile case |
 | Golden and random deals | Every golden deal recorded as a win is won on the GPU, no unwinnable one is, and all lines on 4,096 random deals verify |
 | Runner (`crates/cli/src/runner.rs`) | With the GPU, every deal comes back exactly once, verified; the GPU's wins match its count. Without NVRTC or a GPU, `--gpu auto` falls back to the CPU and `--gpu on` stops with the reason |
+
+## After Phase 8 — the GPU kernel's occupancy
+
+**Finding:** shared memory, not compute, capped how many attempts the T550 runs at once. Each attempt kept 272 bytes there
+(its 64-byte row, its 48 prefix moves, and 160 bytes of search state per depth), so a multiprocessor's 64 KB held 7
+blocks of 32 threads: 224 attempts, 22% of its 1,024 threads. Registers (55 a thread) would have allowed nearly all of
+them. The driver's occupancy calculator gives these counts.
+
+**Occupancy matters.** Padding each block with unused shared memory, so fewer fit (original kernel, 100,000 deals,
+seeds 2,000,000–2,099,999, two alternating runs each):
+
+| Attempts per multiprocessor | Positions/s | vs 224 |
+|---|---|---|
+| **224 (original)** | **258M, 254M** | 1.00 |
+| 160 | 209M, 207M | 0.81 |
+| 128 | 183M, 182M | 0.71 |
+| 64 | 94M, 94M | 0.37 |
+
+**Two cuts to the shared memory per attempt:**
+
+- **First cut, 160 bytes:** the prefix's moves are no longer kept (a winning attempt replays its prefix from the same
+  random numbers to write its line), and the row shares bytes with the search state, which it never needs at the same
+  time.
+- **Second cut, 96 bytes:** the untried moves at a depth are always its legal moves minus its asleep ones, so they
+  stay in registers for the current depth and are recomputed when the search backs up.
+- **Overlay bug, found and fixed:** the row was laid out byte by byte and the search state in 16-bit values, so a
+  thread's search state overlaid other threads' rows. With 32-thread blocks the warp kept all its threads in one phase
+  and nothing showed (every line verified); with 64 threads, warps in different phases corrupted each other's rows
+  (`CUDA_ERROR_ILLEGAL_ADDRESS`). Now all of it is byte-major (byte i of thread t at i × block + t), so a thread's
+  overlay only ever touches its own bytes, at the cost of two byte accesses per 16-bit value.
+
+Same deals, three alternating runs each (means):
+
+| Kernel | Bytes / attempt | Attempts / multiprocessor | Deals/s | vs original |
+|---|---|---|---|---|
+| Original | 272 | 224 | 18,474 | — |
+| First cut, own row array (no overlay) | 224 | 288 | 19,921 (later block, warmer: original about 18,200) | +9% |
+| First cut, byte-major overlay | 160 | 384 | 21,296 | +15% |
+| Second cut, 32-thread blocks | 96 | 512 | 21,094 | +14% |
+| **Second cut, 64-thread blocks (adopted)** | **96** | **640** | **21,448** | **+16%** |
+| Second cut, 96-thread blocks | 96 | 672 | 21,335 | +15% |
+| Second cut, separate arrays (no overlay, 20,000 deals) | 160 | 384 | about 20,000 | +8% |
+
+The byte-major access costs about 6% (the first cut with the unsafe 16-bit overlay ran 22,560), and past about 400
+attempts per multiprocessor the gain flattens. Every version won the same 99,468 of the 100,000 deals on the GPU, and
+every line verified. The adopted kernel passes the GPU tests (playouts against the Rust engines, golden verdicts, lines on
+random deals) and the runner's tests with the GPU.
+
+**Heat-soaked, CPU and GPU together** (`acc batch`, 4M deals a run after a 2M-deal warm-up, fresh seeds from 302,000,000):
+
+| Run | CPU threads | Deals/s | GPU positions/s | Deals won on the GPU |
+|---|---|---|---|---|
+| Normal mix 1 | 15 + GPU feeder | 22,395 | 285M | 92% |
+| GPU-focused (CPU verifies and takes the GPU's misses) | 3 + GPU feeder | 20,355 | 273M | 97% |
+| Normal mix 2 | 15 + GPU feeder | 21,785 | 266M | 88% |
+
+- **The GPU doesn't gain from a quieter CPU** on this laptop: its rate drifts down with time (285M → 273M → 266M)
+  whatever the CPU does. The CPU's own deals add 1,800–2,600 deals/s, so the normal mix stays the default.
+- **Against Phase 8:** the 100M run held 19,281 deals/s with the old kernel; heat-soaked runs now give about 22,000.
+
+## After Phase 8 — where the time goes, settings sweeps, and the leftmost-card test
+
+**Where a CPU solve's time goes** (a copy of `solve` timed by phase, its positions checked equal to `solve`'s; 20,000
+deals, one thread):
+
+| Phase | Time per deal | Share |
+|---|---|---|
+| Searches of residuals that turn out dead | 536 µs | 75% |
+| Random prefix moves (about 55 ns each) | 119 µs | 17% |
+| Winning searches | 27 µs | 4% |
+| Verification (record, card notation, reference replay) | 30 µs | 4% |
+| Deal, fingerprint, bookkeeping | 3 µs | <1% |
+
+A deal takes 61 attempts on average: 13 stuck in the prefix, 6 dead at once, 41 dead after a search of about 90
+positions, one won. An 11-pile table lookup costs about 167 ns (66 ns for the pattern key, the rest a memory wait), about
+30% of the time.
+
+**Skipping residuals with few legal moves doesn't pay** (235,000 recorded attempts): those with 1–2 moves are 37% of
+searches but 9% of search time, and hold 7% of the wins. Searching one pays when its chance of winning times the cost of
+a deal (about 5,900 positions) beats its own cost, and that holds at every move count. A logistic model on residual
+features (moves, frozen stretches, matching pairs) did no better than about 1.2× even in projection.
+
+**Where the GPU's time goes** (one 38-move rung, 20,000 deals): with the search budget at 0 an attempt costs about 22 ns
+of GPU time, with it about 161 ns, so the prefix (and the search's setup) is about 13% and the search about 87%. A
+search position costs about 8× a prefix move.
+
+**GPU settings** (`accgpu`, 100,000 deals, two runs each). Giving up sooner speeds the GPU and leaves more to the CPU:
+
+| Rungs, budget | Deals/s on the GPU | Won on the GPU |
+|---|---|---|
+| **38 × 256, 36 × 1,024, 2,000 (default)** | **20,390–21,074** | 99.47% |
+| first rung 36 / 39 / 40 / 42 moves | 17,800–18,900 / 19,700–20,100 / 19,200–20,100 / 17,500–17,700 | 99.61 / 99.44 / 99.42 / 99.40% |
+| 38 × 128 or 38 × 512 first | 19,700–20,900 / 20,600–20,700 | 99.42 / 99.51% |
+| second rung 36 × 512 / × 2,048 / × 4,096 | 22,100–22,600 / 19,000–19,900 / 19,200–19,500 | 98.31 / 99.83 / 99.94% |
+| one rung 38 × 1,280 | 23,400–24,500 | 96.21% |
+| second rung 37 × 1,024 | 22,200–23,100 | 98.49% |
+| budget 1,000 / 4,000 / 8,000 | 20,800–21,100 / 20,100–20,200 / 19,800 | 99.33 / 99.52 / 99.54% |
+
+In `acc batch` (1M deals a run, hot) the 37-move second rung looked about 5% ahead before the leftmost test; with it,
+no setting beats the default (below). A deal the GPU misses costs the CPU about 4–7 ms; starting the CPU's ladder at
+34 for those deals instead of 36 saves positions but not time (7.2 against 7.1 ms), and 32, 30 or fewer tries are slower.
+
+**CPU ladder, re-checked** (`acc experiment`, train set, repeat 3): 256 tries 5,943 positions, 128 and 512 tries 6,022
+each (time within noise), start 35 6,212, start 34 7,006 (23% slower). The defaults stay.
+
+**The leftmost-card test.** Pile 0 never moves, so its top card never covers anything; every other top card can only be
+covered by a matching card that moves. So the other top cards must be connected among themselves, and pile 0's card
+must match one of them: stronger than plain connectivity, which lets pile 0's card link groups that can never meet
+(`AH 2H AS`: 2H can only slide onto AH, stranding AS). `Position::connected_without_leftmost`, gated like the
+connectivity test (≤19 piles) with two more triggers: a move onto pile 0, and a move that breaks a link among the
+other cards. Now on by default (`Gates::leftmost`, `accordion_gpu::Settings::leftmost`).
+
+| | Mean positions | p99 | Deals/s (repeat 3) |
+|---|---|---|---|
+| Train set, before | 5,943 | 45,853 | 12,525 ±2% |
+| **Train set, leftmost test** | **4,938 (−17%)** | 38,928 | **16,136 ±4% (+29%)** |
+| Validation set, before | 5,940 | 46,699 | 12,562 ±3% |
+| **Validation set, leftmost test** | **4,886 (−18%)** | 37,070 | **16,711 ±5% (+33%)** |
+
+A larger gate (24 or 30 piles) doesn't cut more. On the GPU (`accgpu`, 100,000 deals, three alternating runs) it goes from
+20,092 to **30,559 deals/s (+52%)**, and the GPU wins 99.53% of its deals instead of 99.47%: an attempt costs 59 positions
+instead of 82.
+
+**Soundness:** `acc selftest --positions 1000000 --residuals 1000000` passes with the test in: on the 349,257 of
+1,000,000 random positions where a test fired, the reference search confirmed every one lost (13 too large), and on
+1,000,000 residuals the full search with it agrees with plain search (149,244 won and replayed, 848,528 lost, 2,228 too
+large). The GPU's playouts match `connected_without_leftmost` at every step, and its golden and random-deal tests pass
+with the test off and on.
+
+**CPU and GPU together** (`acc batch`, 1M fresh deals a run after a warm-up, the order rotated each round):
+
+| | Round 1 | Round 2 | Round 3 |
+|---|---|---|---|
+| Before (no leftmost test) | 27,076 | 22,448 | 21,358 |
+| **Leftmost test on CPU and GPU** | **39,173** | **31,987** | **32,706** |
+| + second rung 37 × 1,024 | 38,514 | 32,004 | 31,854 |
+
+Hot (rounds 2 and 3) that is about 32,300 against 21,900 deals/s, +48%, and about 1.7× the Phase 8 100M run's 19,281.
+Every deal was won and every line verified.
+
+**Copy-free prefix on the GPU: tried, not kept.** The prefix shifts the row of cards on every move (each removed pile
+moves the cards to its right one place). A version that keeps every card on a fixed slot, marks removed piles in a
+64-bit mask and finds the piles 1 and 3 to the left with bit scans played exactly the same games (same wins, GPU tests
+passing), and made the prefix about 30% cheaper on its own (one 38-move rung, search budget 0: 14–15 ns against
+21–22 ns of GPU time per attempt). But with the search on, every variant was 13–20% slower per attempt (121–130 against
+107–112 ns): inlined or not, the deal loaded from global memory or from the row, the residual built with fixed shifts,
+the whole prefix out of line, the row's padding restored. Registers and occupancy were unchanged (56 against 58
+registers, 640 attempts per multiprocessor). The likeliest cause is how a warp's threads line up between the prefix and
+the search, which needs a profiler (Nsight Compute) to confirm. The shifting prefix stays.

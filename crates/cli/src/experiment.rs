@@ -104,12 +104,10 @@ pub fn deal_set(name: &str, base: &Path) -> Result<Vec<u64>, String> {
         "test" => Ok(range(1_000_000, 100_000)),
         "regression" => Ok(range(0, 100_000)),
         "hard" => read_seeds(&base.join("sets/hard.txt")),
-        _ => match name.split_once(':') {
-            Some((from, count)) => {
-                let parse = |t: &str| t.trim().parse::<u64>().map_err(|e| format!("set {name}: {e}"));
-                Ok(range(parse(from)?, parse(count)?))
-            }
-            None => read_seeds(Path::new(name)),
+        // FROM:COUNT only when both sides are numbers, so a Windows path (C:\...) is read as a file.
+        _ => match name.split_once(':').map(|(f, c)| (f.trim().parse::<u64>(), c.trim().parse::<u64>())) {
+            Some((Ok(from), Ok(count))) => Ok(range(from, count)),
+            _ => read_seeds(Path::new(name)),
         },
     }
 }
