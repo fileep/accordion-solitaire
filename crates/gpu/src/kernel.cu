@@ -6,15 +6,15 @@
 //
 // Everything stays on chip. The prefix plays on a 64-byte row in shared memory (stored byte-major, so a warp's 32
 // threads touch 32 different banks). The search keeps its at most 16 cards in two 64-bit registers, recomputes the
-// legal-move masks with byte-parallel bit tricks, and undoes moves instead of copying positions; the only per-depth
-// state (asleep moves, the move, the covered card) lives in shared memory.
+// legal-move masks with byte-parallel bit tricks, and undoes moves instead of copying positions. Its moves and
+// covered cards are byte stacks in registers; the only per-depth state in shared memory is the asleep moves.
 //
-// Shared memory per thread decides how many attempts a multiprocessor holds at once, and the kernel is faster the
-// more it holds, so it keeps only what it can't recompute. The untried moves at a depth are always its legal moves
-// minus its asleep ones (a move tried there joins the asleep set), so they live in registers for the current depth
-// and are recomputed when the search backs up. The row and the search's state share the same bytes (the row is done
-// with once the residual is in registers), and the prefix's moves are not kept: a winning attempt replays its prefix
-// from the same random numbers to write its line.
+// Shared memory per thread decides how many attempts a multiprocessor holds at once, so the kernel keeps only 64 bytes
+// there, enough for 1,024 attempts per multiprocessor on the T550 (its maximum). The untried moves at a depth are
+// always its legal moves minus its asleep ones (a move tried there joins the asleep set), so they live in registers for
+// the current depth and are recomputed when the search backs up. The row and the asleep moves share the same bytes
+// (the row is done with once the residual is in registers), and the prefix's moves are not kept: a winning attempt
+// replays its prefix from the same random numbers to write its line.
 //
 // Threads are persistent: each keeps taking the next attempt from a global counter. Attempt i is try i / deals of
 // deal i % deals, so a deal's tries are spread over the run; once some thread has won a deal, its later tries are
@@ -45,14 +45,33 @@ __device__ __forceinline__ bool codes_match(u32 a, u32 b) {
     return ((x & 0x0F) == 0) | ((x & 0x70) == 0);
 }
 
-// xorshift64*: fast and good enough for move choice (the CPU checks every result).
-__device__ __forceinline__ u64 next_u64(u64& s) {
-    s ^= s >> 12; s ^= s << 25; s ^= s >> 27;
-    return s * 0x2545F4914F6CDD1DULL;
+// A 128-bit stack of bytes in two registers: push puts a byte at the bottom of lo and lifts the rest, pop takes it
+// back; every shift is a constant one. The search keeps its moves and covered cards this way, not in shared memory.
+__device__ __forceinline__ void push_byte(u64& lo, u64& hi, u32 b) {
+    hi = (hi << 8) | (lo >> 56);
+    lo = (lo << 8) | b;
 }
-__device__ __forceinline__ u32 below(u64& s, u32 n) {
-    return (u32)(((next_u64(s) >> 32) * (u64)n) >> 32);
+__device__ __forceinline__ u32 pop_byte(u64& lo, u64& hi) {
+    u32 b = (u32)(lo & 0xFF);
+    lo = (lo >> 8) | (hi << 56);
+    hi >>= 8;
+    return b;
 }
+
+// xorshift32: 32-bit operations only (64-bit multiplies take several instructions on the GPU), and good enough for move
+// choice (the CPU checks every result). The state must not be zero.
+__device__ __forceinline__ u32 next_u32(u32& s) {
+    s ^= s << 13; s ^= s >> 17; s ^= s << 5;
+    return s;
+}
+__device__ __forceinline__ u32 below(u32& s, u32 n) { return __umulhi(next_u32(s), n); }
+// A 32-bit starting state from a 64-bit seed (splitmix64's finalizer), never zero.
+__device__ __forceinline__ u32 seed_u32(u64 z) {
+    z = (z ^ (z >> 30)) * 0xBF58476D1CE4E5B9ull;
+    z = (z ^ (z >> 27)) * 0x94D049BB133111EBull;
+    return (u32)(z ^ (z >> 31)) | 1u;
+}
+// The position of the k-th set bit of m (k from 0), by the hardware's find-n-th-set instruction.
 __device__ __forceinline__ int select_bit64(u64 m, u32 k) {
     for (u32 i = 0; i < k; i++) m &= m - 1;
     return __ffsll((long long)m) - 1;
@@ -236,14 +255,14 @@ extern "C" __global__ void __launch_bounds__(BLOCK) attempts(
     u32* next_attempt,                 // global work counter, starts at 0
     u32* won,                          // per position: 0, or 1 once some attempt has won it
     u8* lines,                         // 51 bytes per position
-    u64* deal_nodes, u32* deal_tries)  // per position
+    u64* deal_counts)                  // per position: positions generated << 16 | attempts run
 {
-    // Per depth d, at these byte offsets: asleep slides (DS + 2d, u16), asleep leaps (DL + 2d, u16), the move (VIA + d)
-    // and the covered card (COV + d). The prefix's 64-byte row overlays the asleep moves.
-    enum { DS = 0, DL = 2 * RES, VIA = 4 * RES, COV = 5 * RES, BYTES = 6 * RES };
+    // Per depth d, at these byte offsets: asleep slides (DS + 2d, u16) and asleep leaps (DL + 2d, u16); the moves and
+    // covered cards are register stacks. The prefix's 64-byte row overlays the asleep moves exactly.
+    enum { DS = 0, DL = 2 * RES, BYTES = 4 * RES };
     __shared__ u8 s_mem[BYTES * BLOCK];
     u8 (*s_row)[BLOCK] = (u8 (*)[BLOCK])s_mem;
-    static_assert(64 <= VIA, "the row fits over the asleep moves");
+    static_assert(64 <= BYTES, "the row fits over the asleep moves");
     const int t = threadIdx.x;
     const u64 total = n_deals * (u64)(tries + tries2);
     if (prefix > MAX_PREFIX) prefix = MAX_PREFIX;
@@ -254,9 +273,8 @@ extern "C" __global__ void __launch_bounds__(BLOCK) attempts(
         u32 deal = a % n_deals;
         const u32 k_moves = (a / n_deals < tries) ? prefix : prefix2;
         if (*((volatile u32*)&won[deal])) continue;
-        u64 rng = seed ^ (0x9E3779B97F4A7C15ull * (a + 1));
-        for (int i = 0; i < 3; i++) next_u64(rng);
-        const u64 prefix_rng = rng;
+        u32 rng = seed_u32(seed ^ (0x9E3779B97F4A7C15ull * (a + 1)));
+        const u32 prefix_rng = rng;
 
         // The position and its random prefix.
         u64 present, l1, l3;
@@ -279,6 +297,7 @@ extern "C" __global__ void __launch_bounds__(BLOCK) attempts(
         bool win = search && len == 1;
         int depth = 0;
         u32 used = 0;
+        u64 via_lo = 0, via_hi = 0, cov_lo = 0, cov_hi = 0;   // the search's moves and covered cards, last on top
         if (search && !win) {
             u64 lo, hi;
             load_residual(s_row, t, len, lo, hi);
@@ -291,7 +310,7 @@ extern "C" __global__ void __launch_bounds__(BLOCK) attempts(
                 if ((us | ul) == 0) {
                     if (depth == 0) break;        // the residual is lost
                     depth--;
-                    u32 via = SH(VIA + depth), cov = SH(COV + depth);
+                    u32 via = pop_byte(via_lo, via_hi), cov = pop_byte(cov_lo, cov_hi);
                     int pile = via >> 1, dd = (via & 1) ? 3 : 1;
                     u32 mover = card_at(lo, hi, pile - dd);
                     insert_card(lo, hi, pile, mover);
@@ -322,10 +341,13 @@ extern "C" __global__ void __launch_bounds__(BLOCK) attempts(
                 int parent_len = len;
                 len--;
                 present &= ~(1ull << cov);
-                SH(VIA + depth) = (u8)(pile << 1 | (leap ? 1 : 0));
-                SH(COV + depth) = (u8)cov;
                 used++;
-                if (len == 1) { win = true; depth++; break; }
+                if (len == 1) {
+                    push_byte(via_lo, via_hi, pile << 1 | (leap ? 1 : 0));
+                    win = true;
+                    depth++;
+                    break;
+                }
                 bool dead;
                 if (leftmost) {
                     // Also when pile 0's card changed, or the move broke a link among the other cards.
@@ -345,19 +367,21 @@ extern "C" __global__ void __launch_bounds__(BLOCK) attempts(
                     len++;
                     continue;
                 }
+                push_byte(via_lo, via_hi, pile << 1 | (leap ? 1 : 0));
+                push_byte(cov_lo, cov_hi, cov);
                 depth++;
                 masks(lo, hi, len, ms, ml);
                 us = ms & ~sleep_s; ul = ml & ~sleep_l;
                 SET16(DS + 2 * depth, sleep_s); SET16(DL + 2 * depth, sleep_l);
             }
         }
-        atomicAdd(&deal_nodes[deal], (u64)(moves + used));
-        atomicAdd(&deal_tries[deal], 1u);
+        atomicAdd(&deal_counts[deal], (u64)(moves + used) << 16 | 1u);
         if (win && atomicCAS(&won[deal], 0u, 1u) == 0u) {
             u8* out = lines + (u64)deal * 51;
-            for (int d = 0; d < depth; d++) out[moves + d] = SH(VIA + d);
+            // The search's moves, first to last: the first is deepest in the stack.
+            for (int d = 0; d < depth; d++) out[moves + d] = (u8)card_at(via_lo, via_hi, depth - 1 - d);
             // Replay the prefix: the same random numbers on the same position choose the same moves.
-            u64 r = prefix_rng;
+            u32 r = prefix_rng;
             int n = row_load(s_row, t, deals + (u64)deal * 52, present, l1, l3);
             for (int i = 0; i < moves; i++) {
                 u32 n1 = __popcll(l1), n3 = __popcll(l3);
@@ -386,8 +410,7 @@ extern "C" __global__ void __launch_bounds__(BLOCK) playouts(
     const int t = threadIdx.x;
     const u32 p = blockIdx.x * BLOCK + t;
     if (p >= n) return;
-    u64 rng = seed ^ (0x9E3779B97F4A7C15ull * (p + 1));
-    for (int i = 0; i < 3; i++) next_u64(rng);
+    u32 rng = seed_u32(seed ^ (0x9E3779B97F4A7C15ull * (p + 1)));
     u64 present, l1, l3, lo = 0, hi = 0;
     int len = row_load(s_row, t, positions + (u64)p * 52, present, l1, l3);
     bool regs = false, link = false;

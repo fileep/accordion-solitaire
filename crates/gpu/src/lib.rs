@@ -35,10 +35,11 @@ pub struct Settings {
     pub rungs: Vec<[u32; 2]>,
     /// Positions each search may generate.
     pub budget: u32,
-    /// Deals per launch: keep launches well under Windows' 2 s GPU watchdog.
+    /// Deals per launch: keep launches well under Windows' 2 s GPU watchdog (16,384 take about half a second on the
+    /// T550, and fewer leave several attempts at once on each deal, which wastes those still running once it is won).
     pub batch: usize,
-    /// Threads per block (the kernel's shared memory is sized for it: 96 bytes per thread). Shared memory sets how
-    /// many attempts a multiprocessor holds; on the T550, 64 fits 640 (32 fits 512, the most blocks it takes).
+    /// Threads per block (the kernel's shared memory is sized for it: 64 bytes per thread). On the T550, 64 fits
+    /// 1,024 attempts per multiprocessor, its maximum (32 fits 512, the most blocks it takes).
     pub block: u32,
     /// Thread blocks per multiprocessor.
     pub blocks_per_sm: u32,
@@ -55,7 +56,7 @@ impl Default for Settings {
         Settings {
             rungs: vec![[38, 256], [36, 1024]],
             budget: 2000,
-            batch: 4096,
+            batch: 16384,
             block: 64,
             blocks_per_sm: 16,
             conn_gate: 19,
@@ -133,8 +134,8 @@ pub struct Pending {
     piles: Vec<usize>,
     won: CudaSlice<u32>,
     lines: CudaSlice<u8>,
-    nodes: CudaSlice<u64>,
-    tries: CudaSlice<u32>,
+    /// Per position: positions generated << 16 | attempts run.
+    counts: CudaSlice<u64>,
     // Kept alive until the kernel is done with them.
     _inputs: (CudaSlice<u8>, CudaSlice<u32>),
 }
@@ -295,8 +296,7 @@ impl Gpu {
         let mut next = s.alloc_zeros::<u32>(1).map_err(err)?;
         let mut won = s.alloc_zeros::<u32>(positions.len()).map_err(err)?;
         let mut lines = s.alloc_zeros::<u8>(positions.len() * 51).map_err(err)?;
-        let mut nodes = s.alloc_zeros::<u64>(positions.len()).map_err(err)?;
-        let mut tries = s.alloc_zeros::<u32>(positions.len()).map_err(err)?;
+        let mut counts = s.alloc_zeros::<u64>(positions.len()).map_err(err)?;
         let leftmost = u32::from(a.leftmost);
         let mut launch = s.launch_builder(&self.attempts);
         launch
@@ -313,8 +313,7 @@ impl Gpu {
             .arg(&mut next)
             .arg(&mut won)
             .arg(&mut lines)
-            .arg(&mut nodes)
-            .arg(&mut tries);
+            .arg(&mut counts);
         let cfg = LaunchConfig {
             grid_dim: (self.blocks(), 1, 1),
             block_dim: (self.settings.block, 1, 1),
@@ -328,8 +327,7 @@ impl Gpu {
             piles: positions.iter().map(piles).collect(),
             won,
             lines,
-            nodes,
-            tries,
+            counts,
             _inputs: (d_positions, next),
         })
     }
@@ -424,8 +422,7 @@ impl Pending {
         let s = &self.stream;
         let won = s.clone_dtoh(&self.won).map_err(err)?;
         let lines = s.clone_dtoh(&self.lines).map_err(err)?;
-        let nodes = s.clone_dtoh(&self.nodes).map_err(err)?;
-        let tries = s.clone_dtoh(&self.tries).map_err(err)?;
+        let counts = s.clone_dtoh(&self.counts).map_err(err)?;
         Ok(BatchResult {
             lines: won
                 .iter()
@@ -433,8 +430,8 @@ impl Pending {
                 .enumerate()
                 .map(|(i, (&w, &piles))| (w != 0).then(|| lines[i * 51..i * 51 + piles - 1].to_vec()))
                 .collect(),
-            nodes,
-            tries,
+            nodes: counts.iter().map(|&c| c >> 16).collect(),
+            tries: counts.iter().map(|&c| (c & 0xFFFF) as u32).collect(),
         })
     }
 }

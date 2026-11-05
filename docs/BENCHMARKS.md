@@ -513,3 +513,59 @@ passing), and made the prefix about 30% cheaper on its own (one 38-move rung, se
 the whole prefix out of line, the row's padding restored. Registers and occupancy were unchanged (56 against 58
 registers, 640 attempts per multiprocessor). The likeliest cause is how a warp's threads line up between the prefix and
 the search, which needs a profiler (Nsight Compute) to confirm. The shifting prefix stays.
+
+## After Phase 8 — the runner's CPU time, and GPU memory and table experiments
+
+**Where the CPU workers' time goes next to the GPU** (`acc batch` now prints it: `CPU threads ...`). Measured inside
+the runner, 2M deals, cool laptop:
+
+| CPU worker time | Share |
+|---|---|
+| Solving their own deals | 70.4% |
+| Verifying the GPU's lines (97.5 µs a line) | 20.1% |
+| Solving the GPU's misses | 7.2% |
+| Handing results on, waiting for the GPU, other | 2.3% |
+
+Without a GPU the runner costs nothing over a bare solve (26,059–26,662 deals/s against 22,590–24,694 for a timed copy
+of `solve` on the same 200,000 deals). **Lean verification:** without record files, the reference engine replays each
+line directly (every move legal, one pile at the end) instead of writing the record's card notation and parsing it
+back; the seed and format checks the record path adds hold by construction here. A GPU line now costs 21–58 µs
+instead of 50–126 µs (4–12% of worker time instead of 11–27%); a matched hot pair gave 41,295 against 38,277 deals/s
+(+8%). A test checks that both paths pass a solved line and reject an illegal or short one.
+
+**GPU, cheap fixes** (`accgpu`, 100,000 deals, two alternating runs each):
+
+| Kernel | Deals/s on the GPU |
+|---|---|
+| Before | 32,282 / 31,902 |
+| xorshift32 + one packed atomic per attempt | **32,723 / 32,421 (+1.5%)** |
+| + `__fns` for the k-th set bit | 31,363 / 30,957 (slower than the loop) |
+| `__fns` with the 64-bit generator | 29,766 / 29,498 |
+
+The 32-bit generator is worth about 5% against the 64-bit one; `__fns` is slower than clearing bits in a loop.
+
+**GPU, more resident attempts.** The search's moves and covered cards moved from shared memory into two 128-bit
+register stacks, leaving 64 bytes of shared memory per attempt: 1,024 attempts per multiprocessor (the T550's
+maximum, 58 registers each) instead of 640. Throughput stays at about 320M positions/s (32,352–32,729 deals/s with
+4,096-deal batches, 33,119–33,462 with 16,384): the kernel is limited by its work per position now, not by
+latency. Batches of 16,384 deals are the new default (+1.5%); in `acc batch` the CPU then waits up to about a second
+for the GPU's last batches, which is about 3% of a 1M-deal run and nothing in long ones.
+
+**The endgame table on the GPU: tried, not kept.** The rank of an 11-card pattern ported to CUDA agrees with
+`endgame::rank` on 65,536 random patterns and costs about 0.5 ns of GPU time when all of a warp's threads rank
+together (about 1 billion a second). A CPU imitation of GPU attempts (38 random moves, budget 2,000, no dead table)
+put the table's saving at 13.7 search positions per try going to 3.0 plus 2.5 lookups. Built in (the table copied to
+the GPU, positions of that many piles answered from it, lines finished by the CPU from its own table before
+verification, with a test), it is slower at every size:
+
+| GPU table | None | 11 piles (1.15 GB) | 10 (68 MB) | 9 (4.3 MB) | 8 (285 KB) |
+|---|---|---|---|---|---|
+| Deals/s on the GPU | 32,536 / 31,805 | 25,156 / 24,630 | 22,648 / 22,351 | 22,390 / 22,248 | 24,061 / 23,919 |
+
+Even the 8-pile table, which fits in the GPU's 512 KB L2 cache, loses, so memory isn't the reason: in the search
+only the one or two threads of a warp that reach the table's pile count rank at any moment, and the rest of the warp
+waits on them. Making it pay would need the lookups gathered across a warp's threads.
+
+**CPU and GPU together, before and after this round** (`acc batch`, 1M fresh deals a run, alternated): within the
+laptop's heat drift (36,143–47,948 against 34,313–40,745 deals/s, whichever ran first in a pair winning); the GPU
+went from 268–300M to 295–306M positions/s and verification's share of CPU time halved.

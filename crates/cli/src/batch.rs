@@ -299,6 +299,19 @@ pub fn run(args: &BatchArgs) -> Result<bool, String> {
             t.positions as f64 / elapsed / 1e6,
             t.error.as_ref().map_or(String::new(), |e| format!("; STOPPED EARLY: {e}"))
         );
+        let c = t.cpu;
+        let share = |x: u64| 100.0 * x as f64 / c.total.max(1) as f64;
+        let rest = c.total.saturating_sub(c.verifying + c.misses + c.own + c.waiting + c.handing_on);
+        println!(
+            "CPU threads      verifying GPU lines {:.1}% ({:.1} us a line), the GPU's misses {:.1}%, own deals {:.1}%, waiting for the GPU {:.1}%, handing results on {:.1}%, other {:.1}%",
+            share(c.verifying),
+            c.verifying as f64 / t.won.max(1) as f64,
+            share(c.misses),
+            share(c.own),
+            share(c.waiting),
+            share(c.handing_on),
+            share(rest)
+        );
     }
     println!(
         "throughput       {:.0} deals/s, {:.0}M CPU positions/s on {hardware} ({elapsed:.1} s wall)",
