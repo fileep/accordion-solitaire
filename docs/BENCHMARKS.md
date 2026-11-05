@@ -733,6 +733,17 @@ against 62,668 deals/s (+38%), then 74,617 against 55,704 (+34%). The GPU did 70
 - **Fewer registers for more threads**: capped at 80 or 72 registers the 96-register kernel spilled and lost (57,500,
   54,200); the 72-register kernel capped at 64 broke even (66,000 against 65,700).
 
+- **Tries in rounds**, to cut the attempt slots of deals already won (87% of a launch's 1,280 slots a deal): each
+  launch ran a round of tries on the deals not yet won, then the host read back the won flags and relaunched the
+  rest, two batches alternating so that one's round ran while the other's flags came back. Each attempt kept its
+  random numbers (seeded by try * deals + deal), so the wins were the same (99,513, every line verified, the GPU
+  tests passing with rounds of 64). But every split was slower than one launch (alternated, 100,000 deals): rounds
+  of 64 tries 58,700–58,900 against 68,100–68,200 (−14%), of 128 62,700–63,600 (−7%), of 256 65,400–65,800 (−3.6%),
+  and two rounds (640 + 640, or 1,024 + 256) 64,700–65,400 against 65,700–66,100 (−1 to −2%). In the step-at-a-time
+  kernel a skipped slot costs little (a warp takes 32 with one atomic and one load), while each round's end leaves
+  the GPU part idle as its last searches finish, more so as the rounds shrink. `acc batch` wasn't timed, since the
+  GPU alone already lost.
+
 **What is left.** Each turn of the loop still runs the prefix branch and the search branch one after the other, each
 with about half the warp's threads. Splitting them (prefixes in some warps or a kernel of their own, searches of the
 residuals they leave in others) would let each warp run one branch; it is the next large step, and a larger change.
