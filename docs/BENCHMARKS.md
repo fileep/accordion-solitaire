@@ -1072,13 +1072,101 @@ Doubling ablations in the split kernel (against it in the same runs, 125,342–1
   both: 119,925–119,928.
 
 **Considered, not tried:**
-- **The prefix row in registers** (13 32-bit words a thread). Closing a gap becomes a funnel shift and a byte permute
-  per word, choosing the kept bytes by comparing the word's index with the gap's; the mask update reads a window of
-  cards around the move at fixed offsets; no shared memory, and no thread waits for another's longer shift. The
-  shift and the mask update are 28% of the time, and the prefix warps limit the kernel. 13 words fit the prefix
-  warps' registers, which are not the search's.
+- **The prefix row in registers:** built later, "the prefix row in registers" below (+16%).
 - **Batches of 2 in the prefix warps:** no cost in wins, and in registers two gaps cost hardly more than one to close.
   The batch code above lost 22% even on single moves, so it needs the row in registers first.
 - **Warps changing role** when the queue runs full or empty: the gain is bounded by the waits above (20% and 17% of
   turns), and a warp's threads would have to finish what they hold first.
 
+## After Phase 8 — shared early prefix moves (measured, not built)
+
+**The idea.** A group of G tries at a deal plays its first K prefix moves once, keeps the row, and each try then plays
+its own remaining moves and searches. RESEARCH §5.5 found that up to about 20 random moves barely change an attempt's
+chance of a win (85% to 83%, 24 deals in Python, uniform moves); here the question is how much the tries' sharing
+those moves correlates them, so that a deal needs more of them.
+
+**Measured exactly, without saving any work:** a kernel file (`accgpu --kernel`) gives each group of G consecutive
+tries at a deal the random numbers of the group's first try for the first K prefix moves, then each try its own
+random numbers for the rest of its prefix and its search; a won line replays the same way. The prefix warps still
+play every move, so only the attempts a deal needs and the wins change. Seeds 2,000,000–2,099,999 (100,000 deals),
+3,000,000–3,199,999 and 4,000,000–4,199,999 (200,000 each); the moves a prefix of about 37 saves are K × (1 − 1/G):
+
+| Group G : shared moves K | Attempts a deal (each range) | More attempts | Prefix moves saved | Prefix moves a deal |
+|---|---|---|---|---|
+| 1 : 20 (none shared, the same random streams otherwise) | 128.4 / 128.0 / 129.1 | — | — | 100% |
+| 4 : 10 | 128.8 / 129.5 / 129.2 | +0.5% | 20% | 80% |
+| 2 : 20 | 129.6 / 128.9 / 130.1 | +0.8% | 27% | 74% |
+| **4 : 15** | **129.6 / 129.9 / 129.6** | **+0.9%** | **30%** | **71%** |
+| 16 : 10 | 131.8 / 132.1 (two ranges) | +2.7% | 25% | 77% |
+| 8 : 15 | 132.2 / 131.8 (two ranges) | +2.7% | 35% | 67% |
+| **4 : 20** | **131.4 / 131.4 / 131.9** | **+2.4%** | **41%** | **60%** |
+| 8 : 20 | 134.8 / 134.9 / 135.4 | +5.1% | 47% | 56% |
+| 4 : 25 (first range only) | 134.2 | +4.5% | 51% | 51% |
+| 4 : 30 (first range only) | 144.1 | +12% | 61% | 44% |
+
+Runs repeat to about ±0.5%. Wins held (99,780–99,827 of 100,000 against 99,808, and 199,568–199,632 of 200,000) except
+at 30 shared moves (99,719). So sharing 15 to 20 moves in groups of 4 costs 1% to 2.5% more attempts and spares 30% to
+40% of the prefix moves, and the prefix warps are what limits `attempts_split`.
+
+**Considered, not tried:**
+- **Building it in `attempts_split`.** Number the attempts so that a group's tries are consecutive and one prefix
+  thread plays them all: the shared moves once, a copy of the row (its 13 words in registers, with the masks and
+  cards present), then for each try the copy taken back, its own moves and the residual queued; a deal won meanwhile
+  skips the group's remaining tries. The search warps' share of the work then
+  grows (the prefix warps' moves fall by 30–40% while searches rise by 1–2.5%), so the split of warps between the two
+  may need to change with it. Parameters (rungs, tries, budget, leap weight) are to be retuned only once every
+  planned change is in.
+
+## After Phase 8 — the prefix row in registers
+
+**The row.** `attempts_split`'s prefix threads now keep their row as 13 32-bit words in registers (card i is byte
+i % 4 of word i / 4, SENTINEL after the last pile), not 64 bytes of shared memory. Registers can't be indexed at run
+time, so everything is unrolled over the 13 words:
+- **Playing a move** shifts every word down a byte with a funnel shift and keeps the bytes below the gap, then puts
+  the mover's byte onto its target with a byte permute in the one word that holds it: about seven operations a word,
+  always all 13, where the shared-memory loop ran to the longest gap of the warp's 32 threads.
+- **The masks after a move** come from a window of the cards x − 6 to x + 5 around the pile x that moves: the padded
+  row's words from (x + 2) / 4 on are shifted into place by 8, 4, 2 and 1 words (27 selects, keeping only the words
+  still needed), then by the byte offset. The cards after the move are two byte permutes of the window, and all the
+  matches four cards at a time (`match4`); the bits a move can change are row_move's, counted from x − 6.
+- **No move is taken back.** The masks come from the window before the move is played, so a move that would leave no
+  move is rejected unplayed.
+- **The residual is free:** its 16 cards are the first four words. A deal loads straight into the words, with no 52
+  byte stores, and a won search replays its prefix in registers too.
+
+The same random numbers give the same moves. Checked three ways: a kernel file that played both rows side by side in
+every prefix thread found no difference in the move, the piles, the masks, the cards present or any card over
+100,000 deals (about 470M prefix moves), and trapped at once when a difference was forced. The test playouts now play
+every move on both rows and flag any difference after it, in the masks, the covered card, the cards or the residual
+(a forced difference failed the test). And both kernels win the same 99,808 deals.
+
+`accgpu`, 100,000 deals (seeds 2,000,000–2,099,999), alternated:
+
+| Kernel | Registers, local memory | Deals/s | Positions/s |
+|---|---|---|---|
+| Row in shared memory (`ed32edb`) | 72, 0 | 126,338–127,393 | 1,096–1,106M |
+| The same, allowed 80 registers | 75, 0 | 127,805–128,239 | 1,109–1,112M |
+| Row in registers, 72 registers | 72, 16 bytes spilled | 141,243–146,214 | 1,238–1,281M |
+| **Row in registers, 80 registers** (`__launch_bounds__(BLOCK, 768 / BLOCK)`) | **80, 0** | **147,778–149,212** | **1,297–1,309M** |
+
+Shared memory holds the kernel to 12 blocks of 64 anyway, so 80 registers lose no blocks.
+
+**In `acc batch`** (1M deals, seeds 6,000,000,000–6,000,999,999 every run, alternated with a build of `ed32edb`):
+**159,152 against 146,007 (+9%) with the CPU cool, 138,772 against 122,797 (+13%) with it hot** (another pair, run
+while the CPU fell from 45M to 10M positions/s, isn't comparable). The GPU did 1,199–1,204M positions/s against
+1,047–1,066M. Every deal was won, and no line failed verification. The hotter the CPU, the more deals the GPU solves
+(85% to 99% here), and the more of its gain shows.
+
+**The balance moved.** `accgpu --profile`: prefix threads waiting for room in the queue in 26.4% of their turns
+(19.8% before), search threads with no residual to take in 9.6% (17.6%). The prefix warps are no longer what limits
+the kernel; the search warps are nearer to it.
+
+**Tried, not kept:**
+- **Giving back the prefix threads' shared memory** (the search threads' asleep stacks only): 14 blocks fit, at
+  138,547–139,136 against 141,243–142,810 for 12 (both at 72 registers). More warps still don't help.
+
+**Considered, not tried:**
+- **More search warps than prefix warps** now that the prefix warps wait more: a parameter, so for the retune once
+  every planned change is in.
+- **Batches of 2 in the prefix warps:** cheaper now (one funnel-shift pass can close two gaps), but the prefix warps
+  have slack, so they would pay only with more search warps.

@@ -5,7 +5,8 @@
 // `playouts` kernel at the end lets the tests (crates/gpu/tests) check this rules code against the Rust engines.
 //
 // Everything stays on chip. The prefix plays on a 64-byte row in shared memory (stored byte-major, so a warp's 32
-// threads touch 32 different banks), starting from legal-move masks the host works out once per position. The
+// threads touch 32 different banks; in attempts_split, on 13 words in registers), starting from legal-move masks the
+// host works out once per position. The
 // search keeps its at most 16 cards in two 64-bit registers, recomputes the legal-move masks four cards at a time in
 // 32-bit words (match4), and undoes moves instead of copying positions. Its moves and covered cards are byte stacks in
 // registers, and so are the current depth's asleep moves; shared memory holds only the asleep moves of the depths
@@ -29,7 +30,8 @@
 // every thread one step (a prefix move or a search position) each turn of its loop, so the threads doing the same
 // thing step together: 1.7 times the deals per second (docs/BENCHMARKS.md, "After Phase 8 — where the GPU's time
 // goes" and "the GPU's bit operations"). `attempts_split`, the default, gives the prefixes and the searches warps of
-// their own, joined by a queue of residuals in shared memory: a quarter more again ("split warps").
+// their own, joined by a queue of residuals in shared memory, and keeps the prefix's row in registers: about 1.45
+// times the deals per second of attempts_stepwise ("split warps" and "the prefix row in registers").
 //
 // A position is 52 bytes of engine codes (suit << 4 | rank), SENTINEL after its last pile; a deal fills all 52.
 
@@ -254,6 +256,113 @@ __device__ int prefix_move(u8 (*row)[BLOCK], int t, int& len, u64& l1, u64& l3, 
         l1 = s1; l3 = s3;
         u64 bit = 1ull << pile;
         if (leap) c3 &= ~bit; else c1 &= ~bit;
+    }
+}
+
+// ---- The prefix row in registers (attempts_split's prefix warps): card i is byte i % 4 of R[i / 4], SENTINEL after
+// the last pile. Registers can't be indexed at run time, so every access is unrolled over all 13 words: a move closes
+// its gap with a funnel shift of each word, and the cards around it come from a window of three words picked out by a
+// barrel shift. Nothing goes through shared memory, and no thread waits for another's longer shift
+// (docs/BENCHMARKS.md, "the prefix row in registers").
+#define RW 13
+#define SENT4 0x7F7F7F7Fu
+
+// row_load into registers.
+__device__ __forceinline__ int rrow_load(u32 (&R)[RW], const u8* cards, const u64* m, u64& present, u64& l1, u64& l3) {
+    #pragma unroll
+    for (int j = 0; j < RW; j++) R[j] = __ldg((const u32*)cards + j);
+    l1 = __ldg(m); l3 = __ldg(m + 1); present = __ldg(m + 2);
+    return __popcll(present);
+}
+
+// Word p of the row with two SENTINEL words before it and after it (p is a constant once unrolled).
+__device__ __forceinline__ u32 rrow_padded(const u32 (&R)[RW], int p) {
+    return p >= 2 && p < RW + 2 ? R[p >= 2 && p < RW + 2 ? p - 2 : 0] : SENT4;
+}
+
+// Cards x - 6 .. x + 5 (SENTINEL outside the row) as three words, byte k card x - 6 + k: the padded words from
+// (x + 2) / 4 on, shifted into place a power of two at a time (only those still needed), then by the byte offset.
+__device__ __forceinline__ void rrow_window(const u32 (&R)[RW], int x, u32& w0, u32& w1, u32& w2) {
+    u32 q = (u32)(x + 2) >> 2, r = 8 * ((x + 2) & 3);    // card x - 6 is byte x + 2 of the padded row
+    u32 a[11], b[7], c[5], d[4];
+    #pragma unroll
+    for (int i = 0; i < 11; i++) a[i] = (q & 8) ? rrow_padded(R, i + 8) : rrow_padded(R, i);
+    #pragma unroll
+    for (int i = 0; i < 7; i++) b[i] = (q & 4) ? a[i + 4] : a[i];
+    #pragma unroll
+    for (int i = 0; i < 5; i++) c[i] = (q & 2) ? b[i + 2] : b[i];
+    #pragma unroll
+    for (int i = 0; i < 4; i++) d[i] = (q & 1) ? c[i + 1] : c[i];
+    w0 = __funnelshift_r(d[0], d[1], r);
+    w1 = __funnelshift_r(d[1], d[2], r);
+    w2 = __funnelshift_r(d[2], d[3], r);
+}
+
+// What playing pile x (onto x - 3 with `leap`, else onto x - 1) does, without playing it: the masks after it, which
+// row_move works out from the row after the move and this from the cards around x before it, and the mover and the
+// covered card.
+__device__ __forceinline__ void rrow_after(const u32 (&R)[RW], int len, u64 l1, u64 l3, int x, bool leap, u64& nl1,
+                                           u64& nl3, u32& mover, u32& covered) {
+    u32 w0, w1, w2;
+    rrow_window(R, x, w0, w1, w2);
+    mover = (w1 >> 16) & 0xFF;
+    covered = leap ? w0 >> 24 : (w1 >> 8) & 0xFF;
+    // Cards x - 6 .. x + 2 after the move, byte k card x - 6 + k: the mover on its target, the cards above x down one.
+    u32 n0 = leap ? __byte_perm(w0, mover, 0x4210) : w0;
+    u32 n1 = __byte_perm(w1, w2, 0x4310);
+    n1 = leap ? n1 : __byte_perm(n1, mover, 0x3240);
+    u32 n2 = w2 >> 8;
+    // Bit k: card x - 6 + k matches the card before it (s) or three before it (l).
+    u32 s = gather4(match4(n0, n0 << 8)) | gather4(match4(n1, __funnelshift_l(n0, n1, 8))) << 4
+            | gather4(match4(n2, __funnelshift_l(n1, n2, 8))) << 8;
+    u32 l = gather4(match4(n0, n0 << 24)) | gather4(match4(n1, __funnelshift_l(n0, n1, 24))) << 4
+            | gather4(match4(n2, __funnelshift_l(n1, n2, 24))) << 8;
+    // The bits the move can change (row_move's w1 and w3, counted from x - 6).
+    u32 ks = leap ? 0x058u : 0x020u, kl = leap ? 0x1C8u : 0x0E0u;
+    u64 low = (1ull << x) - 1;
+    u64 m1 = (l1 & low) | ((l1 >> 1) & ~low), m3 = (l3 & low) | ((l3 >> 1) & ~low);
+    u64 valid = (1ull << (len - 1)) - 1;
+    nl1 = ((m1 & ~(((u64)ks << x) >> 6)) | (((u64)(s & ks) << x) >> 6)) & valid & ~1ull;
+    nl3 = ((m3 & ~(((u64)kl << x) >> 6)) | (((u64)(l & kl) << x) >> 6)) & valid & ~7ull;
+}
+
+// Plays pile x onto pile y (below it): the mover onto y's byte, and every card above x down one place.
+__device__ __forceinline__ void rrow_play(u32 (&R)[RW], int x, int y, u32 mover) {
+    int yw = y >> 2;
+    u32 ysel = (0x3210u & ~(0xFu << (4 * (y & 3)))) | (4u << (4 * (y & 3)));
+    #pragma unroll
+    for (int j = 0; j < RW; j++) {
+        u32 next = j + 1 < RW ? R[j + 1 < RW ? j + 1 : 0] : SENT4;
+        u32 keep = __funnelshift_lc(0xFFFFFFFFu, 0u, (u32)max(8 * x - 32 * j, 0));   // the bytes below x
+        u32 v = (R[j] & keep) | (__funnelshift_r(R[j], next, 8) & ~keep);
+        R[j] = j == yw ? __byte_perm(v, mover, ysel) : v;
+    }
+}
+
+// prefix_move on the register row: the same choice and the same moves. A move that would leave no move is found from
+// the masks before it is played, so it is never played and taken back.
+__device__ __forceinline__ int rrow_prefix_move(u32 (&R)[RW], int& len, u64& l1, u64& l3, u64& present, u32& rng,
+                                                u32 leap_shift) {
+    u64 c1 = l1, c3 = l3;
+    for (;;) {
+        u32 n1 = __popcll(c1), n3 = __popcll(c3);
+        if (n1 + n3 == 0) return -1;
+        u32 k = below(rng, n1 + (n3 << leap_shift));
+        bool leap = k >= n1;
+        int x = leap ? select_bit64(c3, (k - n1) >> leap_shift) : select_bit64(c1, k);
+        u64 nl1, nl3;
+        u32 mover, covered;
+        rrow_after(R, len, l1, l3, x, leap, nl1, nl3, mover, covered);
+        if ((nl1 | nl3) == 0 && len > 2) {           // no move left after it: choose another
+            u64 bit = 1ull << x;
+            if (leap) c3 &= ~bit; else c1 &= ~bit;
+            continue;
+        }
+        rrow_play(R, x, x - (leap ? 3 : 1), mover);
+        len--;
+        l1 = nl1; l3 = nl3;
+        present &= ~(1ull << covered);
+        return x << 1 | (leap ? 1 : 0);
     }
 }
 
@@ -733,17 +842,17 @@ extern "C" __global__ void __launch_bounds__(BLOCK, 14) attempts_stepwise(
     )
 }
 
-// Writes a won attempt's line: the search's `depth` moves (on the via stack) after its prefix, which it plays again
-// from the attempt's random numbers on the thread's row.
-__device__ __forceinline__ void write_line(u8 (*row)[BLOCK], int t, const u8* deals, const u64* deal_masks, u8* lines,
-                                           u32 deal, u32 a, u64 seed, int moves, int depth, u64 via_lo, u64 via_hi,
-                                           u32 leap_shift) {
+// Writes a won attempt's line (attempts_split): the search's `depth` moves (on the via stack) after its prefix, which
+// it plays again from the attempt's random numbers.
+__device__ __forceinline__ void write_line(const u8* deals, const u64* deal_masks, u8* lines, u32 deal, u32 a, u64 seed,
+                                           int moves, int depth, u64 via_lo, u64 via_hi, u32 leap_shift) {
     u8* out = lines + (u64)deal * 51;
     for (int d = 0; d < depth; d++) out[moves + d] = (u8)card_at(via_lo, via_hi, depth - 1 - d);
     u32 r = seed_u32(seed ^ (0x9E3779B97F4A7C15ull * (a + 1)));
     u64 present, l1, l3;
-    int n = row_load(row, t, deals + (u64)deal * 52, deal_masks + 3 * (u64)deal, present, l1, l3);
-    for (int i = 0; i < moves; i++) out[i] = (u8)prefix_move(row, t, n, l1, l3, present, r, leap_shift);
+    u32 R[RW];
+    int n = rrow_load(R, deals + (u64)deal * 52, deal_masks + 3 * (u64)deal, present, l1, l3);
+    for (int i = 0; i < moves; i++) out[i] = (u8)rrow_prefix_move(R, n, l1, l3, present, r, leap_shift);
 }
 
 #define QSIZE 32           // residuals attempts_split's queue holds
@@ -757,11 +866,12 @@ __device__ __forceinline__ void write_line(u8 (*row)[BLOCK], int t, const u8* de
 // Queue entry i (counted over the launch) lives in slot i % QSIZE, whose number says where it is: i, the slot is free
 // for it; i + 1, written; i + QSIZE, copied out, and the slot free for entry i + QSIZE. Prefix warps reserve runs of
 // free entries and search warps take runs of written ones, a compare-and-swap each; slots are freed out of order, by
-// threads of different warps. Search threads keep their asleep stacks in their bytes of s_mem, and replay a won
-// attempt's prefix there to write its line.
-// At most 72 registers (28 warps a multiprocessor); the queue's shared memory leaves room for 12 blocks of 64 on the
-// T550, where 1 prefix warp to 1 search warp ran fastest (docs/BENCHMARKS.md, "split warps").
-extern "C" __global__ void __launch_bounds__(BLOCK, 896 / BLOCK) attempts_split(
+// threads of different warps. Prefix threads keep their rows in registers, search threads their asleep stacks in
+// their bytes of s_mem (the prefix threads' bytes go unused: freeing them fits 14 blocks of 64, which ran slower).
+// The queue's shared memory leaves room for 12 blocks of 64 on the T550, where 1 prefix warp to 1 search warp ran
+// fastest (docs/BENCHMARKS.md, "split warps"), so the kernel may take 80 registers (24 warps a multiprocessor); at 72
+// it spilled.
+extern "C" __global__ void __launch_bounds__(BLOCK, 768 / BLOCK) attempts_split(
     const u8* __restrict__ deals, const u64* __restrict__ deal_masks, u32 n_deals, u64 inv_deals, u32 tries,
     u32 prefix, u32 tries2, u32 prefix2, u32 budget, u32 conn_gate, u32 leftmost, u32 leap_shift,
     u64 seed, u32* next_attempt, u32* won, u8* lines, u64* deal_counts, u64* profile)
@@ -772,7 +882,6 @@ extern "C" __global__ void __launch_bounds__(BLOCK, 896 / BLOCK) attempts_split(
     __shared__ u32 q_rng[QSIZE], q_a[QSIZE], q_seq[QSIZE];        // its random state and attempt; the slot's number
     __shared__ u8 q_moves[QSIZE];                                 // its prefix's moves
     __shared__ u32 q_resv, q_head, q_closed;                      // entries reserved, entries taken, prefix warps done
-    u8 (*s_row)[BLOCK] = (u8 (*)[BLOCK])s_mem;
     const int t = threadIdx.x;
     const u32 lane = t & 31, FULL = 0xFFFFFFFFu, below_me = (1u << lane) - 1, prefix_warps = BLOCK / 64;
     if (t == 0) q_resv = q_head = q_closed = 0;
@@ -796,6 +905,9 @@ extern "C" __global__ void __launch_bounds__(BLOCK, 896 / BLOCK) attempts_split(
         u32 a = 0, deal = 0, k_moves = 0, rng = 1;
         int moves = 0, len = 0;
         u64 present = 0, l1 = 0, l3 = 0;
+        u32 R[RW];
+        #pragma unroll
+        for (int j = 0; j < RW; j++) R[j] = SENT4;
         for (;;) {
             u32 need = __ballot_sync(FULL, phase == FETCH), got = 0;
             while (need) {
@@ -831,7 +943,7 @@ extern "C" __global__ void __launch_bounds__(BLOCK, 896 / BLOCK) attempts_split(
                 } else {
                     k_moves = attempt_try < tries ? prefix : prefix2;
                     rng = seed_u32(seed ^ (0x9E3779B97F4A7C15ull * (a + 1)));
-                    len = row_load(s_row, t, deals + (u64)deal * 52, deal_masks + 3 * (u64)deal, present, l1, l3);
+                    len = rrow_load(R, deals + (u64)deal * 52, deal_masks + 3 * (u64)deal, present, l1, l3);
                     moves = 0;
                     phase = PREFIX;
                 }
@@ -842,18 +954,18 @@ extern "C" __global__ void __launch_bounds__(BLOCK, 896 / BLOCK) attempts_split(
             if (phase == PREFIX) {
                 u32 n1 = __popcll(l1), n3 = __popcll(l3);
                 if (moves < (int)k_moves && n1 + n3 > 0) {
-                    if (prefix_move(s_row, t, len, l1, l3, present, rng, leap_shift) < 0) k_moves = moves;   // all lose
+                    if (rrow_prefix_move(R, len, l1, l3, present, rng, leap_shift) < 0) k_moves = moves;   // all lose
                     else moves++;
                 } else {
                     // Stuck before the residual got small, or already disconnected: lost anyway.
-                    bool linked = leftmost ? connected_without_leftmost(present, s_row[OFF][t], len) : connected(present);
+                    bool linked = leftmost ? connected_without_leftmost(present, R[0] & 0xFF, len) : connected(present);
                     bool search = len <= RES && !(len > 1 && len <= (int)conn_gate && !linked);
                     if (search && len > 1) {
                         phase = READY;
                     } else {
                         atomicAdd(&deal_counts[deal], (u64)moves << 16 | 1u);
                         if (search && atomicCAS(&won[deal], 0u, 1u) == 0u)       // one pile left: won outright
-                            write_line(s_row, t, deals, deal_masks, lines, deal, a, seed, moves, 0, 0, 0, leap_shift);
+                            write_line(deals, deal_masks, lines, deal, a, seed, moves, 0, 0, 0, leap_shift);
                         phase = FETCH;
                     }
                 }
@@ -876,8 +988,7 @@ extern "C" __global__ void __launch_bounds__(BLOCK, 896 / BLOCK) attempts_split(
                 }
                 if (phase == READY && __popc(ready & below_me) < k) {
                     u32 i = r + __popc(ready & below_me), slot = i % QSIZE;
-                    u64 lo, hi;
-                    load_residual(s_row, t, len, lo, hi);
+                    u64 lo = R[0] | (u64)R[1] << 32, hi = R[2] | (u64)R[3] << 32;   // the first 16 cards
                     q_lo[slot] = lo; q_hi[slot] = hi; q_present[slot] = present;
                     q_rng[slot] = rng; q_a[slot] = a; q_moves[slot] = (u8)moves;
                     __threadfence_block();             // the entry before its number
@@ -1031,8 +1142,7 @@ extern "C" __global__ void __launch_bounds__(BLOCK, 896 / BLOCK) attempts_split(
             if (phase == FINISH) {
                 atomicAdd(&deal_counts[deal], (u64)(moves + used) << 16 | 1u);
                 if (win && atomicCAS(&won[deal], 0u, 1u) == 0u)
-                    write_line(s_row, t, deals, deal_masks, lines, deal, a, seed, moves, depth, via_lo, via_hi,
-                               leap_shift);
+                    write_line(deals, deal_masks, lines, deal, a, seed, moves, depth, via_lo, via_hi, leap_shift);
                 win = false;
                 phase = TAKE;
             }
@@ -1057,10 +1167,12 @@ extern "C" __global__ void __launch_bounds__(BLOCK, 896 / BLOCK) attempts_split(
 
 // Random playouts for the tests (crates/gpu/tests), one per thread, recording what the code above computes at every
 // step for the CPU to check against its engines. While the position has more than RES piles it plays on the row (the
-// prefix's code); from RES piles down, in registers (the search's code), where every move is also undone and redone.
+// prefix's code), and the same moves on the register row (attempts_split's prefix); from RES piles down, in registers
+// (the search's code), where every move is also undone and redone.
 // Per step, the position's slide and leap masks (two u64), the move played from it (pile << 1 | leap, or 0xFF when
 // there is none, which ends the playout), and flags: bit 0 connected(present), bit 1 the last move broke a link
-// (breaks_link), bit 2 undoing the move did not restore the position, bit 3 connected_without_leftmost.
+// (breaks_link), bit 2 undoing the move did not restore the position, bit 3 connected_without_leftmost, bit 4 the
+// register row disagreed with the row (on the masks after the move, the covered card, the cards, or the residual).
 extern "C" __global__ void __launch_bounds__(BLOCK) playouts(
     const u8* __restrict__ positions, const u64* __restrict__ position_masks, u32 n, u64 seed,
     u64* masks_out,                    // 52 steps × 2 per playout
@@ -1073,11 +1185,15 @@ extern "C" __global__ void __launch_bounds__(BLOCK) playouts(
     u32 rng = seed_u32(seed ^ (0x9E3779B97F4A7C15ull * (p + 1)));
     u64 present, l1, l3, lo = 0, hi = 0;
     int len = row_load(s_row, t, positions + (u64)p * 52, position_masks + 3 * (u64)p, present, l1, l3);
-    bool regs = false, link = false;
+    u32 R[RW];
+    u64 r_present, r1, r3;
+    rrow_load(R, positions + (u64)p * 52, position_masks + 3 * (u64)p, r_present, r1, r3);
+    bool regs = false, link = false, differs = false;
     for (int step = 0; step < 52; step++) {
         const u64 at = (u64)p * 52 + step;
         if (!regs && len <= RES) {
             load_residual(s_row, t, len, lo, hi);
+            differs |= lo != (R[0] | (u64)R[1] << 32) || hi != (R[2] | (u64)R[3] << 32);
             regs = true;
         }
         u64 ms = l1, ml = l3;
@@ -1089,7 +1205,8 @@ extern "C" __global__ void __launch_bounds__(BLOCK) playouts(
         masks_out[2 * at] = ms;
         masks_out[2 * at + 1] = ml;
         u32 left = regs ? card_at(lo, hi, 0) : s_row[OFF][t];
-        u8 flags = (connected(present) ? 1 : 0) | (link ? 2 : 0) | (connected_without_leftmost(present, left, len) ? 8 : 0);
+        u8 flags = (connected(present) ? 1 : 0) | (link ? 2 : 0) | (connected_without_leftmost(present, left, len) ? 8 : 0)
+                   | (differs ? 16 : 0);
         u8 mv = 0xFF;
         u32 n1 = __popcll(ms), n3 = __popcll(ml);
         if (n1 + n3 > 0) {
@@ -1112,7 +1229,15 @@ extern "C" __global__ void __launch_bounds__(BLOCK) playouts(
                 lo = lo1; hi = hi1;
                 len--;
             } else {
+                u64 n1r, n3r;
+                u32 mover_r, covered_r;
+                rrow_after(R, len, r1, r3, pile, leap, n1r, n3r, mover_r, covered_r);
+                rrow_play(R, pile, pile - (leap ? 3 : 1), mover_r);
+                r1 = n1r; r3 = n3r;
                 covered = row_move(s_row, t, len, l1, l3, pile, leap);
+                differs |= r1 != l1 || r3 != l3 || covered_r != covered;
+                #pragma unroll
+                for (int i = 0; i < 52; i++) differs |= ((R[i >> 2] >> (8 * (i & 3))) & 0xFF) != s_row[OFF + i][t];
             }
             present &= ~(1ull << covered);
             link = breaks_link(present, covered);

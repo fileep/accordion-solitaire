@@ -110,6 +110,11 @@ fn check_playout(name: &str, tops: &[Card], p: &accordion_gpu::Playout) {
             "{name}, step {k}: connectivity without the leftmost card differs"
         );
         assert_eq!(p.flags[k] & 4, 0, "{name}, step {k}: undo did not restore the position");
+        assert_eq!(
+            p.flags[k] & 16,
+            0,
+            "{name}, step {k}: the register row differs from the shared-memory row"
+        );
         if p.moves[k] == 0xFF {
             assert_eq!(k, steps - 1);
             assert_eq!(

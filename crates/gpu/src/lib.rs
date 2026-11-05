@@ -74,8 +74,8 @@ pub struct Settings {
     pub stepwise: bool,
     /// Play prefixes and search in different warps (kernel.cu `attempts_split`; `stepwise` then doesn't matter): half
     /// a block's warps play prefixes and queue the residuals for the other half to search, so neither waits for the
-    /// other's step. A quarter more deals a second on the T550 than `attempts_stepwise`. `block` must be a multiple of
-    /// 64.
+    /// other's step; the prefix's row is in registers. About 1.45 times the deals a second of `attempts_stepwise` on
+    /// the T550. `block` must be a multiple of 64.
     pub split: bool,
 }
 
@@ -206,7 +206,8 @@ pub struct Playout {
     pub masks: Vec<(u64, u64)>,
     /// The move played from it, `pile << 1 | leap`; the last step has none.
     pub moves: Vec<u8>,
-    /// Bit 0: connected; bit 1: the move before broke a link; bit 2: undo failed.
+    /// Bit 0: connected; bit 1: the move before broke a link; bit 2: undo failed; bit 3: connected without the
+    /// leftmost card; bit 4: the register row (`attempts_split`'s prefix) disagreed with the row in shared memory.
     pub flags: Vec<u8>,
 }
 
