@@ -74,8 +74,8 @@ pub struct Settings {
     pub stepwise: bool,
     /// Play prefixes and search in different warps (kernel.cu `attempts_split`; `stepwise` then doesn't matter):
     /// `prefix_warps` of a block's warps play prefixes and queue the residuals for the others to search, so neither
-    /// waits for the other's step; the prefix's row is in registers. About 1.45 times the deals a second of
-    /// `attempts_stepwise` on the T550 (half the warps each, without shared moves). `block` must be a multiple of 32.
+    /// waits for the other's step; the prefix's row is in registers and its warps go in lockstep. About 2.2 times the
+    /// deals a second of `attempts_stepwise` on the T550. `block` must be a multiple of 32.
     pub split: bool,
     /// The warps of a block that play prefixes with `split` (kernel.cu `PREFIX_THREADS`); `block` must hold more.
     pub prefix_warps: u32,
@@ -83,7 +83,7 @@ pub struct Settings {
     /// deal's tries go in groups of `share_group`, whose first `share_moves` prefix moves are played once; each try
     /// then plays the rest of its prefix from the row they left, and searches. 1 shares nothing.
     pub share_group: u32,
-    /// At least 12 when `share_group` is more than 1 (the kept row holds 40 cards).
+    /// From 4 up to the shorter rung's random moves when `share_group` is more than 1.
     pub share_moves: u32,
 }
 
@@ -142,9 +142,12 @@ impl Settings {
         if self.share_group == 0 || self.share_group > 64 {
             return Err(format!("share_group: {}; 1 to 64", self.share_group));
         }
-        if self.share_group > 1 && !(12..=MAX_PREFIX).contains(&self.share_moves) {
+        if let Some(shortest) = self.rungs.iter().map(|&[p, _]| p).min()
+            && self.share_group > 1
+            && !(4..=shortest).contains(&self.share_moves)
+        {
             return Err(format!(
-                "share_moves: {}; 12 to {MAX_PREFIX} (the kept row holds 40 cards)",
+                "share_moves: {}; 4 to {shortest}, the shorter rung's moves",
                 self.share_moves
             ));
         }

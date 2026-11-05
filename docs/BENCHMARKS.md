@@ -1225,3 +1225,50 @@ alternated; the CPU's speed moves with heat from 10M to 106M positions/s, so it 
 An earlier set: no sharing 144,734–160,777, 4 : 15 at 1:1 145,938–159,536, 4 : 25 at 3:5 156,610–161,334, and 8 : 25 at
 1:2 160,761–174,155. So **8 : 20 at 1:2 gives +8% to +16% over the same conditions without sharing,** and 186,447 deals/s
 with the CPU cool. Every deal was won and no line failed verification.
+
+## After Phase 8 — prefix warps in lockstep
+
+**The rewrite.** With shared moves a prefix thread's work has a fixed shape, so a warp's 32 threads now do it together.
+Each takes a group of tries; together they play the groups' shared moves and keep the rows, then play try after try, and
+before starting the next they queue all of their residuals. A thread whose group ends early (its deal won, or the group
+short) waits for the warp's next groups. That gives three things at once:
+- **Every thread is on the same move,** so at move m a row has at most 52 − m cards, and a move touches only the words
+  that can hold them: the try's own moves run on 8, 7, 6, 5 then 4 words, with a uniform branch between those lengths,
+  and on 3 barrel-shift stages where 4 were needed (x ≤ 29 from move 22 on). Rows of at most 32 cards keep their masks
+  in 32 bits (64-bit shifts take several instructions each).
+- **Taking work happens once a cycle.** It took 9.4% of thread time when each thread took a group as it ended, so that
+  some thread's scan of won deals stalled the warp every few turns; now it is under 1%.
+- **The threads stay together:** 29.6 of 32 stepping, against 23.6 when they waited for queue room one by one.
+
+**A move does less, too.** Only the links a move can change get tested: two `match4` a move where there were six (cards
+3 to 6 against the card before each; cards 5 to 8 against the card three before them, with the first place used for the
+mover). The mask to select from is chosen before selecting a bit, not after selecting from both. The prefix no longer
+tracks the cards present; they come from the residual's 16 cards at the end. The kept row is 10 words, and holds what a
+row needs at any `share_moves` from 4 up, so nothing is ever played twice. A rung's prefix shorter than the shared moves
+(the tests' small positions) means no sharing in that launch.
+
+**Checked.** Every length of the row plays the same moves as the 13-word row and the byte row: the test playouts play all
+that fit each position and flag any difference (new: all 10 forms, the masks after the move, the row, and the cards
+present at the end). Same wins as the previous kernel, 99,785 of 100,000, as the random numbers are the same.
+
+**Two smaller changes.** Search threads keep their asleep moves in one 32-bit word a depth, one access where there were
+four bytes on a contended bank (+1% where the search limits it). They also take residuals only once 4 of them need one or
+fewer than 16 are searching, not on nearly every turn (+5.6% where the search limits it, +1.5% here; 2 needing one lost a
+little, and 8 lost).
+
+`accgpu`, 100,000 deals (seeds 2,000,000–2,099,999), one CPU thread, alternated:
+
+| Kernel, warps (block) | Deals/s | Won | Positions/s |
+|---|---|---|---|
+| Previous commit, 1:2 (96) | 164,452–166,678 | 99,785 | 1,538–1,558M |
+| **Lockstep, 1:2 (96)** | **225,734–226,087** | **99,785** | **2,120–2,124M** |
+| Lockstep, 1:1 (64) | 196,738 | 99,785 | 1,824M |
+| Lockstep, 1:3 (128) | 201,875–201,938 | 99,785 | 1,890M |
+| Lockstep, 1:4 (160; 95 registers) | 172,439–178,666 | 99,785 | 1,589–1,646M |
+
+**In `acc batch`** (1M deals, seeds 6,000,000,000–6,000,999,999 every run, alternated with the previous commit's build):
+**237,930, 232,996 and 237,338 deals/s against 184,494, 172,415 and 170,934 (+29% to +39%)**, GPU 2,056–2,128M
+positions/s against 1,475–1,505M. Every deal was won and no line failed verification.
+
+**The balance moved again:** prefix threads wait for queue room in 37% of their turns (profile build), search threads
+starve in 3%, and searching is 54% of thread time. The search is what limits it now.
