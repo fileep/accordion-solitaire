@@ -59,6 +59,9 @@ pub struct Settings {
     /// The stronger connectivity test that leaves pile 0's card out (accordion_core::fast's
     /// `connected_without_leftmost`): about 50% faster on the T550.
     pub leftmost: bool,
+    /// How much likelier a prefix leap is than a slide, a power of two (1: every legal move alike; kernel.cu
+    /// `prefix_move`).
+    pub leap_weight: u32,
     pub seed: u64,
     /// Compile the kernel with its profile counters ([`BatchResult::profile`]); slower, for measuring only.
     pub profile: bool,
@@ -77,6 +80,7 @@ impl Default for Settings {
             blocks_per_sm: 16,
             conn_gate: 19,
             leftmost: true,
+            leap_weight: 8,
             seed: 0x5EED,
             profile: false,
             stepwise: true,
@@ -98,6 +102,9 @@ impl Settings {
         if tries > u64::from(MAX_TRIES) {
             return Err(format!("rungs: {tries} tries per deal in all; at most {MAX_TRIES}"));
         }
+        if !self.leap_weight.is_power_of_two() || self.leap_weight > 1 << 16 {
+            return Err(format!("leap_weight: {}; a power of two up to 65536", self.leap_weight));
+        }
         if self.batch == 0 || self.block == 0 || self.block > 256 || self.blocks_per_sm == 0 {
             return Err("batch, block (at most 256) and blocks_per_sm must be positive".into());
         }
@@ -116,6 +123,7 @@ impl Settings {
             budget: self.budget,
             conn_gate: self.conn_gate,
             leftmost: self.leftmost,
+            leap_shift: self.leap_weight.max(1).trailing_zeros(),
             seed: self.seed.wrapping_add(launch),
         }
     }
@@ -136,6 +144,8 @@ pub struct Attempts {
     pub conn_gate: u32,
     /// The stronger test without pile 0's card.
     pub leftmost: bool,
+    /// A prefix leap is 2^leap_shift times as likely as a slide.
+    pub leap_shift: u32,
     pub seed: u64,
 }
 
@@ -399,6 +409,7 @@ impl Gpu {
             .arg(&a.budget)
             .arg(&a.conn_gate)
             .arg(&leftmost)
+            .arg(&a.leap_shift)
             .arg(&a.seed)
             .arg(&mut next)
             .arg(&mut won)

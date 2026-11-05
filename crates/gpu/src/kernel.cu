@@ -210,6 +210,47 @@ __device__ __forceinline__ u32 row_move(u8 (*row)[BLOCK], int t, int& len, u64& 
     return covered;
 }
 
+// Takes back row_move (the position after it has `len` piles): the piles from `pile` on move up one place, and the
+// mover and the covered card go back.
+__device__ __forceinline__ void row_unmove(u8 (*row)[BLOCK], int t, int len, int pile, bool leap, u32 mover,
+                                           u32 covered) {
+    for (int i = OFF + len; i > OFF + pile; i--) row[i][t] = row[i - 1][t];
+    row[OFF + pile][t] = mover;
+    row[OFF + pile - (leap ? 3 : 1)][t] = covered;
+}
+
+// One move of the random prefix, played; returns pile << 1 | leap, or -1 when every legal move leaves a position
+// with no move and more than one pile (each loses; so does this position). Not quite uniform, by measurement
+// (docs/BENCHMARKS.md, "After Phase 8 — less random prefixes"):
+// - a leap is 2^leap_shift times as likely as a slide (8: about a fifth more deals a second on the T550, and a third
+//   of the misses; leaps only, or longer prefixes, did worse);
+// - a move that leaves no move is taken back and another chosen, which can only spare attempts that would lose.
+// The same random numbers choose the same moves, so a winning attempt replays its prefix to write its line.
+__device__ int prefix_move(u8 (*row)[BLOCK], int t, int& len, u64& l1, u64& l3, u64& present, u32& rng,
+                           u32 leap_shift) {
+    u64 c1 = l1, c3 = l3;
+    for (;;) {
+        u32 n1 = __popcll(c1), n3 = __popcll(c3);
+        if (n1 + n3 == 0) return -1;
+        u32 k = below(rng, n1 + (n3 << leap_shift));
+        bool leap = k >= n1;
+        int pile = leap ? select_bit64(c3, (k - n1) >> leap_shift) : select_bit64(c1, k);
+        int d = leap ? 3 : 1;
+        u32 mover = row[OFF + pile][t], covered = row[OFF + pile - d][t];
+        u64 s1 = l1, s3 = l3;
+        row_move(row, t, len, l1, l3, pile, leap);
+        if ((l1 | l3) != 0 || len == 1) {
+            present &= ~(1ull << covered);
+            return pile << 1 | (leap ? 1 : 0);
+        }
+        row_unmove(row, t, len, pile, leap, mover, covered);   // no move left: take it back
+        len++;
+        l1 = s1; l3 = s3;
+        u64 bit = 1ull << pile;
+        if (leap) c3 &= ~bit; else c1 &= ~bit;
+    }
+}
+
 // ---- The residual: card i is byte i of (lo, hi); bytes at and above len hold SENTINEL.
 
 __device__ __forceinline__ u32 card_at(u64 lo, u64 hi, int i) {
@@ -308,6 +349,7 @@ extern "C" __global__ void __launch_bounds__(BLOCK) attempts(
     u32 n_deals, u64 inv_deals,        // positions, and ceil(2^64 / n_deals)
     u32 tries, u32 prefix, u32 tries2, u32 prefix2, u32 budget, u32 conn_gate,
     u32 leftmost,                      // 1: the connectivity test leaves pile 0's card out (stronger)
+    u32 leap_shift,                    // a prefix leap is 2^leap_shift times as likely as a slide (prefix_move)
     u64 seed,
     u32* next_attempt,                 // global work counter, starts at 0
     u32* won,                          // per position: 0, or 1 once some attempt has won it
@@ -346,13 +388,7 @@ extern "C" __global__ void __launch_bounds__(BLOCK) attempts(
         int moves = 0;
         while (moves < (int)k_moves) {
             PROF(if ((t & 31) == __ffs(__activemask()) - 1) pf[P_PREFIX_WARP_STEPS]++; pf[P_PREFIX_STEPS]++;)
-            u32 n1 = __popcll(l1), n3 = __popcll(l3);
-            if (n1 + n3 == 0) break;
-            u32 k = below(rng, n1 + n3);
-            bool leap = k >= n1;
-            int pile = leap ? select_bit64(l3, k - n1) : select_bit64(l1, k);
-            u32 covered = row_move(s_row, t, len, l1, l3, pile, leap);
-            present &= ~(1ull << covered);
+            if ((l1 | l3) == 0 || prefix_move(s_row, t, len, l1, l3, present, rng, leap_shift) < 0) break;
             moves++;
         }
         LAP(P_PREFIX);
@@ -454,14 +490,7 @@ extern "C" __global__ void __launch_bounds__(BLOCK) attempts(
             // Replay the prefix: the same random numbers on the same position choose the same moves.
             u32 r = prefix_rng;
             int n = row_load(s_row, t, deals + (u64)deal * 52, deal_masks + 3 * (u64)deal, present, l1, l3);
-            for (int i = 0; i < moves; i++) {
-                u32 n1 = __popcll(l1), n3 = __popcll(l3);
-                u32 k = below(r, n1 + n3);
-                bool leap = k >= n1;
-                int pile = leap ? select_bit64(l3, k - n1) : select_bit64(l1, k);
-                row_move(s_row, t, n, l1, l3, pile, leap);
-                out[i] = (u8)(pile << 1 | (leap ? 1 : 0));
-            }
+            for (int i = 0; i < moves; i++) out[i] = (u8)prefix_move(s_row, t, n, l1, l3, present, r, leap_shift);
         }
         LAP(P_RESULT);
     }
@@ -484,8 +513,8 @@ extern "C" __global__ void __launch_bounds__(BLOCK) attempts(
 // threads that need one.
 extern "C" __global__ void __launch_bounds__(BLOCK) attempts_stepwise(
     const u8* __restrict__ deals, const u64* __restrict__ deal_masks, u32 n_deals, u64 inv_deals, u32 tries,
-    u32 prefix, u32 tries2, u32 prefix2, u32 budget,
-    u32 conn_gate, u32 leftmost, u64 seed, u32* next_attempt, u32* won, u8* lines, u64* deal_counts, u64* profile)
+    u32 prefix, u32 tries2, u32 prefix2, u32 budget, u32 conn_gate, u32 leftmost, u32 leap_shift,
+    u64 seed, u32* next_attempt, u32* won, u8* lines, u64* deal_counts, u64* profile)
 {
     enum { DS = 0, DL = 2 * RES, BYTES = 4 * RES };
     enum { FETCH, PREFIX, SEARCH, FINISH, DONE };
@@ -558,12 +587,8 @@ extern "C" __global__ void __launch_bounds__(BLOCK) attempts_stepwise(
             PROF(if (lane == __ffs(__activemask()) - 1) pf[P_PREFIX_WARP_STEPS]++; pf[P_PREFIX_STEPS]++;)
             u32 n1 = __popcll(l1), n3 = __popcll(l3);
             if (moves < (int)k_moves && n1 + n3 > 0) {
-                u32 k = below(rng, n1 + n3);
-                bool leap = k >= n1;
-                int pile = leap ? select_bit64(l3, k - n1) : select_bit64(l1, k);
-                u32 covered = row_move(s_row, t, len, l1, l3, pile, leap);
-                present &= ~(1ull << covered);
-                moves++;
+                if (prefix_move(s_row, t, len, l1, l3, present, rng, leap_shift) < 0) k_moves = moves;   // all lose
+                else moves++;
             } else {
                 // Stuck before the residual got small, or already disconnected: lost anyway.
                 bool linked = leftmost ? connected_without_leftmost(present, s_row[OFF][t], len) : connected(present);
@@ -677,12 +702,7 @@ extern "C" __global__ void __launch_bounds__(BLOCK) attempts_stepwise(
                 u32 r = prefix_rng;
                 int n = row_load(s_row, t, deals + (u64)deal * 52, deal_masks + 3 * (u64)deal, present, l1, l3);
                 for (int i = 0; i < moves; i++) {
-                    u32 n1 = __popcll(l1), n3 = __popcll(l3);
-                    u32 k = below(r, n1 + n3);
-                    bool leap = k >= n1;
-                    int pile = leap ? select_bit64(l3, k - n1) : select_bit64(l1, k);
-                    row_move(s_row, t, n, l1, l3, pile, leap);
-                    out[i] = (u8)(pile << 1 | (leap ? 1 : 0));
+                    out[i] = (u8)prefix_move(s_row, t, n, l1, l3, present, r, leap_shift);
                 }
             }
             win = false;

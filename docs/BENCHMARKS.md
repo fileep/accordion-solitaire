@@ -752,3 +752,61 @@ against 62,668 deals/s (+38%), then 74,617 against 55,704 (+34%). The GPU did 70
 **What is left.** Each turn of the loop still runs the prefix branch and the search branch one after the other, each
 with about half the warp's threads. Splitting them (prefixes in some warps or a kernel of their own, searches of the
 residuals they leave in others) would let each warp run one branch; it is the next large step, and a larger change.
+
+## After Phase 8 — less random prefixes
+
+**The question.** An attempt's 36–38 random moves chose uniformly among the legal moves, and half its prefixes were
+wasted: 25.9% got stuck (no move left with more than one pile) and 24.9% left the cards disconnected, both certain
+losses. Could the random moves steer away from those dead ends, or towards positions with more moves, and win a deal
+in fewer attempts? Each policy was a kernel file timed with `accgpu --kernel` (100,000 deals, seeds 200,000–299,999,
+the GPU on its own, in alternation with the kernel before it). Policies can't change which deals are winnable, only
+how soon an attempt finds a line; a winning attempt replays its prefix with the same random numbers to write its line.
+
+**Kept** (`prefix_move` in kernel.cu, both attempt kernels):
+- **No move into a stuck position.** A move that leaves no legal move, with more than one pile, is taken back
+  (`row_unmove`) and another legal move chosen; when every legal move does that, the position itself is lost and the
+  prefix ends there. A rejected move could never have led to a win, so this only spares attempts that would lose.
+- **A leap is 8 times as likely as a slide** (`Settings::leap_weight`, a power of two; 1 gives every legal move the
+  same chance). Weighting by a runtime argument with a division cost about 4%, so the kernel takes the weight as a
+  shift.
+
+| GPU alone, 100,000 deals | Deals/s | Deals missed |
+|---|---|---|
+| Uniform (before) | about 70,500 | 487 |
+| No stuck moves, uniform (`leap_weight` 1) | 73,428–73,689 | |
+| **No stuck moves, leaps 8:1** (the default) | **88,057–88,131** | **171** |
+
+The leap weight, slide to leap, with stuck moves taken back (kernel files with the weights as constants):
+
+| Slide : leap | 2 : 3 | 1 : 2 | 1 : 3 | 1 : 4 | 1 : 6 | **1 : 8** | 1 : 12 | 1 : 1000 (leaps first) |
+|---|---|---|---|---|---|---|---|---|
+| Deals/s | 77,500 | 81,600 | 82,700 | 85,400 | 85,500 | **89,400** | 86,100 | 85,100 |
+
+A soft bias wins: always leaping when a leap is legal did worse, as leaps first did in the CPU's ordered search
+(RESEARCH §10.3), so the prefix still needs its randomness to spread the attempts.
+
+**In `acc batch`** (1M fresh deals a run from seed 4,000,000,000, alternated with the previous commit's build):
+
+| Pair | Less random | Before | |
+|---|---|---|---|
+| 1 | 109,062 deals/s | 83,333 | +31% |
+| 2 | 95,496 | 75,775 | +26% |
+| 3 | 94,685 | 75,443 | +26% |
+| 4 | 95,615 | 74,772 | +28% |
+
+The GPU won 99.82% of the deals it took, against 99.51%, so fewer fall back to the CPU; no GPU line failed
+verification. The GPU tests run the golden positions with the default weight on both kernels, and every line they
+return, its replayed prefix included, passes the Rust verifier.
+
+**Tried, not kept:**
+- **No move that disconnects the cards** (the search's dead-end test, run on the move's result when it could have
+  broken a link): −16%, and −12% when checked only once 16 or fewer piles remain. A disconnected prefix ends at the
+  gate for almost nothing; the attempts this rescued went on to search residuals that were nearly always lost anyway,
+  spending the search budget.
+- **A floor of 2, 3 or 4 legal moves** after each prefix move (falling back to any move that leaves one): −3%, −6%
+  and −5% at uniform weights, and 83,600 against 89,400 with leaps at 8:1. The GPU missed fewer deals, but the
+  checks cost more than they saved.
+- **Slides twice as likely as leaps:** −13%.
+- **Longer prefixes** (rungs of 40 then 38 moves, not 38 then 36): 69,700.
+- **One rung** of 38 moves for all 1,280 tries: 91,000 deals/s on the GPU alone, but 1,646 deals missed per 100,000
+  against 171, each of them left to the much slower CPU.

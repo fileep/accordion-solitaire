@@ -177,6 +177,7 @@ fn golden_positions_on(gpu: &Gpu) {
                 budget: u32::MAX,
                 conn_gate: 19,
                 leftmost,
+                leap_shift: 3,
                 seed: 1,
             }
         } else {
@@ -189,6 +190,7 @@ fn golden_positions_on(gpu: &Gpu) {
                 budget: 100_000,
                 conn_gate: 19,
                 leftmost,
+                leap_shift: 3,
                 seed: 1,
             }
         };
