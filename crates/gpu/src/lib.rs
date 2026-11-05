@@ -22,6 +22,8 @@ pub const SENTINEL: u8 = 0x7F;
 /// The kernel's limits: random moves before a search, and piles a search can hold.
 pub const MAX_PREFIX: u32 = 48;
 pub const RESIDUAL: usize = 16;
+/// Most attempts per position over both rungs: the kernel counts them in the low 16 bits of the position's counter.
+pub const MAX_TRIES: u32 = 0xFFFF;
 /// NVRTC 12.9 writes PTX that needs a driver for CUDA 12.9 or later.
 const MIN_DRIVER: i32 = 12090;
 
@@ -75,6 +77,10 @@ impl Settings {
             return Err(format!(
                 "rungs: {p} random moves; 36 to {MAX_PREFIX} (fewer leave more than {RESIDUAL} piles to search)"
             ));
+        }
+        let tries: u64 = self.rungs.iter().map(|&[_, t]| u64::from(t)).sum();
+        if tries > u64::from(MAX_TRIES) {
+            return Err(format!("rungs: {tries} tries per deal in all; at most {MAX_TRIES}"));
         }
         if self.batch == 0 || self.block == 0 || self.block > 256 || self.blocks_per_sm == 0 {
             return Err("batch, block (at most 256) and blocks_per_sm must be positive".into());
@@ -289,6 +295,12 @@ impl Gpu {
         positions: &[[u8; 52]],
         a: &Attempts,
     ) -> Result<Pending, String> {
+        if a.tries.saturating_add(a.tries2) > MAX_TRIES {
+            return Err(format!(
+                "{} tries per position in all; at most {MAX_TRIES}",
+                a.tries.saturating_add(a.tries2)
+            ));
+        }
         let n = positions.len() as u32;
         let flat: Vec<u8> = positions.iter().flatten().copied().collect();
         let s = stream;
@@ -433,5 +445,21 @@ impl Pending {
             nodes: counts.iter().map(|&c| c >> 16).collect(),
             tries: counts.iter().map(|&c| (c & 0xFFFF) as u32).collect(),
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn tries_past_the_counter_are_refused() {
+        // The rungs' tries together must fit the kernel's 16-bit count of attempts per deal.
+        let with = |rungs: Vec<[u32; 2]>| Settings { rungs, ..Settings::default() }.check();
+        assert!(Settings::default().check().is_ok());
+        assert!(with(vec![[38, MAX_TRIES]]).is_ok());
+        assert!(with(vec![[38, 60_000], [36, 5_535]]).is_ok());
+        assert!(with(vec![[38, 60_000], [36, 5_536]]).is_err());
+        assert!(with(vec![[38, u32::MAX], [36, u32::MAX]]).is_err());
     }
 }
