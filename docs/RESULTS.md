@@ -87,8 +87,8 @@ GPU occupancy and register stacks, the leftmost-card dead-end test, and leaner v
 Phase 8").
 
 The second billion held **363,504–377,216 deals/s over every stretch of 100M deals** (the first was the fastest; after it
-363,504–367,647), and the GPU 3,160–3,170M positions/s. Its speed log has no second below 200,000 deals/s after the first
-half minute.
+363,504–367,647), and the GPU 3,180–3,243M positions/s over every five minutes. Its speed log has no second below 200,000
+deals/s after the first half minute.
 
 **Cost per deal** (positions are solver nodes, times are one core of 16 busy ones). The 10M run covers every deal. The
 100M and billion runs cover only the deals solved on the CPU: the 100M run's tail is heavier because the GPU's misses are
