@@ -8,7 +8,7 @@
 use accordion_core::fast::Position;
 use accordion_core::verify::verify;
 use accordion_core::{Deal, Move, Outcome, SolveRecord};
-use accordion_gpu::{Gpu, PROFILE_SLOTS, Settings, deal_codes};
+use accordion_gpu::{BatchResult, Gpu, PROFILE_SLOTS, Settings, deal_codes};
 use accordion_solver::{Config, Endgame, Search, Verdict, solve};
 use clap::Parser;
 use std::path::PathBuf;
@@ -105,7 +105,7 @@ fn run(args: &Args) -> Result<bool, String> {
     let seeds: Vec<u64> = (args.from..args.from + args.count).collect();
     let n = seeds.len();
 
-    let mut lines: Vec<Option<Vec<u8>>> = vec![None; n];
+    let mut results: Vec<BatchResult> = Vec::new();
     let (mut nodes, mut attempts) = (0u64, 0u64);
     let mut profile = [0u64; PROFILE_SLOTS];
     let mut first = 0;
@@ -117,15 +117,13 @@ fn run(args: &Args) -> Result<bool, String> {
             first += idx.len();
             (!idx.is_empty()).then_some(idx)
         },
-        |idx, result| {
-            nodes += result.nodes.iter().sum::<u64>();
+        |_, result| {
+            nodes += result.total_nodes();
             for (sum, c) in profile.iter_mut().zip(&result.profile) {
                 *sum += c;
             }
-            attempts += result.tries.iter().map(|&t| u64::from(t)).sum::<u64>();
-            for (i, line) in idx.into_iter().zip(result.lines) {
-                lines[i] = line;
-            }
+            attempts += result.total_tries();
+            results.push(result);
         },
     )
     .map_err(|(e, _)| e)?;
@@ -154,8 +152,10 @@ fn run(args: &Args) -> Result<bool, String> {
                             .map_err(|e| e.to_string())
                             .and_then(|rec| verify(&rec).map(|_| ()).map_err(|e| e.to_string()))
                     };
-                    if let Some(line) = &lines[i] {
+                    let (result, at) = (&results[i / gpu.settings.batch], i % gpu.settings.batch);
+                    if result.is_won(at) {
                         let t = Instant::now();
+                        let line = result.line(at).expect("it is won");
                         let moves: Vec<Move> = line.iter().map(|&b| Move::from_byte(b)).collect();
                         let verified = verifies(&moves);
                         verify_us.fetch_add(t.elapsed().as_micros() as u64, Ordering::Relaxed);

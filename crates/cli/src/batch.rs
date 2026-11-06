@@ -7,7 +7,7 @@
 use crate::dossier;
 use crate::progress::Meter;
 use crate::prove::{self, Finding, Limits};
-use crate::runner::{self, Options, Seeds, percentile, wilson};
+use crate::runner::{self, Finished, Options, Seeds, percentile, wilson};
 use accordion_core::Deal;
 use accordion_core::fast::Position;
 use accordion_gpu::Settings;
@@ -195,7 +195,8 @@ pub fn run(args: &BatchArgs) -> Result<bool, String> {
     );
     let mut meter = Meter::new(seeds.count(), (!args.no_log).then_some(args.log_dir.as_path()), &about)?;
     stay_awake();
-    let opts = Options { threads: workers, table_log2: args.table, endgame, records: out.is_some(), gpu };
+    let opts =
+        Options { threads: workers, table_log2: args.table, endgame, records: out.is_some(), each_gpu_win: false, gpu };
     let (to_prover, proving) = if args.prove > 0 {
         let (tx, rx) = mpsc::channel();
         let limits =
@@ -223,7 +224,15 @@ pub fn run(args: &BatchArgs) -> Result<bool, String> {
         seeds,
         &config,
         &opts,
-        |s| {
+        |finished| {
+            let s = match finished {
+                Finished::Deal(s) => s,
+                Finished::GpuWins(n) => {
+                    won += n;
+                    gpu_stage += n;
+                    return Ok(());
+                }
+            };
             // Per-deal costs are the CPU solver's; the GPU works in batches and counts its own positions.
             if s.report.stage != Stage::Gpu {
                 nodes.push(s.report.nodes);

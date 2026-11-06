@@ -6,7 +6,7 @@
 //! position and time percentiles cover the deals solved on the CPU.
 
 use crate::dossier::now_utc;
-use crate::runner::{self, GpuTotals, Options, Seeds, percentile};
+use crate::runner::{self, Finished, GpuTotals, Options, Seeds, percentile};
 use accordion_gpu::{Gpu, Settings};
 use accordion_solver::{Config, Endgame, Stage, Stats, Verdict};
 use clap::Args;
@@ -90,6 +90,7 @@ impl Variant {
             table_log2: self.table.unwrap_or(table),
             endgame: endgame.clone(),
             records: false,
+            each_gpu_win: false,
             gpu: gpu.clone(),
         }
     }
@@ -196,7 +197,7 @@ pub fn run(args: &ExperimentArgs) -> Result<bool, String> {
     let mut all_won = true;
     for rep in 0..args.repeat {
         for (vi, v) in variants.iter().enumerate() {
-            let opts = v.options(args.threads, args.table, &endgame, &gpus[vi]);
+            let opts = Options { each_gpu_win: args.deals && rep == 0, ..v.options(args.threads, args.table, &endgame, &gpus[vi]) };
             let (threads, table) = (opts.threads + usize::from(opts.gpu.is_some()), opts.table_log2);
             let mut deal_rows = if args.deals && rep == 0 {
                 let dir = args.out.join("deals");
@@ -226,7 +227,15 @@ pub fn run(args: &ExperimentArgs) -> Result<bool, String> {
                 Seeds::List(&seeds),
                 &v.solver,
                 &opts,
-                |s| {
+                |finished| {
+                    let s = match finished {
+                        Finished::Deal(s) => s,
+                        Finished::GpuWins(n) => {
+                            o.won += n;
+                            *o.stages.entry(Stage::Gpu.to_string()).or_default() += n;
+                            return Ok(());
+                        }
+                    };
                     let won = matches!(s.report.verdict, Verdict::Win(_)) && s.verified.is_ok();
                     if s.verified.is_err() {
                         o.failed += 1;

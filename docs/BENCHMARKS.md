@@ -1459,3 +1459,130 @@ a line).
 - **The CPU's cost per miss,** now the largest thing the CPU threads do: 10 ms hot against 2–3 ms cool, though its ladder
   is flat. Keeping a miss off the CPU altogether (a later GPU launch of the misses alone, with more tries) would have to beat
   simply more tries, which lost above.
+
+## After Phase 8 — what winning prefixes have in common
+
+The question: of the random prefixes that end in a win, what do they have in common, and can the kernel choose its random
+moves accordingly? A scratch tool played attempts as the kernel plays them (no shared moves) on 1,000,000 deals, each until
+its first win (120.9 attempts a deal, 0.825% of attempts winning). At every decision of a winning prefix it compared what was
+chosen with what the policy would pick from the same options, which cancels the deal and the state; the same over a sample of
+all attempts must come out at 1, and did.
+
+**No choice stands out.** Lifts (chosen ÷ expected) are mostly within a few percent of 1, the largest in moves 30 and later:
+
+| Move | Lift, all moves | Moves 30+ |
+|---|---|---|
+| Covers a card with no others of its rank left | 1.16 | 1.19 |
+| Covers a card with 3 others of its rank left | 0.98 | 0.83 |
+| Mover in the last pile, or next to it | 0.90, 0.93 | 0.89, 0.92 |
+| Same-rank match | 0.96 | 0.89 |
+| Breaks the last rank two suits share | 0.79 | 0.77 |
+| Loses 4 or more legal moves | 0.92 | 0.69 |
+| Leap (leaps 8:1) | 1.00 | 1.00 |
+
+And of the positions, what predicts a win is how few **ranks** are left. Of residuals of 14 piles, those with 8 ranks are 9.1%
+of searches and 32.9% of wins, those with 11 ranks 12.3% and 1.5%.
+
+**But a small lift at every move compounds.** Choosing by it, in the same tool:
+
+| Prefix move chosen (200,000 deals) | Attempts a deal | Positions a deal | Not won in 1,280 tries |
+|---|---|---|---|
+| At random, as before | 120.5 | 3,364 | 0.240% |
+| Best of 2 draws, by others left of the covered rank | 56.2 | 2,277 | 0.056% |
+| Best of 3 | 38.0 | 1,964 | 0.028% |
+| Best of 4 | 30.3 | 1,849 | 0.018% |
+| Best of 8 | 21.0 | 1,706 | 0.005% |
+| Best of 32 (about the best move there is) | 16.6 | 1,640 | 0.006% |
+
+So a prefix now draws a few moves from the old distribution and plays the one that covers the card with the fewest others of
+its rank left, keeping those counts in 2 bits a rank (one register, and one word of a group's kept row). Ties go against a
+mover among the last three piles: 13% fewer attempts again in the tool. A draw that loses costs nothing beyond its code; turning
+moves down by chance, which the tool tried first and which wins about as much, would run a warp's whole turn again for one thread.
+`Settings::draws` and `shared_draws`.
+
+**The costs moved, and each step uncovered the next.** `accgpu`, alternated, on the laptop as it was at the time (so compare
+within a row):
+
+| Step | Before | After |
+|---|---|---|
+| Best of 3 (attempts a deal from 133 to 49; misses from 227 to 36 in 100,000) | 372,000 | 472,000 |
+| Groups of 4, not 8 (a deal now takes few tries) | 492,927 | 502,554 |
+| Batches of 65,536, not 32,768 | 492,927 | 496,366 |
+| Ties against the last three piles | 516,000–531,000 | 557,000 |
+| Residuals with more than 9 or 10 ranks not searched (`rank_gate`) | 566,000–572,000 | 580,000 |
+| Prefix warps sleep 10 µs, not 0.2, with the queue full (they were waiting 77% of their turns, and polling takes turns from the warps working) | 582,000 | 613,000 |
+| The chain rule in the search (below) | 620,000 | 650,000 |
+| No replay of the prefix at a win (below) | 575,000 | 828,000 |
+| Best of 5, and of 3 for shared moves; 128 tries on the first rung, not 256 | 810,000 | 889,000 |
+| `write_lines` after each launch (below) | 957,000 | 890,000 |
+
+**The chain rule.** Tops alone make a position, so the mover onto the covered card and on to a card before it reaches the same
+position as the covered card going there and the mover onto it, whenever the covered card can (and unless both distances are
+leaps). A hash of every position in the tool's searches says 24% of them repeat despite sleep sets, and a whole table would
+save 19%; this rule saves 14% of positions, none of the wins, and takes about 10 operations a step: whether the covered card
+could go there is in the parent's masks at its pile.
+
+**The replay at a win was a third of the time.** A fit over the sweeps (time a deal against its attempts and positions) left 0.40
+µs a deal unexplained. That was the winning thread playing its 38 prefix moves again to write its line, once a deal, on the
+13-word row, with the 31 others of its warp waiting. Skipping it took the GPU from 575,000 to 828,000 deals a second. Now the won
+flag holds the winning attempt's number and the search writes only its own moves, and a second kernel, `write_lines`, plays all
+of a launch's prefixes after it, 32 deals a warp in lockstep: 7% of the launch.
+
+**The CPU side.** At these speeds `acc batch` had three new limits, one after the other, all on the CPU:
+- **Handing results on,** 92% of the CPU threads' time: 15 threads met on the channel and the queue's lock for every deal, and
+  the speed *fell* to 255,000–337,000. Runs of 256 fixed that (623,842). Now a launch's results go to the workers whole, shared,
+  and they take runs from it, and a run reports a count of wins: no lock, allocation, shared counter or message per deal.
+- **Preparing a batch** on one thread: now four (not measured alone).
+- **Sustained power.** The first half minute runs at the CPU's burst limit. After it, a line that takes one cool thread 2 µs took
+  15 hot threads 18–23 µs each: all the CPU threads together do about 1.3 cool threads' work (`nvidia-smi` shows the GPU at
+  1,500–1,800 MHz under its 29 W limit, 67 °C, and only 50–60% busy). So the CPU had to do less, not faster. Playing prefixes on
+  the CPU took 1.4 of those 2 µs; with `write_lines` a line is 0.5 µs and the GPU is the limit again.
+
+Workers also leave deals to the GPU while it is feeding: a few thousand deals a second at most, for heat that costs more
+(899,203–920,728 deals/s against 837,918–855,621, 20M deals a run alternated).
+
+| `acc batch`, 100M deals, hot | Deals/s | Verifying a line |
+|---|---|---|
+| Playing prefixes on the CPU | 465,801 | 22.6 µs |
+| Playing prefixes on the CPU, a launch's results shared whole | 635,764 | 17.6 µs |
+| **`write_lines`** | **854,625** (second half 864,771) | 4.8 µs |
+
+**Against the previous commit,** `acc batch`, 40M deals a run, alternated, hot from the start: **888,843, 875,054 and 862,141
+deals/s against 282,987 and 245,302**, every deal won and no line failed verification. (Hot like this the previous commit's misses
+took 77% of its CPU threads; its 366,514 over the second billion was on a cooler laptop.) The GPU misses 1 deal in 9,000, not
+1 in 400, and the CPU threads wait for it most of the time.
+
+**The final sweep** (`accgpu`, 655,360 deals, alternated): the defaults 893,910; batch 131,072 888,492; groups of 5 885,440;
+38 × 256 first 885,243; 4 draws 880,390; gate 9 and 11 879,702; 6 draws 873,008; groups of 3 872,792; 2 shared draws 869,340; 38 × 64
+first 861,632; batch 32,768 840,947. Earlier, with 5 draws: 37 moves first 799,369, 39 and 37 767,954, 16 shared moves 768,854, 24
+shared moves 865,536, budget 500 871,707, budget 1,000 868,993, 36 moves alone 685,416, gate 8 and 10 728,762 (at 3 draws).
+**New defaults: 5 draws, 3 for shared moves, 38 × 128 then 36 × 1,152, groups of 4, batch 65,536, gate 9 and 10;** budget 700, 5
+blocks of 96 and leaps 8:1 stay.
+
+**Tried, not kept:**
+- **Suits as well in the choice:** the tool says 8% fewer attempts for a covered card of a scarce suit, but the kernel, with a
+  second register and kept word, ran slower (545,775–548,006 against 556,615–558,227).
+- **A cheaper draw,** the first legal move at or above a random pile (about 12 operations against 45): the tool says 1.9 times
+  the attempts. That favours moves after a gap in the masks, and doing so on purpose takes about a fifth more attempts.
+- **Other things to choose by,** each in the tool at best of 3, by its model of the cost: the mover's rank +3.6%, its suit +4.5%,
+  a mover with another move +2.4%, same-rank matches favoured a little +2.5%; avoiding same-rank matches, a move onto a pile
+  another could reach, the left half, pile 0, leaps, slides: worse or flat. Each would cost code, and the suit, the largest, lost.
+- **Rank limits inside the search:** +3% in the tool for 10 operations a step, not built.
+- **One generator step for all the draws:** +0.4%.
+- **Taking residuals less or more often:** flat (`TAKE_MIN` 2, 4, 8; `TAKE_FLOOR` 8, 16, 24).
+- **No count per attempt, and no won flag load at a take:** no change, so a warp waiting on memory seems not to hold up the rest
+  of its multiprocessor.
+- **Fewer CPU threads, again:** 8 or 5 threads 352,624–377,765 deals/s over the second half, all 503,603–675,368, before
+  `write_lines`.
+
+**Considered, not tried:**
+- **A table of positions in the search:** a further 5–10% of positions at most after the chain rule, in a step that would need a
+  hash and a memory access. The next pair of lines to one position is a long tail (slide then leap against leap then slide,
+  8% of what repeats).
+- **The search's arithmetic** ("cheaper verification, and the retune"): a cheaper connectivity test and masks from the parent's are
+  still open. Search positions are now about a third of the GPU's time.
+- **`write_lines` on the shorter row** for a try's own moves, which the hot code has: most of its 7%, perhaps.
+- **A later launch for what the first didn't win,** so the first needn't scan all the tries of deals already won: about 6% by the
+  difference that fewer tries make; it wants a second pipeline in the host.
+- **Best of k on the CPU's ladder:** of no use to `acc batch` now (misses take 14% of a CPU with 58% to spare), but it may help
+  a run with no GPU.

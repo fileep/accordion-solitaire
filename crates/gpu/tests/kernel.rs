@@ -9,7 +9,7 @@ use accordion_core::fast::{Position, connected};
 use accordion_core::solve_file::parse_records;
 use accordion_core::verify::verify;
 use accordion_core::{Card, Deal, Game, Move, Outcome, SolveRecord};
-use accordion_gpu::{Attempts, Gpu, Settings, deal_codes, position_codes};
+use accordion_gpu::{Attempts, BatchResult, Gpu, Settings, deal_codes, position_codes};
 use std::path::PathBuf;
 use std::sync::OnceLock;
 
@@ -201,7 +201,7 @@ fn golden_positions_on(gpu: &Gpu) {
             }
         };
         let result = gpu.run(&[codes(&tops)], &a).unwrap();
-        match (&result.lines[0], winnable) {
+        match (result.line(0), winnable) {
             (Some(line), true) => {
                 let mut game = Game::from_piles(tops.iter().map(|&c| vec![c]).collect());
                 for &b in line {
@@ -210,7 +210,7 @@ fn golden_positions_on(gpu: &Gpu) {
                 }
                 assert!(game.is_won(), "{name}: the GPU line does not end in one pile");
             }
-            (None, false) => assert!(result.tries[0] > 0, "{name}: no attempt ran"),
+            (None, false) => assert!(result.tries(0) > 0, "{name}: no attempt ran"),
             (line, w) => panic!("{name}: GPU line {line:?}, but winnable = {w}"),
         }
     }
@@ -224,7 +224,7 @@ fn golden_and_random_deals_are_won_with_lines_that_verify() {
     for gpu in gpus() {
         for leftmost in [false, true] {
             let result = gpu.run(&positions, &Attempts { leftmost, ..gpu.settings.attempts(0) }).unwrap();
-            let won = check_deals(&deals, &result.lines);
+            let won = check_deals(&deals, &result);
             assert!(
                 won as f64 > 0.98 * deals.len() as f64,
                 "{}, leftmost test {leftmost}: won {won} of {}",
@@ -232,9 +232,10 @@ fn golden_and_random_deals_are_won_with_lines_that_verify() {
                 deals.len()
             );
             // Every attempt is accounted for: a deal's tries stop only once it is won.
-            for (i, (&tries, line)) in result.tries.iter().zip(&result.lines).enumerate() {
+            for i in 0..result.len() {
                 let all = gpu.settings.rungs.iter().map(|&[_, t]| t).sum::<u32>();
-                assert!(line.is_some() || tries == all, "deal {i}: {tries} of {all} tries ran, not won");
+                let tries = result.tries(i);
+                assert!(result.is_won(i) || tries == all, "deal {i}: {tries} of {all} tries ran, not won");
             }
         }
     }
@@ -242,26 +243,27 @@ fn golden_and_random_deals_are_won_with_lines_that_verify() {
 
 #[test]
 fn every_try_runs_when_a_group_of_tries_straddles_the_rungs() {
-    // 5 + 8 tries a deal: in groups of 8 sharing their first moves (the default), the first group spans both rungs and
+    // 5 + 8 tries a deal: in groups of 4 sharing their first moves (the default), the second group spans both rungs and
     // the last is short. A deal not won still gets all 13, and every line replays.
     let deals: Vec<(String, Deal, Option<Outcome>)> =
         (0..2048u64).map(|s| (format!("seed {s}"), Deal::from_seed(s), None)).collect();
     let positions: Vec<[u8; 52]> = deals.iter().map(|(_, deal, _)| deal_codes(deal)).collect();
     let Some(gpu) = gpu() else { return };
-    assert!(gpu.settings.split && gpu.settings.share_group == 8, "the test expects groups of 8");
+    assert!(gpu.settings.split && gpu.settings.share_group == 4, "the test expects groups of 4");
     let result = gpu.run(&positions, &Attempts { tries: 5, tries2: 8, ..gpu.settings.attempts(0) }).unwrap();
-    let won = check_deals(&deals, &result.lines);
+    let won = check_deals(&deals, &result);
     assert!(won > 0 && won < deals.len(), "won {won} of {}", deals.len());
-    for (i, (&tries, line)) in result.tries.iter().zip(&result.lines).enumerate() {
-        assert!(line.is_some() || tries == 13, "deal {i}: {tries} of 13 tries ran, not won");
+    for i in 0..result.len() {
+        let tries = result.tries(i);
+        assert!(result.is_won(i) || tries == 13, "deal {i}: {tries} of 13 tries ran, not won");
     }
 }
 
 /// Every recorded win is won, no recorded loss is, and every line verifies; returns the wins.
-fn check_deals(deals: &[(String, Deal, Option<Outcome>)], lines: &[Option<Vec<u8>>]) -> usize {
+fn check_deals(deals: &[(String, Deal, Option<Outcome>)], result: &BatchResult) -> usize {
     let mut won = 0;
-    for ((name, deal, recorded), line) in deals.iter().zip(lines) {
-        match line {
+    for (i, (name, deal, recorded)) in deals.iter().enumerate() {
+        match result.line(i) {
             Some(line) => {
                 assert_ne!(*recorded, Some(Outcome::Loss), "{name}: the GPU won an unwinnable deal");
                 let moves: Vec<Move> = line.iter().map(|&b| Move::from_byte(b)).collect();

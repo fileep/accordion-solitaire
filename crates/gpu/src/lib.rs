@@ -49,7 +49,7 @@ pub struct Settings {
     pub rungs: Vec<[u32; 2]>,
     /// Positions each search may generate.
     pub budget: u32,
-    /// Deals per launch: keep launches well under Windows' 2 s GPU watchdog (32,768 take about 0.1 s on the T550, and
+    /// Deals per launch: keep launches well under Windows' 2 s GPU watchdog (65,536 take about 0.1 s on the T550, and
     /// fewer leave several attempts at once on each deal, which wastes those still running once it is won).
     pub batch: usize,
     /// Threads per block (the kernel's shared memory is sized for it: 64 bytes per thread). On the T550, 64 fits
@@ -86,14 +86,21 @@ pub struct Settings {
     pub share_group: u32,
     /// From 4 up to the shorter rung's random moves when `share_group` is more than 1.
     pub share_moves: u32,
+    /// Random draws from the legal moves for each of a try's own prefix moves (`split` only; kernel.cu `DRAWS`): the
+    /// one played covers the card whose rank has the fewest others left. 1 chooses at random.
+    pub draws: u32,
+    /// The same for the moves a group shares (kernel.cu `SHARED_DRAWS`): those moves' code is the dearest.
+    pub shared_draws: u32,
+    /// The most ranks a residual of each rung may have to be searched (`split` only; kernel.cu `RANK_GATE`).
+    pub rank_gate: [u32; 2],
 }
 
 impl Default for Settings {
     fn default() -> Settings {
         Settings {
-            rungs: vec![[38, 256], [36, 1024]],
+            rungs: vec![[38, 128], [36, 1152]],
             budget: 700,
-            batch: 32768,
+            batch: 65536,
             block: 96,
             blocks_per_sm: 5,
             conn_gate: 19,
@@ -104,8 +111,11 @@ impl Default for Settings {
             stepwise: true,
             split: true,
             prefix_warps: 1,
-            share_group: 8,
+            share_group: 4,
             share_moves: 20,
+            draws: 5,
+            shared_draws: 3,
+            rank_gate: [9, 10],
         }
     }
 }
@@ -123,6 +133,9 @@ impl Settings {
         let tries: u64 = self.rungs.iter().map(|&[_, t]| u64::from(t)).sum();
         if tries > u64::from(MAX_TRIES) {
             return Err(format!("rungs: {tries} tries per deal in all; at most {MAX_TRIES}"));
+        }
+        if !(1..=8).contains(&self.draws) || !(1..=8).contains(&self.shared_draws) {
+            return Err(format!("draws: {} and {}; 1 to 8", self.draws, self.shared_draws));
         }
         if !self.leap_weight.is_power_of_two() || self.leap_weight > 1 << 16 {
             return Err(format!("leap_weight: {}; a power of two up to 65536", self.leap_weight));
@@ -202,16 +215,69 @@ pub struct Attempts {
     pub seed: u64,
 }
 
-/// What came back for a batch, per position.
+/// What came back for a batch, as the kernel wrote it: nothing here takes work per position until it is asked for,
+/// and many threads can ask at once.
 pub struct BatchResult {
-    /// The winning line (compact moves, `pile << 1 | leap`), if an attempt won it.
-    pub lines: Vec<Option<Vec<u8>>>,
-    /// Positions generated, prefix moves included, over every attempt.
-    pub nodes: Vec<u64>,
-    /// Attempts run (a position's later attempts are skipped once one has won it).
-    pub tries: Vec<u32>,
+    /// Per position: not 0, won.
+    won: Vec<u32>,
+    /// Per position, 51 bytes: the winning line.
+    lines: Vec<u8>,
+    /// Per position: positions generated << 16 | attempts run.
+    counts: Vec<u64>,
+    /// Piles of each position: its line has one move fewer.
+    piles: Vec<usize>,
     /// The kernel's [`PROFILE_SLOTS`] counters for the launch, when profiling (empty otherwise).
     pub profile: Vec<u64>,
+}
+
+impl BatchResult {
+    /// A batch of `n` positions the GPU never got to: none won.
+    pub fn none(n: usize) -> BatchResult {
+        BatchResult {
+            won: vec![0; n],
+            lines: Vec::new(),
+            counts: vec![0; n],
+            piles: vec![0; n],
+            profile: Vec::new(),
+        }
+    }
+
+    pub fn len(&self) -> usize {
+        self.won.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.won.is_empty()
+    }
+
+    pub fn is_won(&self, i: usize) -> bool {
+        self.won[i] != 0
+    }
+
+    /// Position `i`'s winning line (compact moves, `pile << 1 | leap`), if an attempt won it.
+    pub fn line(&self, i: usize) -> Option<&[u8]> {
+        self.is_won(i).then(|| &self.lines[i * 51..i * 51 + self.piles[i] - 1])
+    }
+
+    /// Positions generated on position `i`, prefix moves included, over every attempt.
+    pub fn nodes(&self, i: usize) -> u64 {
+        self.counts[i] >> 16
+    }
+
+    /// Attempts run on position `i` (its later attempts are skipped once one has won it).
+    pub fn tries(&self, i: usize) -> u32 {
+        (self.counts[i] & 0xFFFF) as u32
+    }
+
+    /// [`BatchResult::nodes`] over the batch.
+    pub fn total_nodes(&self) -> u64 {
+        self.counts.iter().map(|&c| c >> 16).sum()
+    }
+
+    /// [`BatchResult::tries`] over the batch.
+    pub fn total_tries(&self) -> u64 {
+        self.counts.iter().map(|&c| c & 0xFFFF).sum()
+    }
 }
 
 /// A launched batch, until its results are copied back.
@@ -225,7 +291,7 @@ pub struct Pending {
     counts: CudaSlice<u64>,
     profile: Option<CudaSlice<u64>>,
     // Kept alive until the kernel is done with them.
-    _inputs: (CudaSlice<u8>, CudaSlice<u64>, CudaSlice<u32>),
+    _inputs: (CudaSlice<u8>, CudaSlice<u64>, CudaSlice<u32>, CudaSlice<u32>),
 }
 
 /// What [`Gpu::playouts`] recorded for one playout, step by step (kernel.cu `playouts`).
@@ -243,6 +309,7 @@ pub struct Gpu {
     ctx: Arc<CudaContext>,
     /// [`Settings::kernel`].
     attempts: CudaFunction,
+    write_lines: CudaFunction,
     playouts: CudaFunction,
     pub name: String,
     pub sms: u32,
@@ -273,16 +340,45 @@ fn piles(position: &[u8; 52]) -> usize {
     position.iter().position(|&c| c == SENTINEL).unwrap_or(52)
 }
 
-/// Each position's slide and leap masks and cards present, as the kernels take them (worked out once here, where a
-/// deal is tried many times there).
-fn masks(positions: &[[u8; 52]]) -> Vec<u64> {
-    positions
-        .iter()
-        .flat_map(|p| {
-            let pos = Position::from_codes(&p[..piles(p)]);
-            [pos.slides(), pos.leaps(), pos.present()]
-        })
-        .collect()
+/// A batch of positions as the kernels take them.
+struct Prepared {
+    /// Each position's 52 bytes.
+    flat: Vec<u8>,
+    /// Each position's slide and leap masks and cards present (worked out once here, where a deal is tried many times
+    /// there).
+    masks: Vec<u64>,
+    piles: Vec<usize>,
+}
+
+/// Threads preparing a batch: one falls behind the GPU, above all with the CPU slowed by a hot laptop.
+const PREPARE_THREADS: usize = 4;
+
+impl Prepared {
+    fn new<T: Sync>(items: &[T], position: &(impl Fn(&T) -> [u8; 52] + Sync)) -> Prepared {
+        let n = items.len();
+        let mut p = Prepared { flat: vec![0; n * 52], masks: vec![0; n * 3], piles: vec![0; n] };
+        let chunk = n.div_ceil(PREPARE_THREADS).max(1);
+        std::thread::scope(|scope| {
+            let parts = items
+                .chunks(chunk)
+                .zip(p.flat.chunks_mut(chunk * 52))
+                .zip(p.masks.chunks_mut(chunk * 3))
+                .zip(p.piles.chunks_mut(chunk));
+            for (((items, flat), masks), piles_out) in parts {
+                scope.spawn(move || {
+                    for (i, item) in items.iter().enumerate() {
+                        let codes = position(item);
+                        let n = piles(&codes);
+                        let pos = Position::from_codes(&codes[..n]);
+                        flat[i * 52..(i + 1) * 52].copy_from_slice(&codes);
+                        masks[i * 3..(i + 1) * 3].copy_from_slice(&[pos.slides(), pos.leaps(), pos.present()]);
+                        piles_out[i] = n;
+                    }
+                });
+            }
+        });
+        p
+    }
 }
 
 /// ceil(2^64 / n), for the kernels to divide attempt numbers by n with a multiply (unused for n = 1).
@@ -365,6 +461,10 @@ fn compile(ctx: &CudaContext, settings: &Settings, source: &str) -> Result<cudar
                 format!("-DPREFIX_THREADS={}", 32 * settings.prefix_warps),
                 format!("-DSHARE_G={}", settings.share_group),
                 format!("-DSHARE_K={}", if settings.share_group > 1 { settings.share_moves } else { 0 }),
+                format!("-DDRAWS={}", settings.draws),
+                format!("-DSHARED_DRAWS={}", settings.shared_draws),
+                format!("-DRANK_GATE={}", settings.rank_gate[0]),
+                format!("-DRANK_GATE2={}", settings.rank_gate[1]),
             ]
             .into_iter()
             .chain(settings.profile.then(|| "-DPROFILE".to_string()))
@@ -394,8 +494,9 @@ impl Gpu {
         let ptx = compile(&ctx, &settings, source)?;
         let module = ctx.load_module(ptx).map_err(|e| format!("loading the kernel: {e:?}"))?;
         let attempts = module.load_function(settings.kernel()).map_err(err)?;
+        let write_lines = module.load_function("write_lines").map_err(err)?;
         let playouts = module.load_function("playouts").map_err(err)?;
-        Ok(Gpu { ctx, attempts, playouts, name, sms, settings })
+        Ok(Gpu { ctx, attempts, write_lines, playouts, name, sms, settings })
     }
 
     /// Thread blocks per launch.
@@ -435,22 +536,26 @@ impl Gpu {
         positions: &[[u8; 52]],
         a: &Attempts,
     ) -> Result<Pending, String> {
+        self.submit_prepared(stream, Prepared::new(positions, &|p: &[u8; 52]| *p), a)
+    }
+
+    fn submit_prepared(&self, stream: &Arc<CudaStream>, prepared: Prepared, a: &Attempts) -> Result<Pending, String> {
         if a.tries.saturating_add(a.tries2) > MAX_TRIES {
             return Err(format!(
                 "{} tries per position in all; at most {MAX_TRIES}",
                 a.tries.saturating_add(a.tries2)
             ));
         }
-        let n = positions.len() as u32;
-        let flat: Vec<u8> = positions.iter().flatten().copied().collect();
+        let count = prepared.piles.len();
+        let n = count as u32;
         let s = stream;
-        let d_positions = s.clone_htod(&flat).map_err(err)?;
-        let d_masks = s.clone_htod(&masks(positions)).map_err(err)?;
-        let inv = reciprocal(positions.len());
+        let d_positions = s.clone_htod(&prepared.flat).map_err(err)?;
+        let d_masks = s.clone_htod(&prepared.masks).map_err(err)?;
+        let inv = reciprocal(count);
         let mut next = s.alloc_zeros::<u32>(1).map_err(err)?;
-        let mut won = s.alloc_zeros::<u32>(positions.len()).map_err(err)?;
-        let mut lines = s.alloc_zeros::<u8>(positions.len() * 51).map_err(err)?;
-        let mut counts = s.alloc_zeros::<u64>(positions.len()).map_err(err)?;
+        let mut won = s.alloc_zeros::<u32>(count).map_err(err)?;
+        let mut lines = s.alloc_zeros::<u8>(count * 51).map_err(err)?;
+        let mut counts = s.alloc_zeros::<u64>(count).map_err(err)?;
         let mut profile = s.alloc_zeros::<u64>(PROFILE_SLOTS).map_err(err)?;
         let leftmost = u32::from(a.leftmost);
         let mut launch = s.launch_builder(&self.attempts);
@@ -481,14 +586,36 @@ impl Gpu {
         // SAFETY: the argument list matches the kernel's signature in kernel.cu, and every buffer is sized for
         // `n` positions as the kernel indexes them.
         unsafe { launch.launch(cfg) }.map_err(err)?;
+        let mut next_line = s.alloc_zeros::<u32>(1).map_err(err)?;
+        if self.settings.split {
+            // On the same stream, so after the attempts are done.
+            let mut launch = s.launch_builder(&self.write_lines);
+            launch
+                .arg(&d_positions)
+                .arg(&d_masks)
+                .arg(&n)
+                .arg(&a.tries)
+                .arg(&a.prefix)
+                .arg(&a.tries2)
+                .arg(&a.prefix2)
+                .arg(&a.leap_shift)
+                .arg(&a.seed)
+                .arg(&won)
+                .arg(&mut lines)
+                .arg(&mut next_line);
+            let cfg = LaunchConfig { grid_dim: (self.blocks(), 1, 1), block_dim: (32, 1, 1), shared_mem_bytes: 0 };
+            // SAFETY: the argument list matches write_lines's signature in kernel.cu, and every buffer is sized for `n`
+            // positions as the kernel indexes them.
+            unsafe { launch.launch(cfg) }.map_err(err)?;
+        }
         Ok(Pending {
             stream: s.clone(),
-            piles: positions.iter().map(piles).collect(),
+            piles: prepared.piles,
             won,
             lines,
             counts,
             profile: self.settings.profile.then_some(profile),
-            _inputs: (d_positions, d_masks, next),
+            _inputs: (d_positions, d_masks, next, next_line),
         })
     }
 
@@ -501,9 +628,9 @@ impl Gpu {
     /// Runs the settings' rungs on batches of items from `next_batch` (`position` gives each one's bytes),
     /// keeping two launches in flight on two streams, and hands every finished batch to `done`. On a GPU error,
     /// returns it with the items whose results never came back.
-    pub fn feed<T>(
+    pub fn feed<T: Sync>(
         &self,
-        position: impl Fn(&T) -> [u8; 52],
+        position: impl Fn(&T) -> [u8; 52] + Sync,
         mut next_batch: impl FnMut() -> Option<Vec<T>>,
         mut done: impl FnMut(Vec<T>, BatchResult),
     ) -> Result<(), (String, Vec<T>)> {
@@ -520,9 +647,9 @@ impl Gpu {
             if in_flight.len() < 2
                 && let Some(items) = next_batch()
             {
-                let positions: Vec<[u8; 52]> = items.iter().map(&position).collect();
+                let prepared = Prepared::new(&items, &position);
                 let a = self.settings.attempts(launch);
-                match self.submit(&streams[(launch % 2) as usize], &positions, &a) {
+                match self.submit_prepared(&streams[(launch % 2) as usize], prepared, &a) {
                     Ok(pending) => in_flight.push_back((items, pending)),
                     Err(e) => return Err((e, lost(in_flight, items))),
                 }
@@ -543,7 +670,7 @@ impl Gpu {
         let s = self.ctx.default_stream();
         let flat: Vec<u8> = positions.iter().flatten().copied().collect();
         let d_positions = s.clone_htod(&flat).map_err(err)?;
-        let d_masks = s.clone_htod(&masks(positions)).map_err(err)?;
+        let d_masks = s.clone_htod(&Prepared::new(positions, &|p: &[u8; 52]| *p).masks).map_err(err)?;
         let mut masks = s.alloc_zeros::<u64>(n * 52 * 2).map_err(err)?;
         let mut moves = s.alloc_zeros::<u8>(n * 52).map_err(err)?;
         let mut flags = s.alloc_zeros::<u8>(n * 52).map_err(err)?;
@@ -595,17 +722,7 @@ impl Pending {
             Some(p) => s.clone_dtoh(p).map_err(err)?,
             None => Vec::new(),
         };
-        Ok(BatchResult {
-            lines: won
-                .iter()
-                .zip(&self.piles)
-                .enumerate()
-                .map(|(i, (&w, &piles))| (w != 0).then(|| lines[i * 51..i * 51 + piles - 1].to_vec()))
-                .collect(),
-            nodes: counts.iter().map(|&c| c >> 16).collect(),
-            tries: counts.iter().map(|&c| (c & 0xFFFF) as u32).collect(),
-            profile,
-        })
+        Ok(BatchResult { won, lines, counts, piles: self.piles, profile })
     }
 }
 
