@@ -89,9 +89,8 @@ impl Variant {
             threads: if gpu.is_some() { threads.saturating_sub(1).max(1) } else { threads },
             table_log2: self.table.unwrap_or(table),
             endgame: endgame.clone(),
-            records: false,
-            each_gpu_win: false,
             gpu: gpu.clone(),
+            ..Options::default()
         }
     }
 }
@@ -235,6 +234,7 @@ pub fn run(args: &ExperimentArgs) -> Result<bool, String> {
                             *o.stages.entry(Stage::Gpu.to_string()).or_default() += n;
                             return Ok(());
                         }
+                        Finished::Checkpoint(_) => return Ok(()),
                     };
                     let won = matches!(s.report.verdict, Verdict::Win(_)) && s.verified.is_ok();
                     if s.verified.is_err() {
@@ -266,7 +266,8 @@ pub fn run(args: &ExperimentArgs) -> Result<bool, String> {
                     Ok(())
                 },
                 |p| eprint!("\r  {label}: {} / {} deals   ", p.done, seeds.len()),
-            )?;
+            )?
+            .gpu;
             o.wall = start.elapsed().as_secs_f64();
             if let Some(mut w) = deal_rows {
                 w.flush().map_err(|e| e.to_string())?;

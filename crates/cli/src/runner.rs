@@ -1,7 +1,8 @@
 //! Runs one solver configuration over many seeded deals on worker threads (PLAN.md Phase 5 track B, Phase 8).
 //! Workers take the next deal from a shared counter, so a slow deal never holds the others up; each worker solves,
 //! verifies and serializes its own deals and keeps one search (and table) for the whole run. The calling thread only
-//! receives finished deals, in completion order.
+//! receives finished deals, and hands them on in seed order, so where a run stands is one number: every deal before it
+//! is done. That is what lets a run pause and carry on ([`Options::from`], [`Options::pause`]).
 //!
 //! With a GPU, a feeder thread takes batches of deals from the same counter for GPU ladder attempts and only
 //! launches and collects. Workers check the GPU's lines before taking new deals, so nothing waits on them: each line
@@ -17,10 +18,13 @@ use accordion_gpu::{BatchResult, Gpu, Settings, deal_codes};
 use accordion_solver::{Config, Endgame, Report, Search, Stage, Stats, Verdict, solve};
 use rayon::iter::{IntoParallelIterator, ParallelIterator};
 use rayon::slice::ParallelSliceMut;
+use serde::{Deserialize, Serialize};
 use serde_json::json;
-use std::collections::{HashMap, HashSet, VecDeque};
-use std::ops::Range;
-use std::path::Path;
+use std::collections::{BTreeMap, HashMap, HashSet, VecDeque};
+use std::fs::File;
+use std::io::{BufWriter, Write};
+use std::ops::{AddAssign, Range};
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use std::sync::mpsc::{self, RecvTimeoutError};
 use std::sync::{Arc, Mutex};
@@ -50,6 +54,7 @@ impl Seeds<'_> {
     }
 }
 
+#[derive(Default)]
 pub struct Options {
     /// CPU worker threads (a GPU feeder, if any, is one more).
     pub threads: usize,
@@ -62,6 +67,18 @@ pub struct Options {
     pub each_gpu_win: bool,
     /// GPU ladder attempts in front of the CPU solver (`--gpu`).
     pub gpu: Option<Arc<Gpu>>,
+    /// Where an interrupted run had got to: its deals are not solved again, and its totals carry on.
+    pub from: Standing,
+    /// Once this is set, no more deals are started, those in hand are finished, and the run returns short of its count.
+    pub pause: Option<&'static AtomicBool>,
+    /// Hand on [`Finished::Checkpoint`] this often.
+    pub checkpoint_every: Option<Duration>,
+    /// If the GPU fails, pause rather than solve the rest on the CPU, which at these counts would take a month; the GPU
+    /// may well work again for a new process.
+    pub pause_if_gpu_fails: bool,
+    /// Make the GPU fail after this many launches, with the next batch in its hands.
+    #[cfg(test)]
+    pub fail_gpu_after: Option<u64>,
 }
 
 /// What [`run`] hands to its sink.
@@ -70,12 +87,27 @@ pub enum Finished {
     Deal(Solved),
     /// This many more deals won on the GPU, all verified, when no records of them are wanted.
     GpuWins(u64),
+    /// Where the run stands, with all that the sink has been handed so far.
+    Checkpoint(Standing),
+}
+
+/// Where a run stands: every deal before position `done` has gone to the sink, and `gpu` is what the GPU did for them.
+#[derive(Default, Clone, Serialize, Deserialize)]
+pub struct Standing {
+    pub done: usize,
+    pub gpu: GpuTotals,
+}
+
+/// How a run ended.
+pub struct Ran {
+    /// Every deal before this position is done: all of them, unless the run paused.
+    pub done: usize,
+    /// What the GPU did, if there was one.
+    pub gpu: Option<GpuTotals>,
 }
 
 /// One finished deal.
 pub struct Solved {
-    /// Position in the seed list.
-    pub index: usize,
     pub seed: u64,
     pub report: Report,
     /// Time to solve on one thread, in microseconds; 0 for a deal won on the GPU, which works in batches.
@@ -87,7 +119,7 @@ pub struct Solved {
 }
 
 /// What the GPU did in a run.
-#[derive(Default)]
+#[derive(Default, Clone, Serialize, Deserialize)]
 pub struct GpuTotals {
     pub launches: u64,
     /// Deals it was given, and how many of them it won (every line verified).
@@ -97,14 +129,27 @@ pub struct GpuTotals {
     pub failed: u64,
     pub attempts: u64,
     pub positions: u64,
-    /// Why the GPU stopped early, if it did; the CPU solved the deals it had in hand, and the rest.
+    /// Why the GPU stopped early, if it did. Unless the run paused for it, the CPU solved the deals it had in hand, and
+    /// the rest.
+    #[serde(skip)]
     pub error: Option<String>,
     /// CPU worker thread time, in microseconds, by what it went to.
     pub cpu: CpuTime,
 }
 
+impl GpuTotals {
+    /// Adds what the GPU did for some more deals.
+    fn add(&mut self, more: &GpuTotals) {
+        self.deals += more.deals;
+        self.won += more.won;
+        self.failed += more.failed;
+        self.attempts += more.attempts;
+        self.positions += more.positions;
+    }
+}
+
 /// CPU worker thread time in a run with the GPU, in microseconds (all workers added up).
-#[derive(Default, Clone, Copy)]
+#[derive(Default, Clone, Copy, Serialize, Deserialize)]
 pub struct CpuTime {
     /// Verifying the GPU's winning lines.
     pub verifying: u64,
@@ -120,10 +165,21 @@ pub struct CpuTime {
     pub total: u64,
 }
 
+impl AddAssign for CpuTime {
+    fn add_assign(&mut self, more: CpuTime) {
+        self.verifying += more.verifying;
+        self.misses += more.misses;
+        self.own += more.own;
+        self.waiting += more.waiting;
+        self.handing_on += more.handing_on;
+        self.total += more.total;
+    }
+}
+
 /// How a run stands, for [`run`]'s `progress`.
 #[derive(Clone, Copy, Debug)]
 pub struct Progress {
-    /// Deals finished.
+    /// Deals finished, including any waiting for an earlier one to be handed on.
     pub done: usize,
     /// Deals the GPU has won, and positions it has generated (0 without one).
     pub gpu_won: u64,
@@ -145,10 +201,26 @@ const FULL_REPLAY_EVERY: usize = 256;
 /// so a deal costs no lock, allocation or shared counter of its own: past a few hundred thousand deals a second, all
 /// the more with the CPU slowed by a hot laptop, those held the GPU back.
 struct GpuBatch {
+    /// Consecutive positions.
     indices: Vec<usize>,
     result: BatchResult,
+    /// The GPU had these deals, not ones it lost when it failed.
+    given: bool,
     /// The next result to take.
     next: AtomicUsize,
+}
+
+/// Consecutive deals a worker has finished, handed on together.
+#[derive(Default)]
+struct Stretch {
+    first: usize,
+    count: usize,
+    /// How many of them the GPU won, when no record of those is wanted.
+    wins: u64,
+    /// The others, in order.
+    solved: Vec<Solved>,
+    /// What the GPU did for them.
+    gpu: GpuTotals,
 }
 
 /// The next run of results from the oldest launch with any left.
@@ -244,38 +316,77 @@ pub fn open_gpu(flag: &str, settings: Settings) -> Result<Option<Arc<Gpu>>, Stri
     }
 }
 
-/// Solves every deal in `seeds` with `config` (move-order seed = deal seed) and hands each result to `sink`.
-/// `progress` is called about once a second, results or not, and once at the end. Stops early if `sink` fails.
-/// Returns what the GPU did, if there was one.
+/// Solves every deal in `seeds` from `opts.from` on with `config` (move-order seed = deal seed) and hands each result to
+/// `sink`, in seed order. `progress` is called about once a second, results or not, and once at the end. Stops early if
+/// `sink` fails.
 pub fn run(
     seeds: Seeds,
     config: &Config,
     opts: &Options,
     mut sink: impl FnMut(Finished) -> Result<(), String>,
     mut progress: impl FnMut(Progress),
-) -> Result<Option<GpuTotals>, String> {
-    let next = AtomicUsize::new(0);
+) -> Result<Ran, String> {
+    let so_far = &opts.from;
+    let next = AtomicUsize::new(so_far.done);
     let abort = AtomicBool::new(false);
+    let gpu_down = AtomicBool::new(false);
+    let pausing = || gpu_down.load(Ordering::Relaxed) || opts.pause.is_some_and(|p| p.load(Ordering::Relaxed));
     let from_gpu: Mutex<VecDeque<Arc<GpuBatch>>> = Mutex::new(VecDeque::new());
     let feeding = AtomicBool::new(opts.gpu.is_some());
-    let (gpu_won, gpu_failed, gpu_positions) = (AtomicU64::new(0), AtomicU64::new(0), AtomicU64::new(0));
-    let cpu_time = Mutex::new(CpuTime::default());
+    let gpu_won = AtomicU64::new(so_far.gpu.won);
+    let gpu_positions = AtomicU64::new(so_far.gpu.positions);
+    let launches = AtomicU64::new(so_far.gpu.launches);
+    let cpu_time = Mutex::new(so_far.gpu.cpu);
     let started = Instant::now();
-    let (tx, rx) = mpsc::sync_channel::<(u64, Vec<Solved>)>(64);
+    let (tx, rx) = mpsc::sync_channel::<Stretch>(64);
     std::thread::scope(|scope| {
+        let pausing = &pausing;
         let feeder = opts.gpu.as_deref().map(|gpu| {
-            let (next, abort, from_gpu, feeding, positions) =
-                (&next, &abort, &from_gpu, &feeding, &gpu_positions);
+            let (next, abort, from_gpu, feeding, gpu_down) = (&next, &abort, &from_gpu, &feeding, &gpu_down);
+            let (launches, positions) = (&launches, &gpu_positions);
             scope.spawn(move || {
-                let totals = feed(gpu, seeds, next, abort, from_gpu, positions);
+                #[cfg(test)]
+                let fails = || opts.fail_gpu_after.is_some_and(|n| launches.load(Ordering::Relaxed) >= n);
+                #[cfg(not(test))]
+                let fails = || false;
+                let stopping = || abort.load(Ordering::Relaxed) || pausing() || fails();
+                let fed = feed(gpu, seeds, next, &stopping, from_gpu, launches, positions);
+                let fed = fed.and_then(|()| {
+                    if !fails() {
+                        return Ok(());
+                    }
+                    let first = next.fetch_add(gpu.settings.batch, Ordering::Relaxed);
+                    let lost = first..(first + gpu.settings.batch).min(seeds.count());
+                    Err(("as the test asked".to_string(), lost.collect()))
+                });
+                let error = fed.err().map(|(e, mut lost)| {
+                    if opts.pause_if_gpu_fails {
+                        eprintln!("\nGPU stopped: {e}\n(pausing: the {} deals it had in hand are done again)", lost.len());
+                        gpu_down.store(true, Ordering::Relaxed);
+                    } else {
+                        eprintln!(
+                            "\nGPU stopped: {e}\n(the CPU solves the {} deals it had in hand, and the rest)",
+                            lost.len()
+                        );
+                        lost.sort_unstable();
+                        let result = BatchResult::none(lost.len());
+                        from_gpu.lock().expect("no panics").push_back(Arc::new(GpuBatch {
+                            indices: lost,
+                            result,
+                            given: false,
+                            next: AtomicUsize::new(0),
+                        }));
+                    }
+                    e
+                });
                 feeding.store(false, Ordering::Release);
-                totals
+                error
             })
         });
         for _ in 0..opts.threads.max(1) {
             let tx = tx.clone();
             let (next, abort, from_gpu, feeding) = (&next, &abort, &from_gpu, &feeding);
-            let (gpu_won, gpu_failed, cpu_time) = (&gpu_won, &gpu_failed, &cpu_time);
+            let (gpu_won, cpu_time) = (&gpu_won, &cpu_time);
             scope.spawn(move || {
                 let mut search = Search::with_options(opts.table_log2, config.search);
                 search.set_endgame(opts.endgame.clone());
@@ -284,24 +395,31 @@ pub fn run(
                 let mut moves = Vec::new();
                 while !abort.load(Ordering::Relaxed) {
                     let t = Instant::now();
-                    let mut wins = 0u64;
-                    let mut finished: Vec<Solved> = Vec::new();
+                    let mut done = Stretch::default();
                     if let Some((batch, run)) = take_run(from_gpu) {
+                        done.first = batch.indices[run.start];
+                        done.count = run.len();
                         let mut misses = 0;
                         for i in run {
                             let index = batch.indices[i];
                             let seed = seeds.seed(index);
+                            if batch.given {
+                                done.gpu.deals += 1;
+                                done.gpu.attempts += u64::from(batch.result.tries(i));
+                                done.gpu.positions += batch.result.nodes(i);
+                            }
                             if batch.result.is_won(i) {
                                 let verified = if opts.records || opts.each_gpu_win {
                                     gpu_win_recorded(&batch.result, i, index, seed, opts.records)
-                                        .map(|solved| finished.push(solved))
+                                        .map(|solved| done.solved.push(solved))
                                 } else {
-                                    gpu_line_verifies(&batch.result, i, index, seed, &mut moves).map(|()| wins += 1)
+                                    gpu_line_verifies(&batch.result, i, index, seed, &mut moves)
+                                        .map(|()| done.wins += 1)
                                 };
                                 match verified {
                                     Ok(()) => continue,
                                     Err(e) => {
-                                        gpu_failed.fetch_add(1, Ordering::Relaxed);
+                                        done.gpu.failed += 1;
                                         eprintln!(
                                             "\nseed {seed}: GPU line FAILED verification ({e}); solving it on the CPU"
                                         );
@@ -309,13 +427,12 @@ pub fn run(
                                 }
                             }
                             let miss = Instant::now();
-                            finished.push(solve_one(index, seed, config, &mut search, opts.records));
+                            done.solved.push(solve_one(index, seed, config, &mut search, opts.records));
                             misses += us(miss);
                         }
-                        gpu_won.fetch_add(
-                            wins + finished.iter().filter(|s| s.report.stage == Stage::Gpu).count() as u64,
-                            Ordering::Relaxed,
-                        );
+                        done.gpu.won = done.wins
+                            + done.solved.iter().filter(|s| s.report.stage == Stage::Gpu).count() as u64;
+                        gpu_won.fetch_add(done.gpu.won, Ordering::Relaxed);
                         time.verifying += us(t).saturating_sub(misses);
                         time.misses += misses;
                     } else if feeding.load(Ordering::Acquire) {
@@ -325,35 +442,37 @@ pub fn run(
                         time.waiting += us(t);
                         continue;
                     } else {
-                        let index = next.fetch_add(1, Ordering::Relaxed);
+                        let index = if pausing() { seeds.count() } else { next.fetch_add(1, Ordering::Relaxed) };
                         if index >= seeds.count() {
                             if from_gpu.lock().expect("no panics").is_empty() {
                                 break;
                             }
                             continue;
                         }
-                        finished.push(solve_one(index, seeds.seed(index), config, &mut search, opts.records));
+                        done.first = index;
+                        done.count = 1;
+                        done.solved.push(solve_one(index, seeds.seed(index), config, &mut search, opts.records));
                         time.own += us(t);
                     }
                     let t = Instant::now();
-                    if tx.send((wins, finished)).is_err() {
+                    if tx.send(done).is_err() {
                         break;
                     }
                     time.handing_on += us(t);
+                    *cpu_time.lock().expect("no panics") += std::mem::take(&mut time);
                 }
-                let mut all = cpu_time.lock().expect("no panics");
-                all.verifying += time.verifying;
-                all.misses += time.misses;
-                all.own += time.own;
-                all.waiting += time.waiting;
-                all.handing_on += time.handing_on;
+                *cpu_time.lock().expect("no panics") += time;
             });
         }
         drop(tx);
-        let mut done = 0;
+        let mut standing = so_far.clone();
+        let mut received = so_far.done;
+        // Finished deals wait here for the ones before them: a hard deal holds up nothing else, and a minute of its
+        // solving is a few hundred thousand of these, tens of MB.
+        let mut waiting: BTreeMap<usize, Stretch> = BTreeMap::new();
         let mut result = Ok(());
-        let stand = |done| Progress {
-            done,
+        let stand = |received| Progress {
+            done: received,
             gpu_won: gpu_won.load(Ordering::Relaxed),
             gpu_positions: gpu_positions.load(Ordering::Relaxed),
             backlog: from_gpu
@@ -363,20 +482,31 @@ pub fn run(
                 .map(|b| b.indices.len().saturating_sub(b.next.load(Ordering::Relaxed)))
                 .sum(),
         };
+        let with_times = |standing: &Standing| {
+            let mut whole = standing.clone();
+            whole.gpu.launches = launches.load(Ordering::Relaxed);
+            whole.gpu.cpu = *cpu_time.lock().expect("no panics");
+            whole.gpu.cpu.total += started.elapsed().as_micros() as u64 * opts.threads.max(1) as u64;
+            whole
+        };
         let mut last = Instant::now();
+        let mut last_checkpoint = Instant::now();
         loop {
             // Wake for the next report even when no deal finishes (the last hard deals, or a stalled GPU).
             match rx.recv_timeout(PROGRESS_EVERY.saturating_sub(last.elapsed())) {
-                Ok((wins, solved)) => {
-                    done += wins as usize + solved.len();
-                    let wins = (wins > 0).then_some(Finished::GpuWins(wins));
-                    for finished in wins.into_iter().chain(solved.into_iter().map(Finished::Deal)) {
-                        if result.is_ok() {
-                            result = sink(finished);
-                            if result.is_err() {
-                                abort.store(true, Ordering::Relaxed);
-                            }
-                        }
+                Ok(stretch) => {
+                    received += stretch.count;
+                    waiting.insert(stretch.first, stretch);
+                    while result.is_ok()
+                        && let Some(stretch) = waiting.remove(&standing.done)
+                    {
+                        standing.done += stretch.count;
+                        standing.gpu.add(&stretch.gpu);
+                        let wins = (stretch.wins > 0).then_some(Finished::GpuWins(stretch.wins));
+                        result = wins
+                            .into_iter()
+                            .chain(stretch.solved.into_iter().map(Finished::Deal))
+                            .try_for_each(&mut sink);
                     }
                 }
                 Err(RecvTimeoutError::Timeout) => {}
@@ -384,70 +514,66 @@ pub fn run(
             }
             if last.elapsed() >= PROGRESS_EVERY {
                 last = Instant::now();
-                progress(stand(done));
+                progress(stand(received));
+            }
+            if result.is_ok()
+                && let Some(every) = opts.checkpoint_every
+                && last_checkpoint.elapsed() >= every
+            {
+                last_checkpoint = Instant::now();
+                result = sink(Finished::Checkpoint(with_times(&standing)));
+            }
+            if result.is_err() {
+                abort.store(true, Ordering::Relaxed);
             }
         }
-        progress(stand(done));
-        let mut cpu = *cpu_time.lock().expect("no panics");
-        cpu.total = started.elapsed().as_micros() as u64 * opts.threads.max(1) as u64;
-        let totals = feeder.map(|h| GpuTotals {
-            won: gpu_won.load(Ordering::Relaxed),
-            failed: gpu_failed.load(Ordering::Relaxed),
-            cpu,
-            ..h.join().expect("the feeder does not panic")
-        });
-        result.map(|()| totals)
+        progress(stand(received));
+        let on_gpu = feeder.is_some();
+        let error = feeder.and_then(|h| h.join().expect("the feeder does not panic"));
+        let whole = with_times(&standing);
+        result.map(|()| Ran { done: whole.done, gpu: on_gpu.then_some(GpuTotals { error, ..whole.gpu }) })
     })
 }
 
-/// The GPU feeder: batches of deals from the shared counter until it runs out (or the run is aborted), results
-/// into `queue`. If the GPU fails, the deals it had in hand go into the queue as not won.
+/// The GPU feeder: batches of deals from the shared counter until it runs out (or the run stops), results into `queue`.
+/// If the GPU fails, gives back the deals it had in hand.
 fn feed(
     gpu: &Gpu,
     seeds: Seeds,
     next: &AtomicUsize,
-    abort: &AtomicBool,
+    stopping: &impl Fn() -> bool,
     queue: &Mutex<VecDeque<Arc<GpuBatch>>>,
+    launches: &AtomicU64,
     positions: &AtomicU64,
-) -> GpuTotals {
-    let mut totals = GpuTotals::default();
+) -> Result<(), (String, Vec<usize>)> {
     let batch = gpu.settings.batch;
-    let result = gpu.feed(
+    gpu.feed(
         |&index: &usize| deal_codes(&Deal::from_seed(seeds.seed(index))),
         || {
             // CPU threads that fall behind the GPU (a hot laptop) hold it back, so what waits for them stays small.
             while queue.lock().expect("no panics").len() >= MAX_BACKLOG_BATCHES {
-                if abort.load(Ordering::Relaxed) {
+                if stopping() {
                     return None;
                 }
                 std::thread::sleep(Duration::from_millis(1));
             }
-            if abort.load(Ordering::Relaxed) {
+            if stopping() {
                 return None;
             }
             let first = next.fetch_add(batch, Ordering::Relaxed);
             (first < seeds.count()).then(|| (first..(first + batch).min(seeds.count())).collect())
         },
         |indices, result| {
-            totals.launches += 1;
-            totals.deals += indices.len() as u64;
-            totals.attempts += result.total_tries();
-            let generated = result.total_nodes();
-            totals.positions += generated;
-            positions.fetch_add(generated, Ordering::Relaxed);
-            queue.lock().expect("no panics").push_back(Arc::new(GpuBatch { indices, result, next: AtomicUsize::new(0) }));
+            launches.fetch_add(1, Ordering::Relaxed);
+            positions.fetch_add(result.total_nodes(), Ordering::Relaxed);
+            queue.lock().expect("no panics").push_back(Arc::new(GpuBatch {
+                indices,
+                result,
+                given: true,
+                next: AtomicUsize::new(0),
+            }));
         },
-    );
-    if let Err((e, lost)) = result {
-        eprintln!(
-            "\nGPU stopped: {e}\n(the CPU solves the {} deals it had in hand, and the rest)",
-            lost.len()
-        );
-        let result = BatchResult::none(lost.len());
-        queue.lock().expect("no panics").push_back(Arc::new(GpuBatch { indices: lost, result, next: AtomicUsize::new(0) }));
-        totals.error = Some(e);
-    }
-    totals
+    )
 }
 
 /// Verifies the line of the deal the GPU won at `i` of `result`, without allocating (`moves`: a buffer, used over and
@@ -506,7 +632,7 @@ fn finish(index: usize, seed: u64, deal: &Deal, report: Report, us: u64, records
     // Nothing counts as a win until the reference engine has replayed it.
     if !records {
         let verified = replay(index, deal, line, outcome == Outcome::Win);
-        return Solved { index, seed, report, us, verified, record: None };
+        return Solved { seed, report, us, verified, record: None };
     }
     let (verified, record) = match SolveRecord::new(deal, Some(seed), outcome, line) {
         Err(e) => (Err(e.to_string()), None),
@@ -528,7 +654,7 @@ fn finish(index: usize, seed: u64, deal: &Deal, report: Report, us: u64, records
             (verified, text)
         }
     };
-    Solved { index, seed, report, us, verified, record }
+    Solved { seed, report, us, verified, record }
 }
 
 /// The reference rules' replay of `line` from `deal` ([`replay_tops`]): every move legal, and one pile at the end when
@@ -586,6 +712,11 @@ pub fn same_games(seeds: Seeds, print: impl Fn(u64) -> u64 + Sync) -> Vec<(u64, 
             repeated.contains(&f).then_some((f, seed))
         })
         .collect();
+    same_among(members)
+}
+
+/// Of `(fingerprint, seed)`s, the pairs of seeds with the same fingerprint that are the same game.
+fn same_among(members: Vec<(u64, u64)>) -> Vec<(u64, u64)> {
     let mut groups: HashMap<u64, Vec<u64>> = HashMap::new();
     for (f, seed) in members {
         groups.entry(f).or_default().push(seed);
@@ -602,6 +733,111 @@ pub fn same_games(seeds: Seeds, print: impl Fn(u64) -> u64 + Sync) -> Vec<(u64, 
     }
     pairs.sort_unstable();
     pairs
+}
+
+/// Seeds fingerprinted at a time when working from disk.
+const CHUNK: usize = 1 << 20;
+/// Bytes of a fingerprint kept in a bucket; the bucket's number is more of it.
+const KEY_BYTES: usize = 5;
+
+/// What [`same_games_on_disk`] needs on disk at most.
+pub fn same_games_disk_bytes(count: u64) -> u64 {
+    count * KEY_BYTES as u64
+}
+
+/// `f` over the positions of `count` seeds, a chunk at a time in parallel, saying how far it has got.
+fn over_chunks<R: Send>(count: usize, doing: &str, f: impl Fn(Range<usize>) -> R + Sync) -> Vec<R> {
+    let chunks = count.div_ceil(CHUNK);
+    let finished = AtomicUsize::new(0);
+    (0..chunks)
+        .into_par_iter()
+        .map(|c| {
+            let result = f(c * CHUNK..((c + 1) * CHUNK).min(count));
+            let n = finished.fetch_add(1, Ordering::Relaxed) + 1;
+            if n.is_multiple_of((chunks / 10).max(1)) {
+                eprintln!("  {doing}: {}%", 100 * n / chunks);
+            }
+            result
+        })
+        .collect()
+}
+
+/// [`same_games`] for more deals than memory can hold 8 bytes each of: 25 billion would take 200 GB. Each fingerprint
+/// goes to a file in `dir` (removed at the end) by its first bits, as the next 5 bytes, about 16 million deals to a
+/// file so that one sorts in memory; what repeats in a file is looked up by fingerprinting again, as there. A repeat of
+/// those bits needn't be one of the whole fingerprint (at 25 billion, about 140,000 are not), which costs nothing.
+pub fn same_games_on_disk(seeds: Seeds, print: impl Fn(u64) -> u64 + Sync, dir: &Path) -> Result<Vec<(u64, u64)>, String> {
+    let _ = std::fs::remove_dir_all(dir);
+    std::fs::create_dir_all(dir).map_err(|e| format!("creating {}: {e}", dir.display()))?;
+    let result = same_games_in(seeds, &print, dir);
+    let _ = std::fs::remove_dir_all(dir);
+    result
+}
+
+fn same_games_in(seeds: Seeds, print: &(impl Fn(u64) -> u64 + Sync), dir: &Path) -> Result<Vec<(u64, u64)>, String> {
+    let count = seeds.count();
+    let bits = (count >> 24).max(1).next_power_of_two().trailing_zeros().clamp(4, 12);
+    let key_bits = 8 * KEY_BYTES as u32;
+    let key = |f: u64| f >> (64 - bits - key_bits);
+    let paths: Vec<PathBuf> = (0..1usize << bits).map(|b| dir.join(format!("{b}.bin"))).collect();
+    let files = paths
+        .iter()
+        .map(|path| {
+            let file = File::create(path).map_err(|e| format!("creating {}: {e}", path.display()))?;
+            Ok(Mutex::new(BufWriter::with_capacity(1 << 16, file)))
+        })
+        .collect::<Result<Vec<_>, String>>()?;
+    let writing = |e: std::io::Error| format!("writing to {}: {e}", dir.display());
+    for written in over_chunks(count, "fingerprinting the deals", |positions| {
+        let mut parts = vec![Vec::new(); files.len()];
+        for i in positions {
+            let k = key(print(seeds.seed(i)));
+            let part: &mut Vec<u8> = &mut parts[(k >> key_bits) as usize];
+            part.extend_from_slice(&k.to_le_bytes()[..KEY_BYTES]);
+        }
+        parts.iter().zip(&files).try_for_each(|(part, file)| file.lock().expect("no panics").write_all(part))
+    }) {
+        written.map_err(writing)?;
+    }
+    for file in files {
+        file.into_inner().expect("no panics").flush().map_err(writing)?;
+    }
+    let repeated = (0..paths.len())
+        .into_par_iter()
+        .map(|b| {
+            let path = &paths[b];
+            let bytes = std::fs::read(path).map_err(|e| format!("reading {}: {e}", path.display()))?;
+            let mut keys: Vec<u64> = bytes
+                .as_chunks::<KEY_BYTES>()
+                .0
+                .iter()
+                .map(|c| {
+                    let mut word = [0; 8];
+                    word[..KEY_BYTES].copy_from_slice(c);
+                    u64::from_le_bytes(word)
+                })
+                .collect();
+            drop(bytes);
+            let _ = std::fs::remove_file(path);
+            keys.sort_unstable();
+            Ok(keys.windows(2).filter(|w| w[0] == w[1]).map(|w| (b as u64) << key_bits | w[0]).collect::<Vec<u64>>())
+        })
+        .collect::<Result<Vec<_>, String>>()?;
+    let repeated: HashSet<u64> = repeated.into_iter().flatten().collect();
+    if repeated.is_empty() {
+        return Ok(Vec::new());
+    }
+    eprintln!("  {} fingerprints to look up", repeated.len());
+    let members = over_chunks(count, "looking them up", |positions| {
+        positions
+            .filter_map(|i| {
+                let seed = seeds.seed(i);
+                let f = print(seed);
+                repeated.contains(&key(f)).then_some((f, seed))
+            })
+            .collect::<Vec<_>>()
+    });
+    Ok(same_among(members.into_iter().flatten().collect()))
 }
 
 /// Wilson score interval (95%) for `k` successes in `n` trials.
@@ -637,11 +873,12 @@ mod tests {
     fn check_run(gpu: Option<Arc<Gpu>>, count: u64, records: bool) {
         let seeds: Vec<u64> = (500..500 + count).collect();
         let on_gpu = gpu.is_some();
-        let opts = Options { threads: 4, table_log2: 12, endgame: None, records, each_gpu_win: false, gpu };
+        let opts = Options { threads: 4, table_log2: 12, records, gpu, ..Options::default() };
         let mut seen = vec![0u32; seeds.len()];
         let mut stages: HashMap<String, u32> = HashMap::new();
         let mut counted_wins = 0u64;
-        let totals = run(
+        let mut last_index = None;
+        let ran = run(
             Seeds::List(&seeds),
             &Config::default(),
             &opts,
@@ -653,9 +890,12 @@ mod tests {
                         counted_wins += n;
                         return Ok(());
                     }
+                    Finished::Checkpoint(_) => panic!("none were asked for"),
                 };
-                seen[s.index] += 1;
-                assert_eq!(s.seed, seeds[s.index]);
+                let index = (s.seed - seeds[0]) as usize;
+                assert!(last_index.is_none_or(|last| last < index), "out of order");
+                last_index = Some(index);
+                seen[index] += 1;
                 assert!(s.verified.is_ok() && matches!(s.report.verdict, Verdict::Win(_)));
                 assert_eq!(s.record.is_some(), records);
                 *stages.entry(s.report.stage.to_string()).or_default() += 1;
@@ -667,9 +907,11 @@ mod tests {
         // Without records, the GPU's wins come back as a count, and every other deal once.
         assert!(seen.iter().all(|&n| n <= 1));
         assert_eq!(seen.iter().map(|&n| u64::from(n)).sum::<u64>() + counted_wins, count);
-        match totals {
+        assert_eq!(ran.done, seeds.len());
+        match ran.gpu {
             Some(t) => {
                 assert!(on_gpu && t.error.is_none() && t.failed == 0);
+                assert_eq!(t.deals, count);
                 assert_eq!(stages.get("gpu").map_or(0, |&n| u64::from(n)) + counted_wins, t.won);
                 assert!(t.won > 0 && t.won <= t.deals, "{} of {}", t.won, t.deals);
             }
@@ -682,12 +924,139 @@ mod tests {
         check_run(None, 60, true);
     }
 
+    /// Pauses after `pause_after` deals, then carries on to the end, in as many goes as that takes: every deal comes
+    /// back once and in order, and the totals come out as for one run.
+    fn check_pause(gpu: Option<Arc<Gpu>>, count: usize, pause_after: usize, pause: &'static AtomicBool) {
+        let seeds: Vec<u64> = (500..500 + count as u64).collect();
+        let on_gpu = gpu.is_some();
+        let mut from = Standing::default();
+        let mut seen = vec![0u32; count];
+        let mut handed_on = 0;
+        let mut goes = 0;
+        while from.done < count {
+            goes += 1;
+            assert!(goes < 1000, "it stopped getting anywhere");
+            pause.store(false, Ordering::Relaxed);
+            let opts = Options {
+                threads: 4,
+                table_log2: 12,
+                each_gpu_win: true,
+                gpu: gpu.clone(),
+                from: from.clone(),
+                pause: Some(pause),
+                checkpoint_every: Some(Duration::ZERO),
+                ..Options::default()
+            };
+            let start = from.done;
+            let mut last = None;
+            let mut in_this_go = 0;
+            let ran = run(
+                Seeds::List(&seeds),
+                &Config::default(),
+                &opts,
+                |finished| {
+                    match finished {
+                        Finished::Deal(s) => {
+                            let index = (s.seed - seeds[0]) as usize;
+                            assert!(index >= start && last.is_none_or(|l| l < index), "out of order");
+                            last = Some(index);
+                            seen[index] += 1;
+                            handed_on += 1;
+                            in_this_go += 1;
+                            if in_this_go >= pause_after {
+                                pause.store(true, Ordering::Relaxed);
+                            }
+                        }
+                        Finished::GpuWins(_) => panic!("each win was asked for"),
+                        // Every deal before a checkpoint has been handed on, and no others.
+                        Finished::Checkpoint(standing) => assert_eq!(standing.done, handed_on),
+                    }
+                    Ok(())
+                },
+                |_| {},
+            )
+            .unwrap();
+            assert!(ran.done > from.done && ran.done <= count);
+            assert_eq!(ran.done, handed_on, "deals handed on");
+            from = Standing { done: ran.done, gpu: ran.gpu.unwrap_or_default() };
+        }
+        assert!(goes > 1, "it never paused");
+        assert!(seen.iter().all(|&n| n == 1));
+        if on_gpu {
+            let t = &from.gpu;
+            assert_eq!(t.deals, count as u64);
+            assert!(t.won > 0 && t.won <= t.deals && t.failed == 0 && t.attempts >= t.won);
+            assert!(t.launches as usize >= goes && t.cpu.total > 0);
+        }
+    }
+
+    /// The GPU fails part of the way through a run.
+    fn check_gpu_failure(gpu: Arc<Gpu>) {
+        let count = 12_000;
+        let seeds: Vec<u64> = (500..500 + count as u64).collect();
+        let run_it = |seen: &mut Vec<u32>, opts: &Options| {
+            run(
+                Seeds::List(&seeds),
+                &Config::default(),
+                opts,
+                |finished| {
+                    if let Finished::Deal(s) = finished {
+                        seen[(s.seed - seeds[0]) as usize] += 1;
+                    }
+                    Ok(())
+                },
+                |_| {},
+            )
+            .unwrap()
+        };
+        let options = || Options {
+            threads: 4,
+            table_log2: 12,
+            each_gpu_win: true,
+            gpu: Some(Arc::clone(&gpu)),
+            ..Options::default()
+        };
+
+        // Left to the CPU: it solves the deals in the GPU's hands and all the rest.
+        let mut seen = vec![0; count];
+        let opts = Options { fail_gpu_after: Some(3), ..options() };
+        let ran = run_it(&mut seen, &opts);
+        assert!(seen.iter().all(|&n| n == 1));
+        let t = ran.gpu.unwrap();
+        assert_eq!(ran.done, count);
+        assert!(t.error.is_some() && t.deals > 0 && (t.deals as usize) < count, "{} deals", t.deals);
+
+        // Pausing for it: nothing from the first deal it had lost on, and a new run takes them all from there.
+        let mut seen = vec![0; count];
+        let opts = Options { fail_gpu_after: Some(3), pause_if_gpu_fails: true, ..options() };
+        let ran = run_it(&mut seen, &opts);
+        let t = ran.gpu.unwrap();
+        assert!(t.error.is_some() && ran.done > 0 && ran.done < count, "at {}", ran.done);
+        assert_eq!(t.deals as usize, ran.done);
+        assert!(seen[..ran.done].iter().all(|&n| n == 1) && seen[ran.done..].iter().all(|&n| n == 0));
+        let opts = Options { from: Standing { done: ran.done, gpu: t }, ..options() };
+        let ran = run_it(&mut seen, &opts);
+        let t = ran.gpu.unwrap();
+        assert!(seen.iter().all(|&n| n == 1));
+        assert!(t.error.is_none() && ran.done == count && t.deals as usize == count);
+    }
+
+    #[test]
+    fn a_paused_run_carries_on_where_it_stopped() {
+        static PAUSE: AtomicBool = AtomicBool::new(false);
+        check_pause(None, 300, 40, &PAUSE);
+    }
+
     #[test]
     fn with_the_gpu_too() {
+        static PAUSE: AtomicBool = AtomicBool::new(false);
         match open_gpu("auto", Settings { batch: 512, ..Settings::default() }).unwrap() {
             Some(gpu) => {
                 check_run(Some(Arc::clone(&gpu)), 3_000, true);
-                check_run(Some(gpu), 3_000, false);
+                check_run(Some(Arc::clone(&gpu)), 3_000, false);
+                // A go can take 10 batches before it sees the pause.
+                check_pause(Some(Arc::clone(&gpu)), 30_000, 400, &PAUSE);
+                check_gpu_failure(gpu);
             }
             None => eprintln!("skipped: no GPU"),
         }
@@ -703,6 +1072,31 @@ mod tests {
         // The same seed twice is the same game.
         assert_eq!(same_games(Seeds::List(&[1, 2, 1]), print), vec![(1, 1)]);
         assert!(same_games(Seeds::Range { from: 0, count: 10_000 }, print).is_empty());
+    }
+
+    #[test]
+    fn on_disk_it_finds_the_same_games() {
+        let dir = std::env::temp_dir().join(format!("acc-games-test-{}", std::process::id()));
+        let print = |s: u64| fingerprint(&Deal::from_seed(s));
+        let on_disk = |seeds: Seeds, print: &(dyn Fn(u64) -> u64 + Sync)| same_games_on_disk(seeds, print, &dir).unwrap();
+        // More than a chunk, so that a repeat is seen across chunks and buckets.
+        let range = Seeds::Range { from: 0, count: 2 * CHUNK + 5 };
+        assert!(on_disk(range, &print).is_empty());
+        assert!(!dir.exists(), "it cleans up");
+        // The same game: seed 2 twice, far apart.
+        let mut seeds: Vec<u64> = (0..CHUNK as u64 + 5).collect();
+        seeds.push(2);
+        assert_eq!(on_disk(Seeds::List(&seeds), &print), vec![(2, 2)]);
+        // A whole fingerprint in common, but not the same cards.
+        let last = CHUNK as u64 + 4;
+        let same_print = |s: u64| print(if s == last { 2 } else { s });
+        assert!(on_disk(Seeds::List(&seeds[..seeds.len() - 1]), &same_print).is_empty());
+        // The same first bits but not the whole fingerprint.
+        let same_bits = |s: u64| if s == last { print(2) ^ 1 } else { print(s) };
+        assert!(on_disk(Seeds::List(&seeds[..seeds.len() - 1]), &same_bits).is_empty());
+        // Agreeing with the check in memory, with many repeats.
+        let many: Vec<u64> = (0..50_000).map(|i| i % 49_990).collect();
+        assert_eq!(on_disk(Seeds::List(&many), &print), same_games(Seeds::List(&many), print));
     }
 
     #[test]

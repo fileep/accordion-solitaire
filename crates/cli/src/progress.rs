@@ -18,6 +18,8 @@ const PLAIN_EVERY: f64 = 60.0;
 
 pub struct Meter {
     total: usize,
+    /// Where this session of the run started.
+    first: Progress,
     start: Instant,
     /// The last few samples, oldest first: (seconds since the start, progress).
     recent: VecDeque<(f64, Progress)>,
@@ -30,9 +32,9 @@ pub struct Meter {
 }
 
 impl Meter {
-    /// A meter for `total` deals. With `log_dir`, the speed log goes in a new file there, headed by `about` (the
-    /// run's settings).
-    pub fn new(total: usize, log_dir: Option<&Path>, about: &str) -> Result<Meter, String> {
+    /// A meter for `total` deals, from where the run stands in `first`. With `log_dir`, the speed log goes in a new
+    /// file there, headed by `about` (the run's settings).
+    pub fn new(total: usize, first: Progress, log_dir: Option<&Path>, about: &str) -> Result<Meter, String> {
         let now = SystemTime::now().duration_since(UNIX_EPOCH).map_or(0, |d| d.as_secs());
         let log = match log_dir {
             Some(dir) => {
@@ -53,11 +55,11 @@ impl Meter {
             }
             None => None,
         };
-        let start = Progress { done: 0, gpu_won: 0, gpu_positions: 0, backlog: 0 };
         Ok(Meter {
             total,
+            first,
             start: Instant::now(),
-            recent: VecDeque::from([(0.0, start)]),
+            recent: VecDeque::from([(0.0, first)]),
             log,
             terminal: std::io::stderr().is_terminal(),
             width: 0,
@@ -122,7 +124,7 @@ impl Meter {
             thousands(done as u64),
             thousands(left as u64),
             thousands(rate.round() as u64),
-            thousands((done as f64 / t.max(1e-3)).round() as u64),
+            thousands((done.saturating_sub(self.first.done) as f64 / t.max(1e-3)).round() as u64),
         )
     }
 }

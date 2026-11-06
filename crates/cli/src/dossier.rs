@@ -105,7 +105,11 @@ fn load_or_new(dir: &Path, deal: &Deal, seed: Option<u64>) -> Result<(PathBuf, V
 
 fn save(path: &Path, d: &Value) -> Result<(), String> {
     let text = serde_json::to_string_pretty(d).expect("serializable") + "\n";
-    std::fs::write(path, text).map_err(|e| format!("writing {}: {e}", path.display()))
+    // Whole or not at all: a run resumed after a crash reads this again.
+    let new = path.with_extension("tmp");
+    std::fs::write(&new, text)
+        .and_then(|()| std::fs::rename(&new, path))
+        .map_err(|e| format!("writing {}: {e}", path.display()))
 }
 
 /// Records an exhaustive proof (`acc prove`, or `acc batch` for a deal it didn't win) in the deal's dossier. A proven

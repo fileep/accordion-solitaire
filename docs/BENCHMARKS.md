@@ -1586,3 +1586,80 @@ blocks of 96 and leaps 8:1 stay.
   difference that fewer tries make; it wants a second pipeline in the host.
 - **Best of k on the CPU's ladder:** of no use to `acc batch` now (misses take 14% of a CPU with 58% to spare), but it may help
   a run with no GPU.
+
+## After Phase 8 — pausing, and tens of billions of deals
+
+`acc batch` can now stop and carry on: Ctrl+C or a file pauses it, a crash costs the last minute, and `--resume` goes on from
+either. The report comes out as for one run. README has how to use it; this is why it is built this way.
+
+**What would have gone wrong at 25 billion deals,** about 8 hours at these speeds:
+
+- **The check that the deals all differ** held 8 bytes a deal in memory: 200 GB, on a machine with 48. It ran after the deals and
+  before the report, so the run would have died at the end with nothing to show for it.
+- **The report was only on the terminal,** and it waited for the last proof.
+- **If the GPU failed,** the CPU solved the rest, as it should in a short run. Here that would be about a month.
+- **Nothing could stop and carry on,** so any crash, or wanting the laptop back, lost everything.
+
+Looked at and fine: seeds and counts in 64 bits (nothing truncates; a launch's own counts are 32 bits, at most 1,280 × 65,536), the
+costs of the deals solved on the CPU (16 bytes each, 2.8M deals, 45 MB), the backlog (8 batches, 37 MB), the speed log (2 MB).
+
+**Results in seed order.** Workers finish out of order, so a checkpoint would have to say which deals were done. Now the main
+thread applies results strictly in seed order, holding what comes early, and where a run stands is one number with totals that
+match it exactly. What it holds is small: a hard deal at the head of the line stops the count for up to a minute but not the work,
+and a minute's results are about 200,000 runs of 256, 40 MB at most. The counts are carried with the results, so the GPU's
+attempts, positions and wins are those of the deals applied. With `--out` the records are written in the same order, which they had
+to be anyway.
+
+**The checkpoint** is JSON, written to a temporary file, synced and renamed, every minute and at a pause. What it counts is on disk
+first: `--out` is flushed and synced, and the positions and times of the CPU's deals go to a file of costs. A resumed run cuts both
+back to what the checkpoint counts, so what came after it is done again without being counted twice. Dossiers are written whole
+for the same reason, as a resumed run reads them again. The settings come from the checkpoint in full, tables found included.
+
+**Proofs.** A deal goes on a list when it is sent to the prover and comes off when its proof is recorded; the checkpoint has the
+list and the tallies, taken together, and a resumed run proves what is on the list again. A proof in hand at a pause starts over.
+They take seconds in practice (2 s to 16 s for the real ones so far), and the limit, 10 billion positions a run, about an hour.
+
+**The check on disk.** Past `--games-memory` (16 GB, 2 billion deals) each fingerprint goes to one of up to 4,096 files by its first
+bits, as the next 40 bits: 5 bytes a deal, about 16 million deals a file, so that a file sorts in memory. What repeats in a file is
+looked up by fingerprinting all the deals again, as in memory. Repeats of those bits that aren't of the whole fingerprint cost
+nothing: on 2 billion seeds it found 14,234 (the formula, n²/2 over 2⁴⁷, says 14,211). **216 s for 2 billion seeds, on disk** in the
+checkpoint's directory, so about 36 minutes and 100 GB for 20 billion, if the disk keeps up past its cache. It is in the final stage
+with the last proofs, which saves as it goes and can pause; a pause there starts the check over. If the disk fills up, the run keeps
+its checkpoint and says so, and `--no-games-check` skips the check.
+
+**The GPU failing** now pauses the run, with the deals it had in hand left to be done again, and exits with code 75: a new process
+may well get the GPU back. Without a checkpoint (`--no-checkpoint`) the CPU still solves the rest.
+
+**Is it slower?** The added work is a few loads a deal and a small lock and tree insert per 256 deals, so it shouldn't be. `acc
+batch`, 60M deals a run, from cold-ish to hot and back in the order shown, with a checkpoint every minute:
+
+| Run | Last commit | Pause and resume |
+|---|---|---|
+| New first, then base | 803,123 | 816,294 |
+| Base first, then new | 879,237 | 885,936 |
+| New first, then base | 928,486 | 904,270 |
+
+Run with the new build always second, it looked 1–2% slower, but then so did each later run of the same build as the laptop heated up:
+heat, not the code. The range across runs is 760,000 to 930,000 deals a second, so 20 billion is 6 to 7.5 hours.
+
+**Tests** (`crates/cli/tests/pause_resume.rs`, on the CPU, where every deal's solve is deterministic): paused over and over, crashed
+with its records and costs ahead of its checkpoint, and with proofs in hand and during the last ones, each against the same run left
+alone: reports and records equal but for times. Ctrl+Break pauses and a second stops at once. In `runner.rs`: order, a pause and
+carrying on, on the GPU too; the GPU made to fail, both ways, with every deal coming back once.
+
+**Rehearsed on the GPU.** 30M deals from seed 100,000,000,000: paused by file (0.33 s to stop), killed, carried on to the end; the
+GPU had been given exactly 30,000,000 deals, and won 29,996,675. A run of 25 billion paused, its checkpoint moved on to 24,999,000,000,
+and carried on to the end, for the arithmetic past 2³².
+
+**Considered, not tried:**
+- **Restarting by itself after a GPU failure:** waiting on a new copy of itself, for a run that may have hours left and a GPU that
+  may not come back. Exit code 75 and a shell loop do it, and a person can see what happened.
+- **A list of done ranges, not seed order,** in the checkpoint: more to save and load for no gain, since nothing else wants results
+  out of order.
+- **Saving a proof's progress** at a pause: its dead-position sets are gigabytes, and the proofs so far took seconds.
+- **Saving the check's progress** between its passes: a pause there costs up to half an hour of a run of many hours.
+- **Seeds with the fingerprints,** so that the check needn't fingerprint the deals twice: 10 bytes a deal, 200 GB, to save about 18
+  minutes.
+- **The check during the run,** with the CPU threads 60–80% idle: heat that costs the GPU 5–10%, for hours (see the workers' own deals,
+  above), to save half an hour.
+- **A crate for Ctrl+C:** the two calls it wraps are a few lines, and a new download isn't worth them.

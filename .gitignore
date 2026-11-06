@@ -13,3 +13,5 @@ __pycache__/
 /endgame
 # Speed logs from `acc batch`
 /logs
+# Checkpoints of `acc batch` runs in progress, and their reports
+/checkpoints

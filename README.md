@@ -77,6 +77,33 @@ A deal `batch` doesn't win is then proved lost if it can be, on a thread of its 
 `prove` does it (below). The run waits for the last proof, which can take an hour; `--prove <positions a run>` sets the
 limit and `--prove 0` turns proofs off. A proven loss gets a `loss` record in `hard-deals/proofs/`.
 
+A long `batch` can stop and carry on. **Ctrl+C pauses it:** it finishes what is in hand (under a second, or as long as a
+hard deal takes), saves, and says how to carry on. A second Ctrl+C stops it at once. So does anything else that stops it,
+a crash or a power cut included: every minute it saves a checkpoint, by default `checkpoints/batch-<from>-<count>.json`,
+so only the last minute is done again. To pause a run with no console at hand, create the file beside the checkpoint that
+ends `.pause`. Carry on from the same directory; the deals, settings and totals all come from the checkpoint, and the
+report comes out as for one run:
+
+```bash
+cargo run --release -p accordion-cli -- batch --resume checkpoints/batch-0-100000.json
+```
+
+Only `--threads`, `--checkpoint-every`, `--log-dir`, `--no-log`, `--games-memory` and `--no-games-check` can be given with
+`--resume`. A run that ends removes its checkpoint, and if it took over a minute it leaves its report beside where that
+was (`.report.txt`). Starting a run whose checkpoint is still there is an error, so a paused run can't be overwritten by
+accident; `--checkpoint <path>` puts it elsewhere and `--no-checkpoint` keeps none.
+
+If the GPU fails, the run pauses rather than go on at the CPU's speed, and exits with code 75: a new process usually gets
+the GPU back. To restart it by itself, in PowerShell:
+
+```powershell
+do { cargo run --release -p accordion-cli -- batch --resume checkpoints/batch-0-100000.json } while ($LASTEXITCODE -eq 75)
+```
+
+The check that the deals are all different games holds 8 bytes a deal in memory up to `--games-memory` (16 GB, 2 billion
+deals) and works from disk past that, about 5 bytes a deal for a while; `--no-games-check` skips it. See "pausing, and tens
+of billions of deals" in [docs/BENCHMARKS.md](docs/BENCHMARKS.md).
+
 Prove a deal or position lost by two independent exhaustive searches, each with an exact (lossless) set of dead
 positions. A typical winnable deal is far out of reach, but lost deals tend to be small: the three found in two billion
 deals took 75 thousand, 3.4 million and 19 million positions. A proven loss is written as a `loss` record, and the deal's dossier
