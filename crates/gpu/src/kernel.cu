@@ -315,8 +315,9 @@ __device__ __forceinline__ void rrow_window(const u32 (&R)[RW], int x, u32& w0, 
     u32 q = (u32)(x + 2) >> 2, r = 8 * ((x + 2) & 3);    // card x - 6 is byte x + 2 of the padded row
     u32 a[11], b[7], c[5], d[4];
     if (BITS == 4) {
+        // At 8 words q is at most 8, so when q & 8 the later stages shift nothing and read only the first four.
         #pragma unroll
-        for (int i = 0; i < 11; i++) a[i] = (q & 8) ? rrow_padded<W>(R, i + 8) : rrow_padded<W>(R, i);
+        for (int i = 0; i < 11; i++) a[i] = (i < 4 || W > 8) && (q & 8) ? rrow_padded<W>(R, i + 8) : rrow_padded<W>(R, i);
     } else {
         #pragma unroll
         for (int i = 0; i < 11; i++) a[i] = rrow_padded<W>(R, i);
@@ -1005,10 +1006,7 @@ __device__ __forceinline__ void kept_row(const u32* w, u32 (&R)[RW], u64& l1, u6
 // The queue's shared memory leaves room for 8 blocks of 96 on the T550, 1 prefix warp to 2 search warps
 // (docs/BENCHMARKS.md, "shared early prefix moves"), so the kernel may take 80 registers (24 warps a multiprocessor);
 // at 72 it spilled.
-#ifndef SM_THREADS
-#define SM_THREADS 768
-#endif
-extern "C" __global__ void __launch_bounds__(BLOCK, SM_THREADS / BLOCK) attempts_split(
+extern "C" __global__ void __launch_bounds__(BLOCK, 768 / BLOCK) attempts_split(
     const u8* __restrict__ deals, const u64* __restrict__ deal_masks, u32 n_deals, u64 inv_deals, u32 tries,
     u32 prefix, u32 tries2, u32 prefix2, u32 budget, u32 conn_gate, u32 leftmost, u32 leap_shift,
     u64 seed, u32* next_attempt, u32* won, u8* lines, u64* deal_counts, u64* profile)

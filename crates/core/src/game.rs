@@ -166,6 +166,32 @@ impl Game {
     }
 }
 
+/// Plays `line` from `deal` by the rules of [`Game::check`] and [`Game::apply`] on the top cards alone, which is all
+/// those rules look at, and returns the piles left; or the index of the first illegal move and why. Allocates nothing
+/// where a [`Game`] allocates once per pile and again per move: `acc batch` replays every GPU line with this, up to
+/// half a million a second. A test checks it against [`Game`], on legal moves and illegal ones.
+pub fn replay_tops(deal: &Deal, line: &[Move]) -> Result<usize, (usize, MoveError)> {
+    let mut tops = *deal.cards();
+    let mut piles = tops.len();
+    for (i, &mv) in line.iter().enumerate() {
+        let (pile, distance) = (mv.pile as usize, mv.distance());
+        let error = if pile >= piles {
+            MoveError::NoSuchPile { pile, piles }
+        } else if pile < distance {
+            MoveError::NothingToTheLeft { pile, distance }
+        } else if !tops[pile].matches(tops[pile - distance]) {
+            MoveError::NoMatch { mover: tops[pile], target: tops[pile - distance] }
+        } else {
+            tops[pile - distance] = tops[pile];
+            tops.copy_within(pile + 1..piles, pile);
+            piles -= 1;
+            continue;
+        };
+        return Err((i, error));
+    }
+    Ok(piles)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -198,6 +224,39 @@ mod tests {
             g.move_between(h3, ac),
             Err(MoveError::WrongDistance { mover: h3, target: ac, distance: 2 })
         );
+    }
+
+    #[test]
+    fn replaying_top_cards_agrees_with_the_game() {
+        // Random lines, most moves legal and some not: the same piles left, or the same first illegal move and reason.
+        let mut rng = crate::rng::Xoshiro256StarStar::from_seed(1);
+        let mut illegal = 0;
+        for seed in 0..2000 {
+            let deal = Deal::from_seed(seed);
+            let mut game = Game::new(&deal);
+            let mut line = Vec::new();
+            loop {
+                let legal = game.legal_moves();
+                let mv = if legal.is_empty() || rng.below(25) == 0 {
+                    Move { pile: rng.below(53) as u8, leap: rng.below(2) == 1 }
+                } else {
+                    legal[rng.below(legal.len() as u64) as usize]
+                };
+                line.push(mv);
+                match game.apply(mv) {
+                    Ok(()) => assert_eq!(replay_tops(&deal, &line), Ok(game.pile_count())),
+                    Err(e) => {
+                        assert_eq!(replay_tops(&deal, &line), Err((line.len() - 1, e)));
+                        illegal += 1;
+                        break;
+                    }
+                }
+                if game.is_won() {
+                    break;
+                }
+            }
+        }
+        assert!(illegal > 1000, "only {illegal} lines ended on an illegal move");
     }
 
     #[test]

@@ -209,6 +209,7 @@ pub fn run(args: &BatchArgs) -> Result<bool, String> {
     let start = Instant::now();
     let (mut won, mut exhausted, mut unknown, mut failed) = (0u64, 0u64, 0u64, 0u64);
     let mut stages: HashMap<String, u64> = HashMap::new();
+    let mut gpu_stage = 0u64;
     // Grown as needed: only the CPU's deals have them (a fifth or so), and a billion deals' worth is 16 GB.
     let mut nodes = Vec::new();
     let mut micros = Vec::new();
@@ -242,7 +243,11 @@ pub fn run(args: &BatchArgs) -> Result<bool, String> {
                 match s.report.verdict {
                     Verdict::Win(_) => {
                         won += 1;
-                        *stages.entry(s.report.stage.to_string()).or_default() += 1;
+                        if s.report.stage == Stage::Gpu {
+                            gpu_stage += 1;
+                        } else {
+                            *stages.entry(s.report.stage.to_string()).or_default() += 1;
+                        }
                     }
                     Verdict::Exhausted => exhausted += 1,
                     Verdict::Unknown => unknown += 1,
@@ -278,6 +283,9 @@ pub fn run(args: &BatchArgs) -> Result<bool, String> {
         },
         |p| meter.update(&p),
     )?;
+    if gpu_stage > 0 {
+        stages.insert(Stage::Gpu.to_string(), gpu_stage);
+    }
     eprintln!();
     let elapsed = start.elapsed().as_secs_f64();
     let same = runner::same_games(seeds, |s| runner::fingerprint(&Deal::from_seed(s)));

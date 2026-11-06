@@ -49,14 +49,15 @@ pub struct Settings {
     pub rungs: Vec<[u32; 2]>,
     /// Positions each search may generate.
     pub budget: u32,
-    /// Deals per launch: keep launches well under Windows' 2 s GPU watchdog (16,384 take about half a second on the
-    /// T550, and fewer leave several attempts at once on each deal, which wastes those still running once it is won).
+    /// Deals per launch: keep launches well under Windows' 2 s GPU watchdog (32,768 take about 0.1 s on the T550, and
+    /// fewer leave several attempts at once on each deal, which wastes those still running once it is won).
     pub batch: usize,
     /// Threads per block (the kernel's shared memory is sized for it: 64 bytes per thread). On the T550, 64 fits
     /// 1,024 attempts per multiprocessor, its maximum (32 fits 512, the most blocks it takes); with `split`, whose
-    /// queue takes shared memory too, 8 blocks of 96 or 12 of 64 fit.
+    /// queue takes shared memory too, 8 blocks of 96 or 12 of 64 fit, and 5 of 96 are all it can use.
     pub block: u32,
-    /// Thread blocks per multiprocessor.
+    /// Thread blocks per multiprocessor. Fewer than fit, when they keep it busy, leave fewer attempts running on deals
+    /// already won.
     pub blocks_per_sm: u32,
     /// Connectivity test at positions with at most this many piles.
     pub conn_gate: u32,
@@ -91,10 +92,10 @@ impl Default for Settings {
     fn default() -> Settings {
         Settings {
             rungs: vec![[38, 256], [36, 1024]],
-            budget: 2000,
-            batch: 16384,
+            budget: 700,
+            batch: 32768,
             block: 96,
-            blocks_per_sm: 16,
+            blocks_per_sm: 5,
             conn_gate: 19,
             leftmost: true,
             leap_weight: 8,

@@ -1333,3 +1333,115 @@ against 2,037–2,129M. Every deal was won and no line failed verification; the 
 - **Search warps with few threads at work sleeping to wait for residuals** (fewer than 8 or 16): 292,009–296,730.
 - **Cards present by a loop** instead of 16 unrolled steps: 348,873–354,734 against 348,329–357,582.
 - **`write_line` out of line:** 286,323–294,873 against 299,062–301,692 (a real call costs the whole kernel).
+
+## After Phase 8 — cheaper verification, and the retune
+
+**The CPU was about to become the limit.** Over 60M deals the kernel above held 364,797 deals/s, the GPU a steady
+3,370M positions/s, but the hot CPU spent 51.9% of its time replaying lines (21.5 µs each, 11 µs cool) and 31.4% on misses,
+which left 11.7% for deals of its own: about 415,000 deals/s was all it could keep up with. Nothing held the GPU back
+either, so a slower CPU would have let its queue grow without limit. So, first:
+- **`replay_tops`:** a line is replayed by the reference rules on the top cards alone, which is all they look at, without
+  allocating (the reference engine allocates a vector per pile, about 150 allocator calls a line). A test checks it
+  against the reference engine, on random legal and illegal moves, and during a run 1 deal in 256 goes through the
+  reference engine as well, which has to agree. `--out`, which writes records, still uses the whole `verify`.
+  **1.2 µs a line cool, 2.2–5 µs hot**, against 11 and 21–25 µs. The freed time goes to the CPU's own deals (50–60% of its
+  time where it had 3–13%).
+- **The GPU waits** while more than 8 batches wait for the CPU threads, so that what waits stays small on a hot laptop.
+- CPU threads take the GPU's results 32 at a time, and the per-deal tally no longer allocates a string for the stage.
+
+**Misses cost far more when the laptop is hot.** A deal the GPU misses took 2–3 ms cool but about 10 ms hot, the CPU having
+fallen to about a quarter of its speed, and the GPU itself loses about 10% (3,000–3,200M positions/s against 3,400M). Short
+cool runs flatter settings with more misses; hot, they run into the CPU (5M deals, `acc batch`, in the order run):
+
+| Rungs (budget 500 unless shown) | Misses | Deals/s, cool to hot | CPU time on misses, hot |
+|---|---|---|---|
+| 38 × 256, 36 × 1,024, budget 2,000 | 0.21% | 381,991, 344,660, 336,192 | 57% |
+| 38 × 256, 36 × 1,024 | 0.30% | 388,884, 376,729, 333,458 | 77% |
+| 38 × 256, 36 × 768 | 0.51% | 391,501, 373,027, 267,070 | 85% |
+| 38 × 512, 37 × 1,024 | 0.61% | 377,612, 363,926, 240,732 | 87% |
+| 37 × 1,280 | 0.63% | 365,473, 367,837, 229,893 | 88% |
+| 38 × 256, 36 × 512 | 1.05% | 328,883, 311,602, 166,730 | 91% |
+
+So a retune by `accgpu` alone weighs each 0.1% of misses as 1% of the speed (score below): roughly what these show.
+
+**The retune**, one setting at a time from the defaults, `accgpu`, 300,000–400,000 deals, seeds from 10,000,000, two
+alternated repeats. Warps first (groups of 8 sharing 20 moves, budget 2,000):
+
+| Prefix : search warps (block), blocks a multiprocessor | Deals/s |
+|---|---|
+| **1:2 (96), 5** | **351,558** |
+| 2:3 (160), 5 | 347,045 |
+| 1:2 (192), 4 | 345,931 |
+| 3:5 (256), 3 | 344,614 |
+| 1:2 (96), 8 | 342,614 |
+| 3:4 (224), 4 | 340,897 |
+| 1:1 (64), 8 and 12 | 335,870, 333,810 |
+| 1:3 (128), 6 | 316,944 |
+
+Group and shared moves (1:2, 5 blocks): **8 : 20 355,283**; 8 : 22 353,797 (0.22% misses); 6 : 22 350,170; 8 : 24 349,756; 12 : 20
+347,842; 4 : 24 345,738; 16 : 20 344,205 (0.24%); 4 : 20 342,816; 8 : 18 337,393; 16 : 16 330,602; 4 : 16 319,232; 32 : 12
+309,715. Below 20 moves the row's masks need 64 bits, which shows.
+
+Search budget and leap weight (0.20% misses at 2,000):
+
+| Budget | Deals/s | Misses | | Leap weight | Deals/s | Misses |
+|---|---|---|---|---|---|---|
+| 300 | 372,148 | 0.43% | | 2 | 341,328 | 0.26% |
+| 500 | 376,942 | 0.30% | | 4 | 358,198 | 0.21% |
+| 1,000 | 371,219 | 0.23% | | **8** | **362,902** | **0.20%** |
+| 1,500 | 365,892 | 0.21% | | 16 | 356,384 | 0.22% |
+| 2,000 | 362,902 | 0.20% | | 32 | 350,002 | 0.26% |
+| 3,000 | 353,790 | 0.20% | | | | |
+| 5,000 | 344,885 | 0.19% | | | | |
+| 10,000 | 335,040 | 0.19% | | | | |
+
+How deep, and when to give up (budget 500):
+
+| Rungs | Deals/s | Misses | Attempts a deal |
+|---|---|---|---|
+| 38 × 256, 36 × 256 | 405,030 | 2.89% | 129 |
+| 37 × 640 | 395,881 | 2.28% | 101 |
+| 38 × 256, 36 × 512 | 382,828 | 1.02% | 135 |
+| 38 × 384, 36 × 512 | 380,759 | 0.88% | 147 |
+| 38 × 512, 37 × 1,024 | 378,389 | 0.61% | 167 |
+| 38 × 256, 36 × 768 | 372,552 | 0.50% | 137 |
+| 37 × 1,280 | 372,798 | 0.63% | 110 |
+| 37 × 256, 36 × 512 | 371,786 | 0.82% | 98 |
+| **38 × 256, 36 × 1,024** | **369,106** | **0.30%** | **139** |
+| 38 × 512, 36 × 1,024 | 366,618 | 0.25% | 159 |
+| 38 × 256, 36 × 2,048 | 358,148 | 0.07% | 141 |
+| 37 × 2,560 | 357,284 | 0.15% | 115 |
+| 38 × 1,024, 36 × 1,024 | 356,936 | 0.19% | 176 |
+| 38 × 256, 36 × 4,096 | 349,470 | 0.02% | 142 |
+
+Earlier, at budget 2,000: 38 × 1,280 alone 387,044 with 1.79% misses, 39 × 1,280 294,633 with 5.2%, 40 × 1,280 199,694
+with 12.6%, 36 × 1,280 294,861 with 0.14%; 38 × 128 first 338,858, 39 × 256 first 290,970. The optimum in depth is sharp (38
+then 36) and in tries flat, so the rungs stay.
+
+`acc batch`, 20M deals a run, alternated, the laptop hot throughout (a minute each):
+
+| Setting | Deals/s |
+|---|---|
+| **Budget 700, batch 32,768** | **361,030, 368,337** |
+| Budget 700 | 357,061, 359,056 |
+| Budget 1,000 | 368,035, 346,207 |
+| Budget 500 | 353,924, 354,520 |
+| Budget 2,000 | 361,034, 344,031 |
+| Budget 700, 8 blocks | 334,992, 349,824 |
+| Budget 500, 36 × 2,048 | 330,230, 330,749 |
+
+Fine sweep at budget 700 (`accgpu`, 400,000 deals): batch 16,384 373,725, 24,576 380,684, **32,768 388,502**, 65,536
+389,796; 4, 5 or 6 blocks 385,308, 388,502, 388,410; 38 × 192 or 38 × 320 first 379,849 (0.24%), 386,511 (0.29%); 36 × 896,
+× 1,024, × 1,280 or × 1,536 384,854 (0.34%), 388,502 (0.26%), 380,773 (0.18%), 377,513 (0.13%).
+
+**New defaults: budget 700, batch 32,768, 5 blocks of 96 a multiprocessor;** the rungs, the split of warps, the shared moves
+and the leap weight stay. `acc batch`, 10M deals a run, alternated with the previous commit's build: **384,756, 375,189 and
+357,512 deals/s against 355,059, 350,266 and 347,689**, every deal won and no line failed verification.
+
+**Left as they are, measured:**
+- **Fewer CPU threads,** to leave the GPU more of the cooling (5M deals, hot; `--threads`): every core 365,122–412,570, 12
+  348,410–378,690, 8 291,283–367,652, 6 256,200–373,755, 5 249,611–356,655, 4 193,106–317,831. Hot, the threads are needed for
+  the misses.
+- **The CPU's ladder for the GPU's misses** (`acc experiment`, 5,315 misses at these settings): 3,641 deals/s for the
+  default, within its ±8% for start 33 to 35 (3,730–3,830), 128 or 512 tries (3,692, 3,971), and budgets of 2,000 to 16,000
+  (3,450–3,795); start 32 and 64 tries are slower (3,260, 2,815).

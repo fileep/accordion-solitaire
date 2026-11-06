@@ -5,10 +5,11 @@
 //!
 //! With a GPU, a feeder thread takes batches of deals from the same counter for GPU ladder attempts and only
 //! launches and collects. Workers check the GPU's lines before taking new deals, so nothing waits on them: each line
-//! is replayed by the reference engine, and a deal the GPU didn't win goes through the CPU solver from the start,
-//! like any other.
+//! is replayed by the reference rules, and a deal the GPU didn't win goes through the CPU solver from the start, like
+//! any other.
 
 use accordion_core::fast::Position;
+use accordion_core::game::replay_tops;
 use accordion_core::notation::encode_compact;
 use accordion_core::verify::verify;
 use accordion_core::{Deal, Game, Move, Outcome, SolveRecord};
@@ -122,6 +123,12 @@ pub struct Progress {
 
 /// How often [`run`] reports progress.
 const PROGRESS_EVERY: Duration = Duration::from_secs(1);
+/// The GPU waits while more than this many of its batches wait for the CPU threads.
+const MAX_BACKLOG_BATCHES: usize = 8;
+/// GPU results a CPU thread takes from the queue at a time.
+const JOBS_AT_ONCE: usize = 32;
+/// One deal in this many has its line replayed by the reference engine as well as by its rules on the top cards.
+const FULL_REPLAY_EVERY: usize = 256;
 
 /// A deal back from the GPU, waiting for a CPU worker.
 struct FromGpu {
@@ -247,8 +254,15 @@ pub fn run(
                 search.set_endgame(opts.endgame.clone());
                 let mut time = CpuTime::default();
                 let us = |t: Instant| t.elapsed().as_micros() as u64;
+                // The GPU's results are taken a few at a time, so that threads meet less on the lock.
+                let mut jobs: VecDeque<FromGpu> = VecDeque::with_capacity(JOBS_AT_ONCE);
                 while !abort.load(Ordering::Relaxed) {
-                    let job = from_gpu.lock().expect("no panics").pop_front();
+                    if jobs.is_empty() {
+                        let mut queue = from_gpu.lock().expect("no panics");
+                        let n = queue.len().min(JOBS_AT_ONCE);
+                        jobs.extend(queue.drain(..n));
+                    }
+                    let job = jobs.pop_front();
                     let t = Instant::now();
                     let solved = match job {
                         Some(job) => {
@@ -362,6 +376,13 @@ fn feed(
     let result = gpu.feed(
         |&index: &usize| deal_codes(&Deal::from_seed(seeds.seed(index))),
         || {
+            // CPU threads that fall behind the GPU (a hot laptop) hold it back, so what waits for them stays small.
+            while queue.lock().expect("no panics").len() > MAX_BACKLOG_BATCHES * batch {
+                if abort.load(Ordering::Relaxed) {
+                    return None;
+                }
+                std::thread::sleep(Duration::from_millis(1));
+            }
             if abort.load(Ordering::Relaxed) {
                 return None;
             }
@@ -400,13 +421,13 @@ fn feed(
 fn gpu_win(job: &FromGpu, seed: u64, records: bool) -> Option<Result<Solved, String>> {
     let line: Vec<Move> = job.line.as_ref()?.iter().map(|&b| Move::from_byte(b)).collect();
     let report = Report {
-        verdict: Verdict::Win(line.clone()),
+        verdict: Verdict::Win(line),
         nodes: job.nodes,
         attempts: job.tries,
         stage: Stage::Gpu,
         stats: Stats::default(),
         best_piles: 1,
-        best_line: line,
+        best_line: Vec::new(),
     };
     let solved = finish(job.index, seed, &Deal::from_seed(seed), report, 0, records);
     Some(match &solved.verified {
@@ -424,9 +445,10 @@ fn solve_one(index: usize, seed: u64, config: &Config, search: &mut Search, reco
     finish(index, seed, &deal, report, us, records)
 }
 
-/// Verifies a deal's line with the reference engine and serializes its record. Without records, the reference
-/// engine replays the line directly ([`replay`]): the same check `verify` makes of a record, without writing the
-/// record's card notation and parsing it back, which took a fifth of the CPU workers' time next to the GPU.
+/// Verifies a deal's line and serializes its record. Without records, the line is replayed directly by the reference
+/// rules ([`replay`]): the same check `verify` makes of a record with the reference engine, without writing the
+/// record's card notation and parsing it back, or allocating its piles, which took most of the CPU workers' time next
+/// to the GPU.
 fn finish(index: usize, seed: u64, deal: &Deal, report: Report, us: u64, records: bool) -> Solved {
     let (outcome, line) = match &report.verdict {
         Verdict::Win(line) => (Outcome::Win, line),
@@ -434,7 +456,7 @@ fn finish(index: usize, seed: u64, deal: &Deal, report: Report, us: u64, records
     };
     // Nothing counts as a win until the reference engine has replayed it.
     if !records {
-        let verified = replay(deal, line, outcome == Outcome::Win);
+        let verified = replay(index, deal, line, outcome == Outcome::Win);
         return Solved { index, seed, report, us, verified, record: None };
     }
     let (verified, record) = match SolveRecord::new(deal, Some(seed), outcome, line) {
@@ -460,15 +482,25 @@ fn finish(index: usize, seed: u64, deal: &Deal, report: Report, us: u64, records
     Solved { index, seed, report, us, verified, record }
 }
 
-/// The reference engine's replay of `line` from `deal`: every move legal, and one pile at the end when `won` is
-/// claimed (after exactly 51 moves, since each move takes one pile away).
-fn replay(deal: &Deal, line: &[Move], won: bool) -> Result<(), String> {
-    let mut game = Game::new(deal);
-    for (i, &mv) in line.iter().enumerate() {
-        game.apply(mv).map_err(|e| format!("move {}: {e}", i + 1))?;
+/// The reference rules' replay of `line` from `deal` ([`replay_tops`]): every move legal, and one pile at the end when
+/// `won` is claimed (after exactly 51 moves, since each move takes one pile away). Every [`FULL_REPLAY_EVERY`]th deal
+/// also goes through the reference engine itself, which has to agree.
+fn replay(index: usize, deal: &Deal, line: &[Move], won: bool) -> Result<(), String> {
+    let piles = replay_tops(deal, line).map_err(|(i, e)| format!("move {}: {e}", i + 1))?;
+    if index.is_multiple_of(FULL_REPLAY_EVERY) {
+        let mut game = Game::new(deal);
+        for (i, &mv) in line.iter().enumerate() {
+            game.apply(mv).map_err(|e| format!("move {}: the reference engine: {e}", i + 1))?;
+        }
+        if game.pile_count() != piles {
+            return Err(format!(
+                "{} piles left by the reference engine, {piles} by the replay",
+                game.pile_count()
+            ));
+        }
     }
-    if won && !game.is_won() {
-        return Err(format!("the line ends with {} piles, not one", game.pile_count()));
+    if won && piles != 1 {
+        return Err(format!("the line ends with {piles} piles, not one"));
     }
     Ok(())
 }
