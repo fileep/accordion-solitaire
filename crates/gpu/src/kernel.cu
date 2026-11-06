@@ -1,7 +1,7 @@
 // Ladder attempts on the GPU (PLAN.md Phase 5 track F, Phase 8): one attempt per thread. An attempt plays `prefix`
 // random moves on its position, then a first-win depth-first search of what is left (at most 16 piles) with sleep
 // sets and the connectivity dead-end test, up to `budget` positions. The rules are the Rust fast engine's
-// (crates/core/src/fast.rs); every win is replayed by the CPU's reference engine before it counts, and the
+// (crates/core/src/fast.rs); every win is replayed by the CPU's reference rules before it counts, and the
 // `playouts` kernel at the end lets the tests (crates/gpu/tests) check this rules code against the Rust engines.
 //
 // Everything stays on chip. The prefix plays on a 64-byte row in shared memory (stored byte-major, so a warp's 32

@@ -78,8 +78,8 @@ A deal `batch` doesn't win is then proved lost if it can be, on a thread of its 
 limit and `--prove 0` turns proofs off. A proven loss gets a `loss` record in `hard-deals/proofs/`.
 
 Prove a deal or position lost by two independent exhaustive searches, each with an exact (lossless) set of dead
-positions. A typical winnable deal is far out of reach, but lost deals tend to be small: the two found in a billion
-deals took 75 thousand and 19 million positions. A proven loss is written as a `loss` record, and the deal's dossier
+positions. A typical winnable deal is far out of reach, but lost deals tend to be small: the three found in two billion
+deals took 75 thousand, 3.4 million and 19 million positions. A proven loss is written as a `loss` record, and the deal's dossier
 says `loss (proven)`:
 
 ```bash

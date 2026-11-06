@@ -11,6 +11,11 @@ other 2 proven unwinnable. No two deals are the same game.** The 95% Wilson inte
 **[99.99999927%, 99.99999995%]**: about 1 deal in 500 million can't be won (95% interval: 1 in 137 million to 1 in 1.8
 billion). They are the first random deals shown unwinnable that docs/RESEARCH.md knows of (see Losses).
 
+**A second billion (seeds 1,000,000,000–1,999,999,999): 999,999,999 won and 1 proven lost, in 45 min 28 s at 366,514
+deals/s,** 8.4 times the first billion's speed on the same laptop. No two of its deals are the same game. Over both,
+**1,999,999,997 of 2,000,000,000 deals won and the other 3 proven lost**: about 1 deal in 670 million can't be won
+(Wilson 95%: 1 in 227 million to 1 in 2.0 billion; win rate [99.99999956%, 99.99999995%]).
+
 ## Runs
 
 All runs used `acc batch` with the default strategy (below) on the laptop in docs/BENCHMARKS.md: i7-1260P with 16 threads,
@@ -23,7 +28,8 @@ specified generator (docs/FORMATS.md), so anyone can re-deal and re-check them.
 | 0–9,999,999 | 10,000,000 | 10,000,000 | [99.999962%, 100%] | CPU | 15,348 | 10 min 52 s |
 | 10,000,000–29,999,999 | 20,000,000 | 20,000,000 | [99.999981%, 100%] | CPU | 13,422 | 24 min 50 s |
 | 0–99,999,999 | 100,000,000 | 100,000,000 | [99.999996%, 100%] | CPU + GPU | 19,281 | 1 h 26 min 27 s |
-| **0–999,999,999** | **1,000,000,000** | **999,999,998** | **[99.99999927%, 99.99999995%]** | **CPU + GPU** | **43,855** | **6 h 20 min 3 s** |
+| 0–999,999,999 | 1,000,000,000 | 999,999,998 | [99.99999927%, 99.99999995%] | CPU + GPU | 43,855 | 6 h 20 min 3 s |
+| **1,000,000,000–1,999,999,999** | **1,000,000,000** | **999,999,999** | **[99.99999943%, 99.99999998%]** | **CPU + GPU** | **366,514** | **45 min 28 s** |
 
 The first three are Phase 7 and the 100M run is Phase 8. They won every deal: none ended `unknown`, so they left no
 dossiers. The billion run came after Phase 8, with the faster code of docs/BENCHMARKS.md's "After Phase 8" sections
@@ -33,27 +39,35 @@ searched; both went through the §5 escalation and were proven lost (Losses, bel
 losses. A deal that is not won but not proven lost counts as a loss for the interval's lower bound and as a win for its
 upper bound.
 
+The second billion ran commit d167ccf (docs/BENCHMARKS.md, from "split warps" to "cheaper verification, and the retune"), on
+seeds no earlier run used. Its one deal not won stopped at the 50M-position limit, and `acc batch` itself proved it lost
+while the run went on (Losses).
+
 **No repeated games.** The 100M and billion runs also checked that their deals are different games, not only different
 orders of the cards. Two deals that differ only in the names of the suits or ranks play exactly alike, so each deal is
 renamed first (suits and ranks in order of first appearance). The renamed decks are then compared: 64-bit fingerprints
 are sorted, and any two with the same fingerprint are compared card by card. All 100,000,000, and then all
-1,000,000,000, differ.
+1,000,000,000, differ. The second billion passed the same check among its own deals; the two billions were not compared
+with each other.
 
 **The GPU's share.** The reference engine replayed every GPU line, and none failed. The CPU solved the rest: the deals
 the GPU tried and missed, solved again from the start, and the deals the CPU workers took for themselves while the GPU
 was busy.
 
-| | 100M run | Billion run |
-|---|---|---|
-| Deals given to the GPU | 82,273,155 | 790,102,016 |
-| Won on the GPU | 81,823,614 (99.45%) | 786,211,377 (99.51%) |
-| GPU ladder attempts | 13.5 billion | 127.5 billion |
-| GPU speed | 214M positions/s | 331M positions/s |
-| GPU misses, solved on the CPU | 449,541 | 3,890,639 |
-| Deals the CPU workers took for themselves | 17,726,845 | 209,897,984 |
+| | 100M run | Billion run | Second billion |
+|---|---|---|---|
+| Deals given to the GPU | 82,273,155 | 790,102,016 | 996,646,794 |
+| Won on the GPU | 81,823,614 (99.45%) | 786,211,377 (99.51%) | 994,056,063 (99.74%) |
+| GPU ladder attempts | 13.5 billion | 127.5 billion | 132.7 billion |
+| GPU speed | 214M positions/s | 331M positions/s | 3,206M positions/s |
+| GPU misses, solved on the CPU | 449,541 | 3,890,639 | 2,590,731 |
+| Deals the CPU workers took for themselves | 17,726,845 | 209,897,984 | 3,353,206 |
 
 In the billion run the CPU workers spent 79.6% of their time on their own deals, 10.9% on the GPU's misses and 7.8%
-verifying GPU lines (34.1 µs a line). Handing results on took 1.1% and the rest 0.6%; they never waited for the GPU.
+verifying GPU lines (34.1 µs a line). Handing results on took 1.1% and the rest 0.6%; they never waited for the GPU. In
+the second billion they spent 71.3% on the GPU's misses, 11.8% verifying its lines (4.9 µs a line), 9.8% on their own
+deals, 2.2% handing results on and 5.0% on the rest. The GPU did nearly everything, and held back only briefly when the
+CPU fell behind (at most 170,848 results waiting).
 
 **Sustained speed.** After its first two minutes, the run held 18,900–19,700 deals/s over each stretch of 10M deals. The
 CPU alone held 13,422 deals/s over the 20M run, so over long runs the GPU adds about 1.4×. That is less than the 2.15×
@@ -72,6 +86,10 @@ GPU 330–332M positions/s throughout. Its speed log (`acc batch` writes a row a
 GPU occupancy and register stacks, the leftmost-card dead-end test, and leaner verification (docs/BENCHMARKS.md, "After
 Phase 8").
 
+The second billion held **363,504–377,216 deals/s over every stretch of 100M deals** (the first was the fastest; after it
+363,504–367,647), and the GPU 3,160–3,170M positions/s. Its speed log has no second below 200,000 deals/s after the first
+half minute.
+
 **Cost per deal** (positions are solver nodes, times are one core of 16 busy ones). The 10M run covers every deal. The
 100M and billion runs cover only the deals solved on the CPU: the 100M run's tail is heavier because the GPU's misses are
 among them, and its times are longer because its CPU ran hotter. The billion run's maximums are seed 112,249,515, stopped
@@ -85,6 +103,8 @@ at the limit (Losses); its hardest win wasn't recorded.
 | Time, 100M run (18.2M deals on the CPU) | 1.15 ms | 6.8 ms | 31 ms | 93 ms | 1.94 s |
 | Positions, billion run (213.8M deals on the CPU) | 2,359 | 12,363 | 43,523 | 116,937 | 50,000,001 |
 | Time, billion run (213.8M deals on the CPU) | 0.58 ms | 3.1 ms | 13 ms | 41 ms | 19.0 s |
+| Positions, second billion (5.9M deals on the CPU, mostly the GPU's misses) | 4,884 | 39,364 | 131,917 | 313,943 | 50,000,001 |
+| Time, second billion (5.9M deals on the CPU) | 1.36 ms | 14.6 ms | 58 ms | 143 ms | 4.85 s |
 
 **Where the wins came from:** the strategy is a ladder of random-prefix attempts in front of a thorough search. A GPU, when
 there is one, runs a shorter ladder of its own first.
@@ -101,18 +121,21 @@ there is one, runs a shorter ladder of its own first.
 The GPU takes deals the CPU would mostly have won on rungs 0–2. The deals that defeat the whole ladder are about as rare
 with it as without: 4 in 10M, 52 in 100M and 530 in the billion.
 
+In the second billion the GPU ran up to 1,280 tries with a 700-position search and won **994,056,063 deals (99.41%)**. The
+CPU won the rest: rung 0 4,264,658, rung 1 1,148,628, rung 2 419,421, rungs 3–6 110,801, and the thorough search 428.
+
 ## Compared with earlier work
 
 | | Deals | Won | Reported interval | Speed |
 |---|---|---|---|---|
 | Masten (1999 onwards, Solitaire Win Rates) | 30,000,000 | 30,000,000 | his estimate 99.9999936 ± 0.0000064% | about 12 deals/s with his newer program; his hardest 1999 deal took about 2 hours |
 | Blake & Gent, Solvitaire (JAIR) | — | — | 99.99948 ± 0.00052% (95%) | general-purpose solver |
-| **This solver** | **1,000,000,000** | **999,999,998; the other 2 proven lost** | **Wilson 95% [99.99999927%, 99.99999995%]** | **43,900 deals/s sustained on a laptop with its GPU** |
+| **This solver** | **2,000,000,000** | **1,999,999,997; the other 3 proven lost** | **Wilson 95% [99.99999956%, 99.99999995%]** | **366,500 deals/s sustained on a laptop with its GPU** |
 
 Masten's deals come from his own generator, so his 30M deals and these are different deals; the agreement is in the
 rate, not the deals. Both earlier intervals contain this one. Before this run no random Accordion deal had been shown
-unwinnable, as far as docs/RESEARCH.md found. At 2 in a billion that is no surprise: Masten's 30M deals would hold
-about 0.06 of one.
+unwinnable, as far as docs/RESEARCH.md found. At 3 in two billion that is no surprise: Masten's 30M deals would hold
+about 0.045 of one.
 
 ## Hardest deals
 
@@ -154,7 +177,12 @@ The independent run stores slightly fewer dead positions where its endgame table
 a search. The `loss` records are in `hard-deals/proofs/` (`acc verify` checks their moves; a loss can't be confirmed by
 replay), and the dossiers in `hard-deals/` say `loss (proven)`.
 
-Since this run, `acc batch` proves the deals it doesn't win itself, while the run goes on, and the prover is 2.4× faster
+**A third, in the second billion.** Seed 1,005,616,798 stopped at the limit, 50M positions (4.85 s), and `acc batch` proved
+it lost as the run went on: the independent run after 6,702,116 positions (3,389,020 dead, 1.9 s), the plain run after
+16,141,582 (3,405,471 dead, 2.7 s). The Python search agrees: 3,405,471 reachable positions, no win (39 s), and it gets
+down to 2 piles six ways, none of them able to finish. Its record and dossier are in `hard-deals/`.
+
+Since the first billion, `acc batch` proves the deals it doesn't win itself, while the run goes on, and the prover is 2.4× faster
 (both runs on seed 112,249,515 now take 16 s; docs/BENCHMARKS.md, "After Phase 8 — proving losses"). A future run's
 undecided deals are only those a proof of 10 billion positions a run can't settle.
 
@@ -176,7 +204,11 @@ undecided deals are only those a proof of 10 billion positions a run can't settl
   the whole line. That covers legality of every move, the card set, and one pile after exactly 51 moves (PLAN.md §6.1).
 - The reference engine's rules agree with an independent Python implementation on every golden file. The fast engine
   agrees with the reference engine over 10M lockstep random playouts.
-- The GPU's lines are replayed the same way: 81.8M of them in the 100M run and 786.2M in the billion run, none failing. The kernel's rules agree with
+- The GPU's lines are replayed the same way: 81.8M of them in the 100M run and 786.2M in the billion run, none failing.
+  Since the second billion, `acc batch` without `--out` replays each line by the reference rules on the top cards alone,
+  which is all they look at, and allocates nothing (`replay_tops`: a test checks it against the reference engine on random
+  legal and illegal moves); 1 deal in 256 goes through the reference engine as well, which has to agree. Of its 994.1M
+  lines none failed. The kernel's rules agree with
   the Rust engines move by move on random playouts from the golden files and 20,000 seeded deals (`crates/gpu/tests`).
 - The pruning the solver relies on agreed with plain search on 1,000,000 random residuals:
   - sound dead-end tests;
@@ -210,6 +242,10 @@ cargo run --release -p accordion-cli -- endgame build --piles 11
 
 ```bash
 cargo run --release -p accordion-cli -- batch --from 0 --count 1000000000
+```
+
+```bash
+cargo run --release -p accordion-cli -- batch --from 1000000000 --count 1000000000
 ```
 
 The 100M run added `--gallery 20`. The Phase 7 runs were on the CPU alone; to repeat one, add `--gpu off`:

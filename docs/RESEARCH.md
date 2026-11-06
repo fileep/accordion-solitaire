@@ -11,8 +11,8 @@ All probe numbers come from a deliberately naive Python engine (~220k nodes/s). 
 
 1. **Open Accordion is almost certainly ~100% winnable.** Mark Masten's solver won **30,000,000 of
    30,000,000** random deals (no losses, no inconclusives). Blake & Gent's Solvitaire estimates
-   99.99948 ± 0.00052%. No random deal had been shown unwinnable (this project's billion-deal run later proved
-   two lost: docs/RESULTS.md). The "1 in 100" figure
+   99.99948 ± 0.00052%. No random deal had been shown unwinnable (this project's two billion-deal runs later proved
+   three lost: docs/RESULTS.md). The "1 in 100" figure
    repeated online (Wikipedia, game sites) applies to playing without full look-ahead, not to the open game.
 2. **Masten's winning method is random early play plus brute force late, with restarts.** He gave up proving
    losses and only hunted wins. Each attempt plays "a lot of random moves in the first half"

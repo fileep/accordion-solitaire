@@ -1,5 +1,5 @@
 //! `acc batch`: solve a range of seeded deals on every core, one deal per thread at a time, and on the GPU when
-//! there is one (PLAN.md Phases 4, 5 and 8). Every win is verified by the reference engine before it counts; every
+//! there is one (PLAN.md Phases 4, 5 and 8). Every win is verified by the reference rules before it counts; every
 //! deal that isn't won gets a dossier, and a proof attempt on a thread of its own while the run goes on: two
 //! exhaustive runs that must agree before a loss counts ([`prove::prove_both`]). The summary gives the win rate with
 //! a Wilson 95% interval, counting undecided deals both ways, and checks that the deals are all different games.
@@ -366,7 +366,7 @@ pub fn run(args: &BatchArgs) -> Result<bool, String> {
     by_stage.sort();
     println!("deals            {n} (seeds {}..{})", args.from, args.from + n - 1);
     println!(
-        "won              {won} (every one verified by the reference engine){}",
+        "won              {won} (every one verified by the reference rules){}",
         if by_stage.len() > 1 || by_stage.first().is_some_and(|(s, _)| s != "thorough") {
             format!(
                 "; by stage: {}",

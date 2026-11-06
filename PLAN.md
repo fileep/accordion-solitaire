@@ -12,7 +12,7 @@ we know each piece is done.
 across thousands of games in parallel. Targets are 100% of deals on a 1M-deal benchmark, and
 then a 10M+ deal run reported with a Wilson 95% confidence interval.
 
-**Priority: find wins, don't prove losses.** Until this project's billion-deal run (2 proven lost, docs/RESULTS.md) no
+**Priority: find wins, don't prove losses.** Until this project's billion-deal runs (3 proven lost in two billion, docs/RESULTS.md) no
 random deal had been shown unwinnable, so the solver is tuned for time to first win.
 
 **Solve any deck a user enters.** A user can type or paste a 52-card order, or build one in the visualizer, and

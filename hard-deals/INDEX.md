@@ -5,6 +5,7 @@ See PLAN.md §5 for the dossier format and the escalation stages. `acc` rewrites
 
 | Deal | Status | Stages run | Best (piles left) | Positions searched | Last attempt |
 |---|---|---|---|---|---|
+| [seed-1005616798](seed-1005616798.json) | loss (proven) | batch, prove | 2 | 72843699 | 2026-11-06 |
 | [seed-112249515](seed-112249515.json) | loss (proven) | batch, solve, escalate-1, escalate-2, prove | 2 | 19554348964 | 2026-11-05 |
 | [seed-202346720](seed-202346720.json) | loss (proven) | batch, prove | 32 | 612771 | 2026-11-05 |
 

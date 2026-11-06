@@ -1445,3 +1445,17 @@ and the leap weight stay. `acc batch`, 10M deals a run, alternated with the prev
 - **The CPU's ladder for the GPU's misses** (`acc experiment`, 5,315 misses at these settings): 3,641 deals/s for the
   default, within its ±8% for start 33 to 35 (3,730–3,830), 128 or 512 tries (3,692, 3,971), and budgets of 2,000 to 16,000
   (3,450–3,795); start 32 and 64 tries are slower (3,260, 2,815).
+
+**The second billion** (seeds 1,000,000,000–1,999,999,999, docs/RESULTS.md) ran these settings: **366,514 deals/s over 45 min
+28 s**, 363,504–377,216 over every 100M deals, the GPU at 3,206M positions/s throughout, against 43,855 deals/s and 331M
+positions/s for the first billion. Heat-soaked, misses took 71.3% of the CPU threads' time, and verifying lines 11.8% (4.9 µs
+a line).
+
+**Considered, not tried:**
+- **A cheaper connectivity test:** a suit pair's shared ranks in 16-bit lanes and a table over the 6 pairs, about 40
+  operations against 55, in a step of about 290.
+- **Masks worked out from the parent's** in the search, as the prefix does (about 50 operations against 88), which needs the
+  parent's masks at hand on the way back up as well.
+- **The CPU's cost per miss,** now the largest thing the CPU threads do: 10 ms hot against 2–3 ms cool, though its ladder
+  is flat. Keeping a miss off the CPU altogether (a later GPU launch of the misses alone, with more tries) would have to beat
+  simply more tries, which lost above.
