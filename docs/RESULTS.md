@@ -16,10 +16,15 @@ deals/s,** 8.4 times the first billion's speed on the same laptop. No two of its
 **1,999,999,997 of 2,000,000,000 deals won and the other 3 proven lost**: about 1 deal in 670 million can't be won
 (Wilson 95%: 1 in 227 million to 1 in 2.0 billion; win rate [99.99999956%, 99.99999995%]).
 
+**Then 20 billion (seeds 2,000,000,000–21,999,999,999): 19,999,999,980 won and 20 proven lost, in 5 h 56 min 52 s at 934,074
+deals/s,** 2.5 times the second billion's speed on the same laptop. No two of its deals are the same game. Over all three,
+**21,999,999,977 of 22,000,000,000 deals won and the other 23 proven lost**: about 1 deal in 960 million can't be won (Wilson
+95%: 1 in 637 million to 1 in 1.44 billion; win rate [99.99999984%, 99.99999993%]).
+
 ## Runs
 
 All runs used `acc batch` with the default strategy (below) on the laptop in docs/BENCHMARKS.md: i7-1260P with 16 threads,
-at its sustained heat-soaked clocks, and for the last two runs its NVIDIA T550 GPU as well. Deals come from seeds via the
+at its sustained heat-soaked clocks, and for the last four runs its NVIDIA T550 GPU as well. Deals come from seeds via the
 specified generator (docs/FORMATS.md), so anyone can re-deal and re-check them.
 
 | Seeds | Deals | Won | 95% CI (Wilson) | Solved on | Deals/s | Wall time |
@@ -29,7 +34,8 @@ specified generator (docs/FORMATS.md), so anyone can re-deal and re-check them.
 | 10,000,000–29,999,999 | 20,000,000 | 20,000,000 | [99.999981%, 100%] | CPU | 13,422 | 24 min 50 s |
 | 0–99,999,999 | 100,000,000 | 100,000,000 | [99.999996%, 100%] | CPU + GPU | 19,281 | 1 h 26 min 27 s |
 | 0–999,999,999 | 1,000,000,000 | 999,999,998 | [99.99999927%, 99.99999995%] | CPU + GPU | 43,855 | 6 h 20 min 3 s |
-| **1,000,000,000–1,999,999,999** | **1,000,000,000** | **999,999,999** | **[99.99999943%, 99.99999998%]** | **CPU + GPU** | **366,514** | **45 min 28 s** |
+| 1,000,000,000–1,999,999,999 | 1,000,000,000 | 999,999,999 | [99.99999943%, 99.99999998%] | CPU + GPU | 366,514 | 45 min 28 s |
+| **2,000,000,000–21,999,999,999** | **20,000,000,000** | **19,999,999,980** | **[99.99999985%, 99.99999994%]** | **CPU + GPU** | **934,074** | **5 h 56 min 52 s** |
 
 The first three are Phase 7 and the 100M run is Phase 8. They won every deal: none ended `unknown`, so they left no
 dossiers. The billion run came after Phase 8, with the faster code of docs/BENCHMARKS.md's "After Phase 8" sections
@@ -43,31 +49,41 @@ The second billion ran commit d167ccf (docs/BENCHMARKS.md, from "split warps" to
 seeds no earlier run used. Its one deal not won stopped at the 50M-position limit, and `acc batch` itself proved it lost
 while the run went on (Losses).
 
+The 20 billion ran commit 926e105 (docs/BENCHMARKS.md, "what winning prefixes have in common" and "pausing, and tens of billions
+of deals"), again on seeds no earlier run used, in one session: it didn't need to pause. 19 of its 20 deals not won had every line
+searched and one stopped at the limit, and `acc batch` proved them all lost as it went (Losses). The check for repeated games and
+the last proofs took about 27 minutes more.
+
 **No repeated games.** The 100M and billion runs also checked that their deals are different games, not only different
 orders of the cards. Two deals that differ only in the names of the suits or ranks play exactly alike, so each deal is
 renamed first (suits and ranks in order of first appearance). The renamed decks are then compared: 64-bit fingerprints
 are sorted, and any two with the same fingerprint are compared card by card. All 100,000,000, and then all
-1,000,000,000, differ. The second billion passed the same check among its own deals; the two billions were not compared
-with each other.
+1,000,000,000, differ. The second billion passed the same check among its own deals, and the 20 billion among its own, from
+disk, as 160 GB of fingerprints wouldn't fit in memory; the three were not compared with each other.
 
 **The GPU's share.** The reference engine replayed every GPU line, and none failed. The CPU solved the rest: the deals
 the GPU tried and missed, solved again from the start, and the deals the CPU workers took for themselves while the GPU
 was busy.
 
-| | 100M run | Billion run | Second billion |
-|---|---|---|---|
-| Deals given to the GPU | 82,273,155 | 790,102,016 | 996,646,794 |
-| Won on the GPU | 81,823,614 (99.45%) | 786,211,377 (99.51%) | 994,056,063 (99.74%) |
-| GPU ladder attempts | 13.5 billion | 127.5 billion | 132.7 billion |
-| GPU speed | 214M positions/s | 331M positions/s | 3,206M positions/s |
-| GPU misses, solved on the CPU | 449,541 | 3,890,639 | 2,590,731 |
-| Deals the CPU workers took for themselves | 17,726,845 | 209,897,984 | 3,353,206 |
+| | 100M run | Billion run | Second billion | 20 billion |
+|---|---|---|---|---|
+| Deals given to the GPU | 82,273,155 | 790,102,016 | 996,646,794 | 20,000,000,000 |
+| Won on the GPU | 81,823,614 (99.45%) | 786,211,377 (99.51%) | 994,056,063 (99.74%) | 19,997,847,246 (99.989%) |
+| GPU ladder attempts | 13.5 billion | 127.5 billion | 132.7 billion | 553.6 billion |
+| GPU speed | 214M positions/s | 331M positions/s | 3,206M positions/s | 2,632M positions/s |
+| GPU misses, solved on the CPU | 449,541 | 3,890,639 | 2,590,731 | 2,152,754 |
+| Deals the CPU workers took for themselves | 17,726,845 | 209,897,984 | 3,353,206 | 0 |
 
 In the billion run the CPU workers spent 79.6% of their time on their own deals, 10.9% on the GPU's misses and 7.8%
 verifying GPU lines (34.1 µs a line). Handing results on took 1.1% and the rest 0.6%; they never waited for the GPU. In
 the second billion they spent 71.3% on the GPU's misses, 11.8% verifying its lines (4.9 µs a line), 9.8% on their own
 deals, 2.2% handing results on and 5.0% on the rest. The GPU did nearly everything, and held back only briefly when the
 CPU fell behind (at most 170,848 results waiting).
+
+In the 20 billion the GPU had every deal, and missed 1 in 9,290. The CPU workers spent 77.2% of their time waiting for it, 16.3%
+verifying its lines (2.6 µs a line), 6.0% on its misses and 0.5% on the rest: the GPU sets the speed now. A deal took it 27.7
+attempts and about 2,800 positions, against 133 and about 8,800 in the second billion, so it wins more deals on fewer positions a
+second.
 
 **Sustained speed.** After its first two minutes, the run held 18,900–19,700 deals/s over each stretch of 10M deals. The
 CPU alone held 13,422 deals/s over the 20M run, so over long runs the GPU adds about 1.4×. That is less than the 2.15×
@@ -90,6 +106,9 @@ The second billion held **363,504–377,216 deals/s over every stretch of 100M d
 363,504–367,647), and the GPU 3,180–3,243M positions/s over every five minutes. Its speed log has no second below 200,000
 deals/s after the first half minute.
 
+The 20 billion held **927,678–937,553 deals/s in each of its six hours**, the first the slowest, and its speed log has no second
+below 850,114 deals/s from start to finish.
+
 **Cost per deal** (positions are solver nodes, times are one core of 16 busy ones). The 10M run covers every deal. The
 100M and billion runs cover only the deals solved on the CPU: the 100M run's tail is heavier because the GPU's misses are
 among them, and its times are longer because its CPU ran hotter. The billion run's maximums are seed 112,249,515, stopped
@@ -105,6 +124,8 @@ at the limit (Losses); its hardest win wasn't recorded.
 | Time, billion run (213.8M deals on the CPU) | 0.58 ms | 3.1 ms | 13 ms | 41 ms | 19.0 s |
 | Positions, second billion (5.9M deals on the CPU, mostly the GPU's misses) | 4,884 | 39,364 | 131,917 | 313,943 | 50,000,001 |
 | Time, second billion (5.9M deals on the CPU) | 1.36 ms | 14.6 ms | 58 ms | 143 ms | 4.85 s |
+| Positions, 20 billion (2.15M deals on the CPU, all the GPU's misses) | 39,262 | 138,582 | 418,504 | 970,789 | 50,000,001 |
+| Time, 20 billion (2.15M deals on the CPU) | 6.65 ms | 19.1 ms | 38 ms | 81 ms | 3.16 s |
 
 **Where the wins came from:** the strategy is a ladder of random-prefix attempts in front of a thorough search. A GPU, when
 there is one, runs a shorter ladder of its own first.
@@ -124,18 +145,21 @@ with it as without: 4 in 10M, 52 in 100M and 530 in the billion.
 In the second billion the GPU ran up to 1,280 tries with a 700-position search and won **994,056,063 deals (99.41%)**. The
 CPU won the rest: rung 0 4,264,658, rung 1 1,148,628, rung 2 419,421, rungs 3–6 110,801, and the thorough search 428.
 
+In the 20 billion the GPU's up to 1,280 tries won **19,997,847,246 deals (99.989%)**, choosing its moves by what winning prefixes do.
+The CPU won the deals it missed: rung 0 244,759, rung 1 562,320, rung 2 678,360, rungs 3–6 658,965, and the thorough search 8,330.
+
 ## Compared with earlier work
 
 | | Deals | Won | Reported interval | Speed |
 |---|---|---|---|---|
 | Masten (1999 onwards, Solitaire Win Rates) | 30,000,000 | 30,000,000 | his estimate 99.9999936 ± 0.0000064% | about 12 deals/s with his newer program; his hardest 1999 deal took about 2 hours |
 | Blake & Gent, Solvitaire (JAIR) | — | — | 99.99948 ± 0.00052% (95%) | general-purpose solver |
-| **This solver** | **2,000,000,000** | **1,999,999,997; the other 3 proven lost** | **Wilson 95% [99.99999956%, 99.99999995%]** | **366,500 deals/s sustained on a laptop with its GPU** |
+| **This solver** | **22,000,000,000** | **21,999,999,977; the other 23 proven lost** | **Wilson 95% [99.99999984%, 99.99999993%]** | **934,000 deals/s sustained on a laptop with its GPU** |
 
 Masten's deals come from his own generator, so his 30M deals and these are different deals; the agreement is in the
-rate, not the deals. Both earlier intervals contain this one. Before this run no random Accordion deal had been shown
-unwinnable, as far as docs/RESEARCH.md found. At 3 in two billion that is no surprise: Masten's 30M deals would hold
-about 0.045 of one.
+rate, not the deals. Both earlier intervals contain this one. Before the first billion no random Accordion deal had been
+shown unwinnable, as far as docs/RESEARCH.md found. At 23 in 22 billion that is no surprise: Masten's 30M deals would hold
+about 0.03 of one.
 
 ## Hardest deals
 
@@ -181,6 +205,39 @@ replay), and the dossiers in `hard-deals/` say `loss (proven)`.
 it lost as the run went on: the independent run after 6,702,116 positions (3,389,020 dead, 1.9 s), the plain run after
 16,141,582 (3,405,471 dead, 2.7 s). The Python search agrees: 3,405,471 reachable positions, no win (39 s), and it gets
 down to 2 piles six ways, none of them able to finish. Its record and dossier are in `hard-deals/`.
+
+**Twenty more, in the 20 billion.** `acc batch` proved all 20 lost as the run went on, each in under a second. The Python search
+agrees on every one: no win, and exactly as many reachable positions as the plain run has dead ones, 4,081,460 in all. Their records
+are in `hard-deals/proofs/`, and `acc verify` passes them all.
+
+| Seed | In the run | `acc prove`, plain run | Independent run | Python: reachable, no win | Fewest piles |
+|---|---|---|---|---|---|
+| 3,417,058,778 | every line searched after 12,512 positions (0.002 s) | 416 positions, 128 dead (0.0 s) | 155, 128 dead (0.0 s) | 128 | 45 |
+| 4,959,093,869 | every line searched after 108,125 positions (0.016 s) | 331,164 positions, 63,720 dead (0.02 s) | 71,857, 63,720 dead (0.013 s) | 63,720 | 32 |
+| 5,895,817,790 | every line searched after 24,450,876 positions (1.284 s) | 4,359,712 positions, 957,502 dead (0.504 s) | 1,640,371, 955,955 dead (0.285 s) | 957,502 | 3 |
+| 6,885,997,408 | every line searched after 494,044 positions (0.038 s) | 1,377,392 positions, 281,440 dead (0.151 s) | 397,391, 281,440 dead (0.089 s) | 281,440 | 27 |
+| 7,311,711,652 | every line searched after 37,395 positions (0.013 s) | 51,436 positions, 12,696 dead (0.004 s) | 16,307, 12,696 dead (0.004 s) | 12,696 | 35 |
+| 7,548,976,414 | every line searched after 232,340 positions (0.019 s) | 665,760 positions, 130,240 dead (0.054 s) | 179,721, 130,240 dead (0.029 s) | 130,240 | 28 |
+| 7,615,968,364 | every line searched after 23,684,407 positions (1.647 s) | 2,553,071 positions, 726,019 dead (0.376 s) | 1,143,145, 650,005 dead (0.306 s) | 726,019 | 2 |
+| 7,812,820,073 | every line searched after 73,321 positions (0.012 s) | 141,456 positions, 30,608 dead (0.009 s) | 47,146, 30,608 dead (0.006 s) | 30,608 | 31 |
+| 10,345,199,754 | every line searched after 228,380 positions (0.018 s) | 549,000 positions, 107,325 dead (0.046 s) | 186,485, 107,325 dead (0.025 s) | 107,325 | 29 |
+| 12,929,752,010 | every line searched after 118,108 positions (0.011 s) | 223,841 positions, 79,426 dead (0.025 s) | 88,129, 59,498 dead (0.016 s) | 79,426 | 2 |
+| 13,060,247,781 | every line searched after 49,521 positions (0.003 s) | 73,650 positions, 15,750 dead (0.005 s) | 18,725, 15,750 dead (0.003 s) | 15,750 | 32 |
+| 13,313,622,150 | every line searched after 25,702 positions (0.004 s) | 17,502 positions, 5,148 dead (0.002 s) | 7,242, 5,148 dead (0.003 s) | 5,148 | 35 |
+| 14,204,616,047 | stopped at the limit after 50,000,001 positions (3.156 s) | 4,642,496 positions, 923,520 dead (0.561 s) | 1,570,194, 923,520 dead (0.35 s) | 923,520 | 31 |
+| 17,436,063,346 | every line searched after 34,084 positions (0.005 s) | 39,432 positions, 7,344 dead (0.003 s) | 11,542, 7,344 dead (0.002 s) | 7,344 | 39 |
+| 17,480,567,423 | every line searched after 397,876 positions (0.028 s) | 929,402 positions, 219,072 dead (0.078 s) | 326,366, 219,072 dead (0.054 s) | 219,072 | 27 |
+| 18,238,151,902 | every line searched after 313,264 positions (0.022 s) | 568,832 positions, 168,098 dead (0.063 s) | 274,798, 167,386 dead (0.052 s) | 168,098 | 3 |
+| 19,010,792,488 | every line searched after 444,487 positions (0.038 s) | 1,452,708 positions, 271,728 dead (0.13 s) | 341,039, 271,728 dead (0.079 s) | 271,728 | 29 |
+| 20,456,660,150 | every line searched after 77,584 positions (0.008 s) | 187,640 positions, 33,600 dead (0.014 s) | 47,295, 33,600 dead (0.009 s) | 33,600 | 36 |
+| 20,677,695,248 | every line searched after 43,050 positions (0.01 s) | 72,648 positions, 15,840 dead (0.005 s) | 21,051, 15,840 dead (0.005 s) | 15,840 | 36 |
+| 21,018,945,683 | every line searched after 73,043 positions (0.01 s) | 195,456 positions, 32,256 dead (0.015 s) | 38,171, 32,256 dead (0.007 s) | 32,256 | 35 |
+
+Sixteen of the 20 get no lower than 27 piles, and only two get down to 2. The one that stopped at the limit is no larger than the
+others: seed 14,204,616,047 has 923,520 positions, which the solver, with its lossy table and its restarts, went over until it had
+generated 50M.
+
+**How often.** 23 losses in 22 billion deals, and the rate has held: 2 in the first billion, 1 in the second, and 20 in the next 20.
 
 Since the first billion, `acc batch` proves the deals it doesn't win itself, while the run goes on, and the prover is 2.4× faster
 (both runs on seed 112,249,515 now take 16 s; docs/BENCHMARKS.md, "After Phase 8 — proving losses"). A future run's
@@ -246,6 +303,10 @@ cargo run --release -p accordion-cli -- batch --from 0 --count 1000000000
 
 ```bash
 cargo run --release -p accordion-cli -- batch --from 1000000000 --count 1000000000
+```
+
+```bash
+cargo run --release -p accordion-cli -- batch --from 2000000000 --count 20000000000
 ```
 
 The 100M run added `--gallery 20`. The Phase 7 runs were on the CPU alone; to repeat one, add `--gpu off`:

@@ -6,8 +6,28 @@ See PLAN.md §5 for the dossier format and the escalation stages. `acc` rewrites
 | Deal | Status | Stages run | Best (piles left) | Positions searched | Last attempt |
 |---|---|---|---|---|---|
 | [seed-1005616798](seed-1005616798.json) | loss (proven) | batch, prove | 2 | 72843699 | 2026-11-06 |
+| [seed-10345199754](seed-10345199754.json) | loss (proven) | batch, prove | 29 | 963865 | 2026-11-06 |
 | [seed-112249515](seed-112249515.json) | loss (proven) | batch, solve, escalate-1, escalate-2, prove | 2 | 19554348964 | 2026-11-05 |
+| [seed-12929752010](seed-12929752010.json) | loss (proven) | batch, prove | 2 | 430078 | 2026-11-06 |
+| [seed-13060247781](seed-13060247781.json) | loss (proven) | batch, prove | 32 | 141896 | 2026-11-06 |
+| [seed-13313622150](seed-13313622150.json) | loss (proven) | batch, prove | 35 | 50446 | 2026-11-06 |
+| [seed-14204616047](seed-14204616047.json) | loss (proven) | batch, prove | 31 | 56212691 | 2026-11-06 |
+| [seed-17436063346](seed-17436063346.json) | loss (proven) | batch, prove | 39 | 85058 | 2026-11-06 |
+| [seed-17480567423](seed-17480567423.json) | loss (proven) | batch, prove | 27 | 1653644 | 2026-11-06 |
+| [seed-18238151902](seed-18238151902.json) | loss (proven) | batch, prove | 3 | 1156894 | 2026-11-06 |
+| [seed-19010792488](seed-19010792488.json) | loss (proven) | batch, prove | 29 | 2238234 | 2026-11-06 |
 | [seed-202346720](seed-202346720.json) | loss (proven) | batch, prove | 32 | 612771 | 2026-11-05 |
+| [seed-20456660150](seed-20456660150.json) | loss (proven) | batch, prove | 36 | 312519 | 2026-11-06 |
+| [seed-20677695248](seed-20677695248.json) | loss (proven) | batch, prove | 36 | 136749 | 2026-11-06 |
+| [seed-21018945683](seed-21018945683.json) | loss (proven) | batch, prove | 35 | 306670 | 2026-11-06 |
+| [seed-3417058778](seed-3417058778.json) | loss (proven) | batch, prove | 45 | 13083 | 2026-11-06 |
+| [seed-4959093869](seed-4959093869.json) | loss (proven) | batch, prove | 32 | 511146 | 2026-11-06 |
+| [seed-5895817790](seed-5895817790.json) | loss (proven) | batch, prove | 3 | 30450959 | 2026-11-06 |
+| [seed-6885997408](seed-6885997408.json) | loss (proven) | batch, prove | 27 | 2268827 | 2026-11-06 |
+| [seed-7311711652](seed-7311711652.json) | loss (proven) | batch, prove | 35 | 105138 | 2026-11-06 |
+| [seed-7548976414](seed-7548976414.json) | loss (proven) | batch, prove | 28 | 1077821 | 2026-11-06 |
+| [seed-7615968364](seed-7615968364.json) | loss (proven) | batch, prove | 2 | 27380623 | 2026-11-06 |
+| [seed-7812820073](seed-7812820073.json) | loss (proven) | batch, prove | 31 | 261923 | 2026-11-06 |
 
 ## Gallery: the hardest deals won
 

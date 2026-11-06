@@ -1663,3 +1663,8 @@ and carried on to the end, for the arithmetic past 2³².
 - **The check during the run,** with the CPU threads 60–80% idle: heat that costs the GPU 5–10%, for hours (see the workers' own deals,
   above), to save half an hour.
 - **A crate for Ctrl+C:** the two calls it wraps are a few lines, and a new download isn't worth them.
+
+**The 20 billion** (docs/RESULTS.md) then ran in one go: **934,074 deals/s, 5 h 56 min 52 s**, and 927,678–937,553 in each hour, at the
+top of the range above. Why it held there when those back-to-back runs fell to 760,000 wasn't measured; the laptop had cooled to 40 °C
+before it started. The GPU didn't stop and nothing needed resuming, so of all this only the check on disk was called on. It took about
+27 minutes, under the 36 estimated: up to 100 GB, and 89,070 fingerprints looked up (the formula, n²/2 over 2⁵¹, says 88,818).
