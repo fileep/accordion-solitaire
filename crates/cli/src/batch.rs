@@ -840,7 +840,7 @@ pub fn run(given: &BatchArgs) -> Result<bool, String> {
         },
     }
     say!(
-        "win rate         {:.6}%   95% CI [{:.6}%, {:.6}%] (Wilson; undecided deals counted as losses for the lower bound, wins for the upper)",
+        "win rate         {:.10}%   95% CI [{:.10}%, {:.10}%] (Wilson; undecided deals counted as losses for the lower bound, wins for the upper)",
         100.0 * won as f64 / n as f64,
         100.0 * lo,
         100.0 * hi

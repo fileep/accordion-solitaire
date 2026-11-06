@@ -868,6 +868,9 @@ mod tests {
         assert!(lo == 0.0 && (hi - 0.2775).abs() < 1e-3, "{hi}");
         let (lo, hi) = wilson(100_000, 100_000);
         assert!((lo - 0.999_962).abs() < 1e-5 && (hi - 1.0).abs() < 1e-12, "{lo} {hi}");
+        // A deal in a billion lost, as in the 20 billion run: doubles still hold it, to the digits the report prints.
+        let (lo, hi) = wilson(19_999_999_980, 20_000_000_000);
+        assert!((lo - 0.999_999_998_455).abs() < 1e-11 && (hi - 0.999_999_999_353).abs() < 1e-11, "{lo} {hi}");
     }
 
     fn check_run(gpu: Option<Arc<Gpu>>, count: u64, records: bool) {
