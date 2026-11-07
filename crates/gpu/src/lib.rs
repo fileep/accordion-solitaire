@@ -14,7 +14,7 @@ use cudarc::driver::{
 use cudarc::nvrtc::{CompileOptions, compile_ptx_with_opts};
 use serde::{Deserialize, Serialize};
 use std::collections::VecDeque;
-use std::sync::Arc;
+use std::sync::{Arc, Condvar, Mutex};
 
 const SOURCE: &str = include_str!("kernel.cu");
 
@@ -223,6 +223,39 @@ pub struct BatchResult {
     codes: Vec<u8>,
     /// The kernel's [`PROFILE_SLOTS`] counters for the launch, when profiling (empty otherwise).
     pub profile: Vec<u64>,
+    /// The masks that were uploaded, and where all these buffers go for the next launch once this is done with.
+    masks: Vec<u64>,
+    pool: Option<Pool>,
+}
+
+/// Buffers of a launch, to use again: at a launch every few tens of milliseconds, fresh ones cost thousands of page faults
+/// a launch, on a CPU that may be short of power.
+#[derive(Default)]
+struct Spare {
+    flat: Vec<u8>,
+    masks: Vec<u64>,
+    piles: Vec<usize>,
+    won: Vec<u32>,
+    lines: Vec<u8>,
+    counts: Vec<u64>,
+}
+
+type Pool = Arc<Mutex<Vec<Spare>>>;
+
+impl Drop for BatchResult {
+    fn drop(&mut self) {
+        if let Some(pool) = self.pool.take() {
+            let spare = Spare {
+                flat: std::mem::take(&mut self.codes),
+                masks: std::mem::take(&mut self.masks),
+                piles: std::mem::take(&mut self.piles),
+                won: std::mem::take(&mut self.won),
+                lines: std::mem::take(&mut self.lines),
+                counts: std::mem::take(&mut self.counts),
+            };
+            pool.lock().expect("no panics").push(spare);
+        }
+    }
 }
 
 impl BatchResult {
@@ -235,6 +268,8 @@ impl BatchResult {
             piles: vec![0; n],
             codes: Vec::new(),
             profile: Vec::new(),
+            masks: Vec::new(),
+            pool: None,
         }
     }
 
@@ -287,6 +322,9 @@ pub struct Pending {
     /// Piles of each position: its line has one move fewer.
     piles: Vec<usize>,
     codes: Vec<u8>,
+    host_masks: Vec<u64>,
+    spare: (Vec<u32>, Vec<u8>, Vec<u64>),
+    pool: Option<Pool>,
     won: CudaSlice<u32>,
     lines: CudaSlice<u8>,
     /// Per position: positions generated << 16 | attempts run.
@@ -350,15 +388,28 @@ struct Prepared {
     /// there).
     masks: Vec<u64>,
     piles: Vec<usize>,
+    /// The other buffers of a launch, and where they all go back to.
+    spare: (Vec<u32>, Vec<u8>, Vec<u64>),
+    pool: Option<Pool>,
 }
 
-/// Threads preparing a batch: one falls behind the GPU, above all with the CPU slowed by a hot laptop.
+/// Threads preparing a batch for [`Gpu::submit`].
 const PREPARE_THREADS: usize = 4;
+/// Threads preparing batches ahead for [`Gpu::feed`], a batch each, on their own.
+const PREPARERS: usize = 3;
+/// Launches [`Gpu::feed`] keeps on the GPU, each on a stream of its own, so that one starts as the last one's threads run out.
+const IN_FLIGHT: usize = 2;
 
 impl Prepared {
     fn new<T: Sync>(items: &[T], position: &(impl Fn(&T) -> [u8; 52] + Sync)) -> Prepared {
         let n = items.len();
-        let mut p = Prepared { flat: vec![0; n * 52], masks: vec![0; n * 3], piles: vec![0; n] };
+        let mut p = Prepared {
+            flat: vec![0; n * 52],
+            masks: vec![0; n * 3],
+            piles: vec![0; n],
+            spare: Default::default(),
+            pool: None,
+        };
         let chunk = n.div_ceil(PREPARE_THREADS).max(1);
         std::thread::scope(|scope| {
             let parts = items
@@ -380,6 +431,32 @@ impl Prepared {
             }
         });
         p
+    }
+
+    /// On this thread alone, in buffers from `pool`.
+    fn fill<T>(pool: &Pool, items: &[T], position: &impl Fn(&T) -> [u8; 52]) -> Prepared {
+        let n = items.len();
+        let spare = pool.lock().expect("no panics").pop().unwrap_or_default();
+        let (mut flat, mut masks, mut piles_out) = (spare.flat, spare.masks, spare.piles);
+        flat.resize(n * 52, 0);
+        masks.resize(n * 3, 0);
+        piles_out.resize(n, 0);
+        let parts = flat.as_chunks_mut::<52>().0.iter_mut().zip(masks.as_chunks_mut::<3>().0.iter_mut()).zip(piles_out.iter_mut());
+        for (item, ((flat, masks), piles_out)) in items.iter().zip(parts) {
+            let codes = position(item);
+            let n = piles(&codes);
+            let (l1, l3, present) = Position::masks_of_codes(&codes[..n]);
+            *flat = codes;
+            *masks = [l1, l3, present];
+            *piles_out = n;
+        }
+        Prepared {
+            flat,
+            masks,
+            piles: piles_out,
+            spare: (spare.won, spare.lines, spare.counts),
+            pool: Some(Arc::clone(pool)),
+        }
     }
 }
 
@@ -677,6 +754,9 @@ impl Gpu {
             stream: s.clone(),
             piles: prepared.piles,
             codes: prepared.flat,
+            host_masks: prepared.masks,
+            spare: prepared.spare,
+            pool: prepared.pool,
             won,
             lines,
             counts,
@@ -691,42 +771,127 @@ impl Gpu {
         self.submit(&stream, positions, a)?.collect()
     }
 
-    /// Runs the settings' rungs on batches of items from `next_batch` (`position` gives each one's bytes),
-    /// keeping two launches in flight on two streams, and hands every finished batch to `done`. On a GPU error,
-    /// returns it with the items whose results never came back.
-    pub fn feed<T: Sync>(
+    /// Runs the settings' rungs on batches of items from `next_batch` (`position` gives each one's bytes), and hands every
+    /// finished batch to `done`, in order. Long-lived threads each prepare a whole batch ahead of time and launch it when its
+    /// turn comes, so a launch is waiting when the one before ends, whatever else the CPU is doing: on a hot laptop, where
+    /// the CPU gets 12 W beside the GPU, a batch prepared only once the last one had come back left the GPU idle up to a
+    /// quarter of the time. This thread collects the results. On a GPU error, returns it with the items whose results never
+    /// came back.
+    pub fn feed<T: Sync + Send>(
         &self,
         position: impl Fn(&T) -> [u8; 52] + Sync,
-        mut next_batch: impl FnMut() -> Option<Vec<T>>,
+        next_batch: impl FnMut() -> Option<Vec<T>> + Send,
         mut done: impl FnMut(Vec<T>, BatchResult),
     ) -> Result<(), (String, Vec<T>)> {
-        let streams = match (self.stream(), self.stream()) {
-            (Ok(a), Ok(b)) => [a, b],
-            (Err(e), _) | (_, Err(e)) => return Err((e, Vec::new())),
-        };
-        let mut in_flight: VecDeque<(Vec<T>, Pending)> = VecDeque::new();
-        let mut launch = 0u64;
-        let lost = |in_flight: VecDeque<(Vec<T>, Pending)>, more: Vec<T>| {
-            in_flight.into_iter().flat_map(|(items, _)| items).chain(more).collect::<Vec<T>>()
-        };
-        loop {
-            if in_flight.len() < 2
-                && let Some(items) = next_batch()
-            {
-                let prepared = Prepared::new(&items, &position);
-                let a = self.settings.attempts(launch);
-                match self.submit_prepared(&streams[(launch % 2) as usize], prepared, &a) {
-                    Ok(pending) => in_flight.push_back((items, pending)),
-                    Err(e) => return Err((e, lost(in_flight, items))),
+        struct Taking<F> {
+            take: F,
+            turn: u64,
+        }
+        struct State<T> {
+            in_flight: VecDeque<(Vec<T>, Pending)>,
+            /// The next turn to launch, and launches not yet known to be done.
+            launch: u64,
+            running: usize,
+            preparers: usize,
+            failed: Option<String>,
+            lost: Vec<T>,
+        }
+        let mut streams = Vec::with_capacity(IN_FLIGHT);
+        for _ in 0..IN_FLIGHT {
+            streams.push(self.stream().map_err(|e| (e, Vec::new()))?);
+        }
+        let taking = Mutex::new(Taking { take: next_batch, turn: 0 });
+        let state = Mutex::new(State {
+            in_flight: VecDeque::new(),
+            launch: 0,
+            running: 0,
+            preparers: PREPARERS,
+            failed: None,
+            lost: Vec::new(),
+        });
+        let changed = Condvar::new();
+        let pool: Pool = Arc::default();
+        let (position, streams) = (&position, &streams);
+        std::thread::scope(|scope| {
+            for _ in 0..PREPARERS {
+                scope.spawn(|| {
+                    loop {
+                        let taken = {
+                            let mut t = taking.lock().expect("no panics");
+                            if state.lock().expect("no panics").failed.is_some() {
+                                None
+                            } else {
+                                (t.take)().map(|items| {
+                                    t.turn += 1;
+                                    (t.turn - 1, items)
+                                })
+                            }
+                        };
+                        let Some((turn, items)) = taken else { break };
+                        let prepared = Prepared::fill(&pool, &items, position);
+                        let mut st = state.lock().expect("no panics");
+                        while (st.launch != turn || st.running >= IN_FLIGHT) && st.failed.is_none() {
+                            st = changed.wait(st).expect("no panics");
+                        }
+                        if st.failed.is_some() {
+                            st.lost.extend(items);
+                            break;
+                        }
+                        st.running += 1;
+                        drop(st);
+                        let a = self.settings.attempts(turn);
+                        let launched = self.submit_prepared(&streams[turn as usize % IN_FLIGHT], prepared, &a);
+                        let mut st = state.lock().expect("no panics");
+                        st.launch += 1;
+                        match launched {
+                            Ok(pending) => st.in_flight.push_back((items, pending)),
+                            Err(e) => {
+                                st.running -= 1;
+                                st.failed.get_or_insert(e);
+                                st.lost.extend(items);
+                            }
+                        }
+                        changed.notify_all();
+                    }
+                    state.lock().expect("no panics").preparers -= 1;
+                    changed.notify_all();
+                });
+            }
+            loop {
+                let next = {
+                    let mut st = state.lock().expect("no panics");
+                    loop {
+                        if let Some(launch) = st.in_flight.pop_front() {
+                            break Some(launch);
+                        }
+                        if st.preparers == 0 {
+                            break None;
+                        }
+                        st = changed.wait(st).expect("no panics");
+                    }
+                };
+                let Some((items, pending)) = next else { break };
+                let waited = pending.stream.synchronize().map_err(err);
+                state.lock().expect("no panics").running -= 1;
+                changed.notify_all();
+                match waited.and_then(|()| pending.collect()) {
+                    Ok(result) => done(items, result),
+                    Err(e) => {
+                        let mut st = state.lock().expect("no panics");
+                        st.failed.get_or_insert(e);
+                        st.lost.extend(items);
+                        while let Some((items, _)) = st.in_flight.pop_front() {
+                            st.lost.extend(items);
+                        }
+                        changed.notify_all();
+                    }
                 }
-                launch += 1;
-                continue;
             }
-            let Some((items, pending)) = in_flight.pop_front() else { return Ok(()) };
-            match pending.collect() {
-                Ok(result) => done(items, result),
-                Err(e) => return Err((e, lost(in_flight, items))),
-            }
+        });
+        let st = state.into_inner().expect("no panics");
+        match st.failed {
+            Some(e) => Err((e, st.lost)),
+            None => Ok(()),
         }
     }
 
@@ -781,14 +946,28 @@ impl Pending {
     /// Waits for the batch and copies its results back.
     pub fn collect(self) -> Result<BatchResult, String> {
         let s = &self.stream;
-        let won = s.clone_dtoh(&self.won).map_err(err)?;
-        let lines = s.clone_dtoh(&self.lines).map_err(err)?;
-        let counts = s.clone_dtoh(&self.counts).map_err(err)?;
+        let (mut won, mut lines, mut counts) = self.spare;
+        won.resize(self.won.len(), 0);
+        lines.resize(self.lines.len(), 0);
+        counts.resize(self.counts.len(), 0);
+        s.memcpy_dtoh(&self.won, &mut won).map_err(err)?;
+        s.memcpy_dtoh(&self.lines, &mut lines).map_err(err)?;
+        s.memcpy_dtoh(&self.counts, &mut counts).map_err(err)?;
         let profile = match &self.profile {
             Some(p) => s.clone_dtoh(p).map_err(err)?,
             None => Vec::new(),
         };
-        Ok(BatchResult { won, lines, counts, piles: self.piles, codes: self.codes, profile })
+        s.synchronize().map_err(err)?;
+        Ok(BatchResult {
+            won,
+            lines,
+            counts,
+            piles: self.piles,
+            codes: self.codes,
+            profile,
+            masks: self.host_masks,
+            pool: self.pool,
+        })
     }
 }
 

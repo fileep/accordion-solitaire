@@ -1942,3 +1942,73 @@ powershell -ExecutionPolicy Bypass -File tools\long-run.ps1 -Acc C:\runs\acc.exe
   about 8 million, hides anything smaller.
 - **Log files by key, smaller records** (positions as differences: 25-40% more coverage for a harder format), **fingerprints when the
   deals are prepared for the GPU,** **a wider generator** (by decision: it wouldn't change the same-game figure).
+
+## After Phase 8 — look-ahead, learning within a deal, and a feed that keeps the GPU busy
+
+A kernel with fewer attempts a deal, and a host that doesn't starve the GPU: 3.17M deals/s hot against 1.87M on 406bb98, x1.69, every line verified. The CPU stayed above its 12 W state in these runs, so this isn't yet a sustained figure (below).
+
+**The kernel, step by step, GPU alone.** One hold, 3 alternated passes, 2M deals a run, seeds from 600,000,000,000, timed without verifying, then one more run of each with every line verified. Medians:
+
+| Step | Deals/s | Against 406bb98 | Against the step before | Attempts | Positions | Misses per 100k | Registers | Lines |
+|---|---|---|---|---|---|---|---|---|
+| 406bb98 | 1,842,993 | 1.000 | | 23.48 | 1996 | 6.50 | 79 | 0 failed |
+| Search on 3 words of planes + look-ahead | 2,470,330 | 1.335 | | 13.03 | 1438 | 0.85 | 79 | 0 failed |
+| + one draw a turn | 2,632,309 | 1.428 | 1.066 | 13.07 | 1440 | 0.85 | 79 | 0 failed |
+| + learning within a deal: **this build** | 2,919,014 | **1.586** | 1.109 | 10.68 | 1150 | 0.90 | 80 | 0 failed |
+| One draw a turn + planes in the prefix's shared moves, not kept | 2,567,726 | 1.404 | 0.975 | 13.10 | 1442 | 0.85 | 103 | 0 failed |
+| That + learning, not kept | 2,341,134 | 1.264 | | 17.21 | 1658 | 1.00 | 100 | **1,036,214 failed** |
+
+17 of the 18 timed runs were flagged by `ab.py` (clock about 1,400 MHz, or 9.5 or more CPU threads busy), all alike, and are in the medians. By pass, this build ran 1.543-1.609 against 406bb98.
+
+- **Look-ahead:** from move 27 of a try, up to 4 candidates are scored by what they leave playable (`LOOK_TRIES`), which is what brought attempts from 23.5 to 13.
+- **One draw a turn:** a move with nothing after it used to draw again in a loop inside the move, and that loop under a divergent branch put the compiler back in the code it makes for many breaks: 27 `BREAK`s and 3,704 instructions against 1 and 3,328. Now it draws again on the warp's next turn. `write_lines` keeps the loop, as the draws are the same.
+- **Learning:** a group's tries treat the ranks that the deal's best residuals so far had lost as one class scarcer, with no code per move. It needs the two-bit weights to saturate: a target rank starts at 1, so it reached 3 with a card still left, and the next cover wrapped it to 0. Without that one line, learning lost on look-ahead.
+
+**The build's own kernel, verified with the host's settings:**
+
+| Deals, seeds from | GPU time, deals/s | Won by the GPU | Failed | Misses, all won by the CPU |
+|---|---|---|---|---|
+| 2,000,000, 600,000,000,000 | 3,143,585 | 1,999,984 | 0 | 16 |
+| 4,000,000, 915,000,000,000 | 3,222,541 | 3,999,965 | 0 | 35 |
+| 6,553,600, 920,000,000,000 | 3,262,472 | 6,553,533 | 0 | 67 |
+
+These are above the 2.92M of the table because that hold ran at a lower clock; compare only within a hold.
+
+**Hot `acc batch`,** 60M deals a run, one hold, seeds from 700,000,000,000, after 240M deals of warm-up on the old build (1,666,381 deals/s). Second half of each run, in order:
+
+| Build | Deals/s | GPU busy | CPU speed, % of base | CPU package | GPU clock | Attempts | Misses | Failed |
+|---|---|---|---|---|---|---|---|---|
+| 406bb98 | 1,898,519 | 99.9% | 139 | 22.8 W | 1431 MHz | 23.47 | 4,436 | 0 |
+| This build | 3,160,680 | 99.6% | 166 | 26.9 W | 1371 MHz | 10.67 | 597 | 0 |
+| This build | 3,171,413 | 100% | 101 | 19.6 W | 1373 MHz | 10.67 | 606 | 0 |
+| 406bb98 | 1,849,184 | 100% | 126 | 19.7 W | 1386 MHz | 23.48 | 4,436 | 0 |
+
+x1.69 (x1.665 and x1.715 by pass), and all 240M deals won. Both builds keep the GPU at 100% here: this is the kernel's gain, with the CPU not yet short.
+
+**Not measured:** the feed's gain in these runs, as the CPU never reached its 12 W state (a run now lasts 23 s). In that state, on 406bb98's kernel, one hold: 1,505,000 and 1,532,000 deals/s against one run of 1,978,000 with the feed and the line check, GPU busy 90% against 98-100%, from a working copy with the same logic. A run of many minutes on this build is what would show both limits. Also no retune of rungs, gates or look-ahead for the new attempts.
+
+**The feed.** Long-lived threads prepare whole batches ahead in pooled buffers and queue their launches, so one is waiting when the last ends; workers wait on a condvar rather than polling; a line that plays out needs no reference replay unless it is the 1 in `FULL_REPLAY_EVERY` that is due. A pause now finishes up to five batches, not two.
+
+**Pausing, on this build:**
+
+| What | Result |
+|---|---|
+| 30M deals with the GPU on, left alone | 30,000,000 records, all won, 0 failed, 29,999,713 by the GPU |
+| The same, paused by file 8 times (at 1,114,112 to 11,403,264), resumed each time | Each pause exit 0; 30,000,000 records, all won, 0 failed, 29,999,685 by the GPU; checkpoint gone |
+| The same, killed at 1,035,776, resumed | 30,000,000 records, all won, 0 failed, 29,999,694 by the GPU |
+
+Two `pause_resume` tests had failed on the feed's first full run: load, not the feed. These tests run with `--gpu off`, and with both builds on the E-cores at idle priority beside other jobs, clean 406bb98 failed 3 of 12 in one pass and none in the next; this build none in two. `ctrl_break_pauses_and_a_second_one_stops` failed once more on this build under the lock, with a first pause finished (1,247 deals) before the second Ctrl+Break came, exit 0 and not 130; alone it passes 6 of 6 on both builds. It is a race in the test, left as it is; the full run after it passed, 97 tests.
+
+`a_sample_comes_out_in_order_with_the_gpu_too` did fail because of the feed: of 300,000 deals, all were taken by the time its pause came, so the run ended without pausing. It now has 1,000,000.
+
+**The tests skip what they can't run.** From a worktree, with no `.tools/` above it and NVRTC not on PATH, the kernel tests and the GPU's runner tests pass in a fraction of the time without having touched the GPU, and say so only with `--nocapture`. That hid the failure above from the feed's first run. The results here are with NVRTC on PATH.
+
+No golden values changed. Clippy: no warnings.
+
+**Tried, not kept:**
+- **Planes in the prefix's shared moves:** x1.149 without look-ahead, x0.975 of the step before it on this stack, at 103 registers, where 113 lost occupancy. With learning, half of its lines failed; every deal was still won by the CPU. The cause wasn't looked into.
+
+**Considered, not taken in this build:**
+- **The batch line check and deal maker** (`quick.rs`): line check 93 ns on a P-core against 147 for this build's, 0 disagreements on 110M real lines. It conflicts with the feed in `runner.rs`, and adds 1.1% hot while the GPU is the limit. Next build.
+- **The bit-parallel pattern policy** in the kernel: x1.187 on the first stack step alone (13.0 attempts, 1,040 positions, 6.55M lines verified, 0 failed), reported as this build closed. Not on one draw a turn or learning, kernel tests and hot not run. Next build.
+- **The kernel's clean-up** (507 lines of unused kernels and helpers): same machine code, so no hurry, and it would have moved every patch here.

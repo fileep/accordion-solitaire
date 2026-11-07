@@ -11,7 +11,7 @@
 
 use crate::games::Sieve;
 use accordion_core::fast::Position;
-use accordion_core::game::{replay_codes, replay_tops};
+use accordion_core::game::{line_wins, replay_codes, replay_tops};
 use accordion_core::notation::encode_compact;
 use accordion_core::verify::verify;
 use accordion_core::{Deal, Game, Move, Outcome, SolveRecord};
@@ -28,7 +28,7 @@ use std::ops::{AddAssign, Range};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use std::sync::mpsc::{self, RecvTimeoutError};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Condvar, Mutex};
 use std::time::{Duration, Instant};
 
 /// The deals of a run, by position: a range of seeds (nothing to hold, for runs of billions) or a list.
@@ -200,6 +200,8 @@ pub struct Progress {
 const PROGRESS_EVERY: Duration = Duration::from_secs(1);
 /// The GPU waits while this many of its batches wait for the CPU threads.
 const MAX_BACKLOG_BATCHES: usize = 8;
+/// The longest a worker sleeps with nothing from the GPU to do, should the run pause.
+const WAIT_FOR_GPU: Duration = Duration::from_millis(50);
 /// GPU results a CPU thread takes at a time, and hands on the outcome of at once.
 const RUN: usize = 256;
 /// One deal in this many has its line replayed by the reference engine as well as by its rules on the top cards.
@@ -361,6 +363,7 @@ pub fn run(
     let gpu_down = AtomicBool::new(false);
     let pausing = || gpu_down.load(Ordering::Relaxed) || opts.pause.is_some_and(|p| p.load(Ordering::Relaxed));
     let from_gpu: Mutex<VecDeque<Arc<GpuBatch>>> = Mutex::new(VecDeque::new());
+    let more_from_gpu = Condvar::new();
     let feeding = AtomicBool::new(opts.gpu.is_some());
     let gpu_won = AtomicU64::new(so_far.gpu.won);
     let gpu_positions = AtomicU64::new(so_far.gpu.positions);
@@ -372,6 +375,7 @@ pub fn run(
         let pausing = &pausing;
         let feeder = opts.gpu.as_deref().map(|gpu| {
             let (next, abort, from_gpu, feeding, gpu_down) = (&next, &abort, &from_gpu, &feeding, &gpu_down);
+            let more_from_gpu = &more_from_gpu;
             let (launches, positions) = (&launches, &gpu_positions);
             scope.spawn(move || {
                 #[cfg(test)]
@@ -379,7 +383,7 @@ pub fn run(
                 #[cfg(not(test))]
                 let fails = || false;
                 let stopping = || abort.load(Ordering::Relaxed) || pausing() || fails();
-                let fed = feed(gpu, seeds, next, &stopping, from_gpu, launches, positions);
+                let fed = feed(gpu, seeds, next, &stopping, (from_gpu, more_from_gpu), launches, positions);
                 let fed = fed.and_then(|()| {
                     if !fails() {
                         return Ok(());
@@ -409,6 +413,7 @@ pub fn run(
                     e
                 });
                 feeding.store(false, Ordering::Release);
+                more_from_gpu.notify_all();
                 error
             })
         });
@@ -416,6 +421,7 @@ pub fn run(
             let tx = tx.clone();
             let (next, abort, from_gpu, feeding) = (&next, &abort, &from_gpu, &feeding);
             let (gpu_won, cpu_time) = (&gpu_won, &cpu_time);
+            let more_from_gpu = &more_from_gpu;
             scope.spawn(move || {
                 let mut search = Search::with_options(opts.table_log2, config.search);
                 search.set_endgame(opts.endgame.clone());
@@ -479,7 +485,10 @@ pub fn run(
                     } else if feeding.load(Ordering::Acquire) {
                         // While the GPU is feeding, no deals of their own: a few thousand a second at most, for heat
                         // that slows the GPU (the laptop's CPU and GPU share a power limit), by 5 to 10%.
-                        std::thread::sleep(Duration::from_micros(200));
+                        let queue = from_gpu.lock().expect("no panics");
+                        if queue.is_empty() && feeding.load(Ordering::Acquire) {
+                            let _ = more_from_gpu.wait_timeout(queue, WAIT_FOR_GPU).expect("no panics");
+                        }
                         time.waiting += us(t);
                         continue;
                     } else {
@@ -587,8 +596,8 @@ fn feed(
     gpu: &Gpu,
     seeds: Seeds,
     next: &AtomicUsize,
-    stopping: &impl Fn() -> bool,
-    queue: &Mutex<VecDeque<Arc<GpuBatch>>>,
+    stopping: &(impl Fn() -> bool + Sync),
+    (queue, more): (&Mutex<VecDeque<Arc<GpuBatch>>>, &Condvar),
     launches: &AtomicU64,
     positions: &AtomicU64,
 ) -> Result<(), (String, Vec<usize>)> {
@@ -618,6 +627,7 @@ fn feed(
                 given: true,
                 next: AtomicUsize::new(0),
             }));
+            more.notify_all();
         },
     )
 }
@@ -632,6 +642,10 @@ fn gpu_line_verifies(
     moves: &mut Vec<Move>,
 ) -> Result<(), String> {
     let line = result.line(i).expect("it is won");
+    // A line that plays out, as nearly all do, needs nothing more unless the full replay is due.
+    if !index.is_multiple_of(FULL_REPLAY_EVERY) && line_wins(result.codes(i), line) {
+        return Ok(());
+    }
     moves.clear();
     moves.extend(line.iter().map(|&b| Move::from_byte(b)));
     let codes = result.codes(i);
@@ -1194,7 +1208,8 @@ mod tests {
     fn a_sample_comes_out_in_order_with_the_gpu_too() {
         static PAUSE: AtomicBool = AtomicBool::new(false);
         match open_gpu("auto", Settings::default()).unwrap() {
-            Some(gpu) => check_sample(Some(gpu), 300_000, &PAUSE),
+            // More than the five batches the feed may hold when the pause comes: it finishes those, so with fewer it never pauses.
+            Some(gpu) => check_sample(Some(gpu), 1_000_000, &PAUSE),
             None => eprintln!("skipped: no GPU"),
         }
     }
