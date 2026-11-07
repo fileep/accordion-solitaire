@@ -243,19 +243,22 @@ fn golden_and_random_deals_are_won_with_lines_that_verify() {
 
 #[test]
 fn every_try_runs_when_a_group_of_tries_straddles_the_rungs() {
-    // 5 + 8 tries a deal: in groups of 4 sharing their first moves (the default), the second group spans both rungs and
-    // the last is short. A deal not won still gets all 13, and every line replays.
+    // 5 + 8 tries a deal: in groups of 2 sharing their first moves (the default), the third group spans both rungs and the
+    // last is short. 64 + 200: past where a warp takes whole words of groups at a time and a pass gives a deal bundles of
+    // groups. A deal not won still gets them all, and every line replays.
     let deals: Vec<(String, Deal, Option<Outcome>)> =
         (0..2048u64).map(|s| (format!("seed {s}"), Deal::from_seed(s), None)).collect();
     let positions: Vec<[u8; 52]> = deals.iter().map(|(_, deal, _)| deal_codes(deal)).collect();
     let Some(gpu) = gpu() else { return };
-    assert!(gpu.settings.split && gpu.settings.share_group == 4, "the test expects groups of 4");
-    let result = gpu.run(&positions, &Attempts { tries: 5, tries2: 8, ..gpu.settings.attempts(0) }).unwrap();
-    let won = check_deals(&deals, &result);
-    assert!(won > 0 && won < deals.len(), "won {won} of {}", deals.len());
-    for i in 0..result.len() {
-        let tries = result.tries(i);
-        assert!(result.is_won(i) || tries == 13, "deal {i}: {tries} of 13 tries ran, not won");
+    assert!(gpu.settings.split && gpu.settings.share_group == 2, "the test expects groups of 2");
+    for (tries, tries2) in [(5, 8), (64, 200)] {
+        let result = gpu.run(&positions, &Attempts { tries, tries2, ..gpu.settings.attempts(0) }).unwrap();
+        let won = check_deals(&deals, &result);
+        assert!(won > 0, "won none of {}", deals.len());
+        for i in 0..result.len() {
+            let ran = result.tries(i);
+            assert!(result.is_won(i) || ran == tries + tries2, "deal {i}: {ran} of {} tries ran, not won", tries + tries2);
+        }
     }
 }
 

@@ -1217,6 +1217,18 @@ __device__ __forceinline__ u64 rrow_places(const u32 (&R)[RW], u32 ranks) {
     }
     return m;
 }
+// A won deal's bit: 32 deals a word, 4 words in the free bytes (12 to 35) of a low deal's line, zero at the launch, written over by write_lines.
+#ifndef STRETCH_TRIES
+#define STRETCH_TRIES 64
+#endif
+#define STRETCH_WORDS 32u
+#ifndef BUNDLE_TRIES
+#define BUNDLE_TRIES 128
+#endif
+#ifndef BUNDLE
+#define BUNDLE 32u
+#endif
+__device__ __forceinline__ u32* won_bits(u8* lines, u32 w) { return learn_word(lines, w >> 2) + 2 + (w & 3); }
 // How long a prefix warp sleeps with no room in the queue: its polling takes turns from the warps doing the work.
 #define QUEUE_WAIT_NS 10000
 #define QSIZE 32           // residuals attempts_split's queue holds
@@ -1264,7 +1276,7 @@ __device__ __forceinline__ void kept_row(const u32* w, u32 (&R)[RW], u64& l1, u6
 // LOOK_TRIES in cyclic order from a random place (leaps first; a row seldom has more) are scored by the moves they'd leave,
 // each by how scarce a rank it would cover, 11, 5, 1 for 0, 1, 2 others (cumulative below: 6, 4, 1); 37, 16, 2 for covering
 // such a rank now; and 2 random bits, below one unit, which part ties and keep tries from repeating each other.
-#define SLICED (SHARING && SHARE_K == 20)
+#define SLICED (SHARING && SHARE_K >= 20)
 #if SLICED
 #define SLICE_W ((55 - SHARE_K) / 4)
 #define LOOK_FROM 27       // the first move chosen by look-ahead
@@ -1517,6 +1529,713 @@ __device__ __forceinline__ int slice_try(u32 (&B)[6], int& len, u32& l1, u32& l3
         return bx << 1 | (bleap ? 1 : 0);
     }
 }
+// Move chosen by patterns, phase 1: all options scored at once in lanes, the best found bit by bit from the top.
+__device__ __forceinline__ int pat_move(u32 (&B)[6], int& len, u32& l1, u32& l3, u32& w0, u32& w1, u32& rng, const bool last) {
+    u32 r0 = next_u32(rng), r1 = __funnelshift_r(r0, r0, 13);
+    const u32 PV = (2u << (len - 1)) - 1u;
+    const u32 D2 = ~(((B[0] ^ (B[0] << 2)) | (B[1] ^ (B[1] << 2)) | (B[2] ^ (B[2] << 2)) | (B[3] ^ (B[3] << 2))) & ((B[4] ^ (B[4] << 2)) | (B[5] ^ (B[5] << 2)))) & PV & ~3u;
+    const u32 D4 = ~(((B[0] ^ (B[0] << 4)) | (B[1] ^ (B[1] << 4)) | (B[2] ^ (B[2] << 4)) | (B[3] ^ (B[3] << 4))) & ((B[4] ^ (B[4] << 4)) | (B[5] ^ (B[5] << 4)))) & PV & ~15u;
+    const u32 D6 = ~(((B[0] ^ (B[0] << 6)) | (B[1] ^ (B[1] << 6)) | (B[2] ^ (B[2] << 6)) | (B[3] ^ (B[3] << 6))) & ((B[4] ^ (B[4] << 6)) | (B[5] ^ (B[5] << 6)))) & PV & ~63u;
+    const u32 O0 = w0 & w1, O1 = ~w0 & w1, O2 = w0 & ~w1, O3 = ~(w0 | w1);
+    const u32 G3 = last ? ~0u : 0u;
+    u32 Y0 = 0, Y1 = 0, Y2 = 0, Y3 = 0, Y4 = 0, Y5 = 0, AS0 = 0, AL0 = 0, AS1 = 0, AL1 = 0, AS2 = 0, AL2 = 0, AS3 = 0, AL3 = 0, AS4 = 0, AL4 = 0, AS5 = 0, AL5 = 0, AS6 = 0, AL6 = 0;
+    if (last) {
+        const u32 E0 = ~((B[0] ^ (0u - ((B[0] >> (len - 1 - 0)) & 1u))) | (B[1] ^ (0u - ((B[1] >> (len - 1 - 0)) & 1u))) | (B[2] ^ (0u - ((B[2] >> (len - 1 - 0)) & 1u))) | (B[3] ^ (0u - ((B[3] >> (len - 1 - 0)) & 1u)))) & ~(1u << (len - 1 - 0));
+        const u32 E1 = ~((B[0] ^ (0u - ((B[0] >> (len - 1 - 1)) & 1u))) | (B[1] ^ (0u - ((B[1] >> (len - 1 - 1)) & 1u))) | (B[2] ^ (0u - ((B[2] >> (len - 1 - 1)) & 1u))) | (B[3] ^ (0u - ((B[3] >> (len - 1 - 1)) & 1u)))) & ~(1u << (len - 1 - 1));
+        const u32 E2 = ~((B[0] ^ (0u - ((B[0] >> (len - 1 - 2)) & 1u))) | (B[1] ^ (0u - ((B[1] >> (len - 1 - 2)) & 1u))) | (B[2] ^ (0u - ((B[2] >> (len - 1 - 2)) & 1u))) | (B[3] ^ (0u - ((B[3] >> (len - 1 - 2)) & 1u)))) & ~(1u << (len - 1 - 2));
+        const u32 E3 = ~((B[0] ^ (0u - ((B[0] >> (len - 1 - 3)) & 1u))) | (B[1] ^ (0u - ((B[1] >> (len - 1 - 3)) & 1u))) | (B[2] ^ (0u - ((B[2] >> (len - 1 - 3)) & 1u))) | (B[3] ^ (0u - ((B[3] >> (len - 1 - 3)) & 1u)))) & ~(1u << (len - 1 - 3));
+        const u32 E4 = ~((B[0] ^ (0u - ((B[0] >> (len - 1 - 4)) & 1u))) | (B[1] ^ (0u - ((B[1] >> (len - 1 - 4)) & 1u))) | (B[2] ^ (0u - ((B[2] >> (len - 1 - 4)) & 1u))) | (B[3] ^ (0u - ((B[3] >> (len - 1 - 4)) & 1u)))) & ~(1u << (len - 1 - 4));
+        const u32 gs1 = E0 ^ E1 ^ E2;
+        const u32 gc1 = (E0 & E1) | (E2 & (E0 ^ E1));
+        const u32 gs2 = E3 ^ E4 ^ gs1;
+        const u32 gc2 = (E3 & E4) | (gs1 & (E3 ^ E4));
+        const u32 gs3 = E0 ^ E1 ^ E2;
+        const u32 gc3 = (E0 & E1) | (E2 & (E0 ^ E1));
+        const u32 gs4 = E3 ^ E4 ^ gs3;
+        const u32 gc4 = (E3 & E4) | (gs3 & (E3 ^ E4));
+        const u32 gs5 = E0 ^ E1 ^ E2;
+        const u32 gc5 = (E0 & E1) | (E2 & (E0 ^ E1));
+        const u32 gs6 = E3 ^ E4 ^ gs5;
+        const u32 gc6 = (E3 & E4) | (gs5 & (E3 ^ E4));
+        const u32 gs7 = E0 ^ E1 ^ E2;
+        const u32 gc7 = (E0 & E1) | (E2 & (E0 ^ E1));
+        const u32 gs8 = E3 ^ E4 ^ gs7;
+        const u32 gc8 = (E3 & E4) | (gs7 & (E3 ^ E4));
+        const u32 Yt1 = (gs2) & (w0 & w1);
+        const u32 Yt2 = ~((gs6) & (~w0 & w1));
+        const u32 Yt3 = O0 & ((1u << (len - 1 - 2)) | (1u << (len - 1 - 3)) | (1u << (len - 1 - 4)));
+        const u32 Yt4 = O0 & ((1u << (len - 1 - 0)) | (1u << (len - 1 - 1)));
+        const u32 Yt5 = (w1 & PV);
+        const u32 Yt6 = ~0u;
+        const u32 Yt7 = Yt1 ^ Yt2 ^ Yt3;
+        const u32 Yt8 = (Yt1 & Yt2) | (Yt3 & (Yt1 ^ Yt2));
+        const u32 Yt9 = Yt4 ^ Yt5 ^ Yt6;
+        const u32 Yt10 = (Yt4 & Yt5) | (Yt6 & (Yt4 ^ Yt5));
+        const u32 Yt11 = Yt7 ^ Yt9;
+        const u32 Yt12 = Yt7 & Yt9;
+        const u32 Yt13 = (gc1) & (w0 & w1);
+        const u32 Yt14 = (gc2) & (w0 & w1);
+        const u32 Yt15 = ~((gc5) & (~w0 & w1));
+        const u32 Yt16 = ~((gc6) & (~w0 & w1));
+        const u32 Yt17 = ((w0 | w1) & PV);
+        const u32 Yt18 = Yt8;
+        const u32 Yt19 = Yt10;
+        const u32 Yt20 = Yt12;
+        const u32 Yt21 = Yt13 ^ Yt14 ^ Yt15;
+        const u32 Yt22 = (Yt13 & Yt14) | (Yt15 & (Yt13 ^ Yt14));
+        const u32 Yt23 = Yt16 ^ Yt17 ^ Yt18;
+        const u32 Yt24 = (Yt16 & Yt17) | (Yt18 & (Yt16 ^ Yt17));
+        const u32 Yt25 = Yt19 ^ Yt20 ^ Yt21;
+        const u32 Yt26 = (Yt19 & Yt20) | (Yt21 & (Yt19 ^ Yt20));
+        const u32 Yt27 = Yt23 ^ Yt25;
+        const u32 Yt28 = Yt23 & Yt25;
+        const u32 Yt29 = (gs4) & (w0 & w1);
+        const u32 Yt30 = ~((gs8) & (~w0 & w1));
+        const u32 Yt31 = O0 & ((1u << (len - 1 - 2)) | (1u << (len - 1 - 3)) | (1u << (len - 1 - 4)));
+        const u32 Yt32 = O0 & ((1u << (len - 1 - 0)) | (1u << (len - 1 - 1)));
+        const u32 Yt33 = (w1 & PV);
+        const u32 Yt34 = Yt22;
+        const u32 Yt35 = Yt24;
+        const u32 Yt36 = Yt26;
+        const u32 Yt37 = Yt28;
+        const u32 Yt38 = Yt29 ^ Yt30 ^ Yt31;
+        const u32 Yt39 = (Yt29 & Yt30) | (Yt31 & (Yt29 ^ Yt30));
+        const u32 Yt40 = Yt32 ^ Yt33 ^ Yt34;
+        const u32 Yt41 = (Yt32 & Yt33) | (Yt34 & (Yt32 ^ Yt33));
+        const u32 Yt42 = Yt35 ^ Yt36 ^ Yt37;
+        const u32 Yt43 = (Yt35 & Yt36) | (Yt37 & (Yt35 ^ Yt36));
+        const u32 Yt44 = Yt38 ^ Yt40 ^ Yt42;
+        const u32 Yt45 = (Yt38 & Yt40) | (Yt42 & (Yt38 ^ Yt40));
+        const u32 Yt46 = (gc3) & (w0 & w1);
+        const u32 Yt47 = (gc4) & (w0 & w1);
+        const u32 Yt48 = ~((gc7) & (~w0 & w1));
+        const u32 Yt49 = ~((gc8) & (~w0 & w1));
+        const u32 Yt50 = ((w0 & w1) & PV);
+        const u32 Yt51 = Yt39;
+        const u32 Yt52 = Yt41;
+        const u32 Yt53 = Yt43;
+        const u32 Yt54 = Yt45;
+        const u32 Yt55 = Yt46 ^ Yt47 ^ Yt48;
+        const u32 Yt56 = (Yt46 & Yt47) | (Yt48 & (Yt46 ^ Yt47));
+        const u32 Yt57 = Yt49 ^ Yt50 ^ Yt51;
+        const u32 Yt58 = (Yt49 & Yt50) | (Yt51 & (Yt49 ^ Yt50));
+        const u32 Yt59 = Yt52 ^ Yt53 ^ Yt54;
+        const u32 Yt60 = (Yt52 & Yt53) | (Yt54 & (Yt52 ^ Yt53));
+        const u32 Yt61 = Yt55 ^ Yt57 ^ Yt59;
+        const u32 Yt62 = (Yt55 & Yt57) | (Yt59 & (Yt55 ^ Yt57));
+        const u32 Yt63 = Yt56;
+        const u32 Yt64 = Yt58;
+        const u32 Yt65 = Yt60;
+        const u32 Yt66 = Yt62;
+        const u32 Yt67 = Yt63 ^ Yt64 ^ Yt65;
+        const u32 Yt68 = (Yt63 & Yt64) | (Yt65 & (Yt63 ^ Yt64));
+        const u32 Yt69 = Yt66 ^ Yt67;
+        const u32 Yt70 = Yt66 & Yt67;
+        const u32 Yt71 = Yt68;
+        const u32 Yt72 = Yt70;
+        const u32 Yt73 = Yt71 ^ Yt72;
+        const u32 Yt74 = Yt71 & Yt72;
+        const u32 Yt75 = Yt74;
+        const u32 ASt1 = (D2) & (O0 << 2);
+        const u32 ASt2 = ~((l1 << 1) & (O0 << 2));
+        const u32 ASt3 = ~((~0u) & (O0 << 1));
+        const u32 ASt4 = ASt1 ^ ASt2 ^ ASt3;
+        const u32 ASt5 = (ASt1 & ASt2) | (ASt3 & (ASt1 ^ ASt2));
+        const u32 ASt6 = (D4) & (O0 << 4);
+        const u32 ASt7 = ~((l3 << 1) & (O0 << 4));
+        const u32 ASt8 = (D4 >> 1) & (O0 << 3);
+        const u32 ASt9 = ~((l3) & (O0 << 3));
+        const u32 ASt10 = (D4 >> 2) & (O0 << 2);
+        const u32 ASt11 = ~((l3 >> 1) & (O0 << 2));
+        const u32 ASt12 = ~((l3 >> 2) & (O0 << 1));
+        const u32 ASt13 = ASt5;
+        const u32 ASt14 = ASt6 ^ ASt7 ^ ASt8;
+        const u32 ASt15 = (ASt6 & ASt7) | (ASt8 & (ASt6 ^ ASt7));
+        const u32 ASt16 = ASt9 ^ ASt10 ^ ASt11;
+        const u32 ASt17 = (ASt9 & ASt10) | (ASt11 & (ASt9 ^ ASt10));
+        const u32 ASt18 = ASt12 ^ ASt13 ^ ASt14;
+        const u32 ASt19 = (ASt12 & ASt13) | (ASt14 & (ASt12 ^ ASt13));
+        const u32 ASt20 = ASt16 ^ ASt18;
+        const u32 ASt21 = ASt16 & ASt18;
+        const u32 ASt22 = (D4) & (O0 << 4);
+        const u32 ASt23 = ~((l3 << 1) & (O0 << 4));
+        const u32 ASt24 = (D4 >> 1) & (O0 << 3);
+        const u32 ASt25 = ~((l3) & (O0 << 3));
+        const u32 ASt26 = (D4 >> 2) & (O0 << 2);
+        const u32 ASt27 = ~((l3 >> 1) & (O0 << 2));
+        const u32 ASt28 = ~((l3 >> 2) & (O0 << 1));
+        const u32 ASt29 = (D2) & (O0 << 2);
+        const u32 ASt30 = ~((l1 << 1) & (O0 << 2));
+        const u32 ASt31 = ~((~0u) & (O0 << 1));
+        const u32 ASt32 = ASt15;
+        const u32 ASt33 = ASt17;
+        const u32 ASt34 = ASt19;
+        const u32 ASt35 = ASt21;
+        const u32 ASt36 = ASt22 ^ ASt23 ^ ASt24;
+        const u32 ASt37 = (ASt22 & ASt23) | (ASt24 & (ASt22 ^ ASt23));
+        const u32 ASt38 = ASt25 ^ ASt26 ^ ASt27;
+        const u32 ASt39 = (ASt25 & ASt26) | (ASt27 & (ASt25 ^ ASt26));
+        const u32 ASt40 = ASt28 ^ ASt29 ^ ASt30;
+        const u32 ASt41 = (ASt28 & ASt29) | (ASt30 & (ASt28 ^ ASt29));
+        const u32 ASt42 = ASt31 ^ ASt32 ^ ASt33;
+        const u32 ASt43 = (ASt31 & ASt32) | (ASt33 & (ASt31 ^ ASt32));
+        const u32 ASt44 = ASt34 ^ ASt35 ^ ASt36;
+        const u32 ASt45 = (ASt34 & ASt35) | (ASt36 & (ASt34 ^ ASt35));
+        const u32 ASt46 = ASt38 ^ ASt40 ^ ASt42;
+        const u32 ASt47 = (ASt38 & ASt40) | (ASt42 & (ASt38 ^ ASt40));
+        const u32 ASt48 = ASt44 ^ ASt46;
+        const u32 ASt49 = ASt44 & ASt46;
+        const u32 ASt50 = ASt37;
+        const u32 ASt51 = ASt39;
+        const u32 ASt52 = ASt41;
+        const u32 ASt53 = ASt43;
+        const u32 ASt54 = ASt45;
+        const u32 ASt55 = ASt47;
+        const u32 ASt56 = ASt49;
+        const u32 ASt57 = ASt50 ^ ASt51 ^ ASt52;
+        const u32 ASt58 = (ASt50 & ASt51) | (ASt52 & (ASt50 ^ ASt51));
+        const u32 ASt59 = ASt53 ^ ASt54 ^ ASt55;
+        const u32 ASt60 = (ASt53 & ASt54) | (ASt55 & (ASt53 ^ ASt54));
+        const u32 ASt61 = ASt56 ^ ASt57 ^ ASt59;
+        const u32 ASt62 = (ASt56 & ASt57) | (ASt59 & (ASt56 ^ ASt57));
+        const u32 ASt63 = ~0u;
+        const u32 ASt64 = ASt58;
+        const u32 ASt65 = ASt60;
+        const u32 ASt66 = ASt62;
+        const u32 ASt67 = ASt63 ^ ASt64 ^ ASt65;
+        const u32 ASt68 = (ASt63 & ASt64) | (ASt65 & (ASt63 ^ ASt64));
+        const u32 ASt69 = ASt66 ^ ASt67;
+        const u32 ASt70 = ASt66 & ASt67;
+        const u32 ASt71 = ASt68;
+        const u32 ASt72 = ASt70;
+        const u32 ASt73 = ASt71 ^ ASt72;
+        const u32 ASt74 = ASt71 & ASt72;
+        const u32 ASt75 = ASt74;
+        const u32 ALt1 = (D4) & (O0 << 4);
+        const u32 ALt2 = ~((l1 << 3) & (O0 << 4));
+        const u32 ALt3 = (D2) & O0;
+        const u32 ALt4 = ~((l1 >> 1) & O0);
+        const u32 ALt5 = ~((l1 << 2) & (O0 << 3));
+        const u32 ALt6 = (D2 >> 1) & (O0 << 1);
+        const u32 ALt7 = ~((l1) & (O0 << 1));
+        const u32 ALt8 = ALt1 ^ ALt2 ^ ALt3;
+        const u32 ALt9 = (ALt1 & ALt2) | (ALt3 & (ALt1 ^ ALt2));
+        const u32 ALt10 = ALt4 ^ ALt5 ^ ALt6;
+        const u32 ALt11 = (ALt4 & ALt5) | (ALt6 & (ALt4 ^ ALt5));
+        const u32 ALt12 = ALt7 ^ ALt8 ^ ALt10;
+        const u32 ALt13 = (ALt7 & ALt8) | (ALt10 & (ALt7 ^ ALt8));
+        const u32 ALt14 = (D6) & (O0 << 6);
+        const u32 ALt15 = ~((l3 << 3) & (O0 << 6));
+        const u32 ALt16 = ~((~0u) & (O0 << 3));
+        const u32 ALt17 = (l1 >> 1) & O0;
+        const u32 ALt18 = ~((l3 >> 3) & O0);
+        const u32 ALt19 = (D4 >> 2) & (O0 << 2);
+        const u32 ALt20 = ~((l3 >> 1) & (O0 << 2));
+        const u32 ALt21 = (D4 >> 3) & (O0 << 1);
+        const u32 ALt22 = ~((l3 >> 2) & (O0 << 1));
+        const u32 ALt23 = ALt9;
+        const u32 ALt24 = ALt11;
+        const u32 ALt25 = ALt13;
+        const u32 ALt26 = ALt14 ^ ALt15 ^ ALt16;
+        const u32 ALt27 = (ALt14 & ALt15) | (ALt16 & (ALt14 ^ ALt15));
+        const u32 ALt28 = ALt17 ^ ALt18 ^ ALt19;
+        const u32 ALt29 = (ALt17 & ALt18) | (ALt19 & (ALt17 ^ ALt18));
+        const u32 ALt30 = ALt20 ^ ALt21 ^ ALt22;
+        const u32 ALt31 = (ALt20 & ALt21) | (ALt22 & (ALt20 ^ ALt21));
+        const u32 ALt32 = ALt23 ^ ALt24 ^ ALt25;
+        const u32 ALt33 = (ALt23 & ALt24) | (ALt25 & (ALt23 ^ ALt24));
+        const u32 ALt34 = ALt26 ^ ALt28 ^ ALt30;
+        const u32 ALt35 = (ALt26 & ALt28) | (ALt30 & (ALt26 ^ ALt28));
+        const u32 ALt36 = ALt32 ^ ALt34;
+        const u32 ALt37 = ALt32 & ALt34;
+        const u32 ALt38 = (D6) & (O0 << 6);
+        const u32 ALt39 = ~((l3 << 3) & (O0 << 6));
+        const u32 ALt40 = ~((~0u) & (O0 << 3));
+        const u32 ALt41 = (l1 >> 1) & O0;
+        const u32 ALt42 = ~((l3 >> 3) & O0);
+        const u32 ALt43 = (D4 >> 2) & (O0 << 2);
+        const u32 ALt44 = ~((l3 >> 1) & (O0 << 2));
+        const u32 ALt45 = (D4 >> 3) & (O0 << 1);
+        const u32 ALt46 = ~((l3 >> 2) & (O0 << 1));
+        const u32 ALt47 = (D4) & (O0 << 4);
+        const u32 ALt48 = ~((l1 << 3) & (O0 << 4));
+        const u32 ALt49 = (D2) & O0;
+        const u32 ALt50 = ~((l1 >> 1) & O0);
+        const u32 ALt51 = ~((l1 << 2) & (O0 << 3));
+        const u32 ALt52 = (D2 >> 1) & (O0 << 1);
+        const u32 ALt53 = ~((l1) & (O0 << 1));
+        const u32 ALt54 = ALt27;
+        const u32 ALt55 = ALt29;
+        const u32 ALt56 = ALt31;
+        const u32 ALt57 = ALt33;
+        const u32 ALt58 = ALt35;
+        const u32 ALt59 = ALt37;
+        const u32 ALt60 = ALt38 ^ ALt39 ^ ALt40;
+        const u32 ALt61 = (ALt38 & ALt39) | (ALt40 & (ALt38 ^ ALt39));
+        const u32 ALt62 = ALt41 ^ ALt42 ^ ALt43;
+        const u32 ALt63 = (ALt41 & ALt42) | (ALt43 & (ALt41 ^ ALt42));
+        const u32 ALt64 = ALt44 ^ ALt45 ^ ALt46;
+        const u32 ALt65 = (ALt44 & ALt45) | (ALt46 & (ALt44 ^ ALt45));
+        const u32 ALt66 = ALt47 ^ ALt48 ^ ALt49;
+        const u32 ALt67 = (ALt47 & ALt48) | (ALt49 & (ALt47 ^ ALt48));
+        const u32 ALt68 = ALt50 ^ ALt51 ^ ALt52;
+        const u32 ALt69 = (ALt50 & ALt51) | (ALt52 & (ALt50 ^ ALt51));
+        const u32 ALt70 = ALt53 ^ ALt54 ^ ALt55;
+        const u32 ALt71 = (ALt53 & ALt54) | (ALt55 & (ALt53 ^ ALt54));
+        const u32 ALt72 = ALt56 ^ ALt57 ^ ALt58;
+        const u32 ALt73 = (ALt56 & ALt57) | (ALt58 & (ALt56 ^ ALt57));
+        const u32 ALt74 = ALt59 ^ ALt60 ^ ALt62;
+        const u32 ALt75 = (ALt59 & ALt60) | (ALt62 & (ALt59 ^ ALt60));
+        const u32 ALt76 = ALt64 ^ ALt66 ^ ALt68;
+        const u32 ALt77 = (ALt64 & ALt66) | (ALt68 & (ALt64 ^ ALt66));
+        const u32 ALt78 = ALt70 ^ ALt72 ^ ALt74;
+        const u32 ALt79 = (ALt70 & ALt72) | (ALt74 & (ALt70 ^ ALt72));
+        const u32 ALt80 = ALt76 ^ ALt78;
+        const u32 ALt81 = ALt76 & ALt78;
+        const u32 ALt82 = ALt61;
+        const u32 ALt83 = ALt63;
+        const u32 ALt84 = ALt65;
+        const u32 ALt85 = ALt67;
+        const u32 ALt86 = ALt69;
+        const u32 ALt87 = ALt71;
+        const u32 ALt88 = ALt73;
+        const u32 ALt89 = ALt75;
+        const u32 ALt90 = ALt77;
+        const u32 ALt91 = ALt79;
+        const u32 ALt92 = ALt81;
+        const u32 ALt93 = ALt82 ^ ALt83 ^ ALt84;
+        const u32 ALt94 = (ALt82 & ALt83) | (ALt84 & (ALt82 ^ ALt83));
+        const u32 ALt95 = ALt85 ^ ALt86 ^ ALt87;
+        const u32 ALt96 = (ALt85 & ALt86) | (ALt87 & (ALt85 ^ ALt86));
+        const u32 ALt97 = ALt88 ^ ALt89 ^ ALt90;
+        const u32 ALt98 = (ALt88 & ALt89) | (ALt90 & (ALt88 ^ ALt89));
+        const u32 ALt99 = ALt91 ^ ALt92 ^ ALt93;
+        const u32 ALt100 = (ALt91 & ALt92) | (ALt93 & (ALt91 ^ ALt92));
+        const u32 ALt101 = ALt95 ^ ALt97 ^ ALt99;
+        const u32 ALt102 = (ALt95 & ALt97) | (ALt99 & (ALt95 ^ ALt97));
+        const u32 ALt103 = ALt94;
+        const u32 ALt104 = ALt96;
+        const u32 ALt105 = ALt98;
+        const u32 ALt106 = ALt100;
+        const u32 ALt107 = ALt102;
+        const u32 ALt108 = ALt103 ^ ALt104 ^ ALt105;
+        const u32 ALt109 = (ALt103 & ALt104) | (ALt105 & (ALt103 ^ ALt104));
+        const u32 ALt110 = ALt106 ^ ALt107 ^ ALt108;
+        const u32 ALt111 = (ALt106 & ALt107) | (ALt108 & (ALt106 ^ ALt107));
+        const u32 ALt112 = ALt109;
+        const u32 ALt113 = ALt111;
+        const u32 ALt114 = ALt112 ^ ALt113;
+        const u32 ALt115 = ALt112 & ALt113;
+        const u32 ALt116 = ALt115;
+        Y0 = Yt11;
+        Y1 = Yt27;
+        Y2 = Yt44;
+        Y3 = Yt61;
+        Y4 = Yt69;
+        Y5 = Yt73;
+        AS0 = ASt4; AL0 = ALt12;
+        AS1 = ASt20; AL1 = ALt36;
+        AS2 = ASt48; AL2 = ALt80;
+        AS3 = ASt61; AL3 = ALt101;
+        AS4 = ASt69; AL4 = ALt110;
+        AS5 = ASt73; AL5 = ALt114;
+        AS6 = ASt75; AL6 = ALt116;
+    } else {
+        const u32 E0 = ~((B[0] ^ (0u - ((B[0] >> (len - 1 - 0)) & 1u))) | (B[1] ^ (0u - ((B[1] >> (len - 1 - 0)) & 1u))) | (B[2] ^ (0u - ((B[2] >> (len - 1 - 0)) & 1u))) | (B[3] ^ (0u - ((B[3] >> (len - 1 - 0)) & 1u)))) & ~(1u << (len - 1 - 0));
+        const u32 E1 = ~((B[0] ^ (0u - ((B[0] >> (len - 1 - 1)) & 1u))) | (B[1] ^ (0u - ((B[1] >> (len - 1 - 1)) & 1u))) | (B[2] ^ (0u - ((B[2] >> (len - 1 - 1)) & 1u))) | (B[3] ^ (0u - ((B[3] >> (len - 1 - 1)) & 1u)))) & ~(1u << (len - 1 - 1));
+        const u32 E2 = ~((B[0] ^ (0u - ((B[0] >> (len - 1 - 2)) & 1u))) | (B[1] ^ (0u - ((B[1] >> (len - 1 - 2)) & 1u))) | (B[2] ^ (0u - ((B[2] >> (len - 1 - 2)) & 1u))) | (B[3] ^ (0u - ((B[3] >> (len - 1 - 2)) & 1u)))) & ~(1u << (len - 1 - 2));
+        const u32 E3 = ~((B[0] ^ (0u - ((B[0] >> (len - 1 - 3)) & 1u))) | (B[1] ^ (0u - ((B[1] >> (len - 1 - 3)) & 1u))) | (B[2] ^ (0u - ((B[2] >> (len - 1 - 3)) & 1u))) | (B[3] ^ (0u - ((B[3] >> (len - 1 - 3)) & 1u)))) & ~(1u << (len - 1 - 3));
+        const u32 E4 = ~((B[0] ^ (0u - ((B[0] >> (len - 1 - 4)) & 1u))) | (B[1] ^ (0u - ((B[1] >> (len - 1 - 4)) & 1u))) | (B[2] ^ (0u - ((B[2] >> (len - 1 - 4)) & 1u))) | (B[3] ^ (0u - ((B[3] >> (len - 1 - 4)) & 1u)))) & ~(1u << (len - 1 - 4));
+        const u32 E5 = ~((B[0] ^ (0u - ((B[0] >> (len - 1 - 5)) & 1u))) | (B[1] ^ (0u - ((B[1] >> (len - 1 - 5)) & 1u))) | (B[2] ^ (0u - ((B[2] >> (len - 1 - 5)) & 1u))) | (B[3] ^ (0u - ((B[3] >> (len - 1 - 5)) & 1u)))) & ~(1u << (len - 1 - 5));
+        const u32 gs1 = E0 ^ E1 ^ E2;
+        const u32 gc1 = (E0 & E1) | (E2 & (E0 ^ E1));
+        const u32 gs2 = E3 ^ E4 ^ gs1;
+        const u32 gc2 = (E3 & E4) | (gs1 & (E3 ^ E4));
+        const u32 gs3 = E0 ^ E1;
+        const u32 gc3 = E0 & E1;
+        const u32 gs4 = E0 ^ E1 ^ E2;
+        const u32 gc4 = (E0 & E1) | (E2 & (E0 ^ E1));
+        const u32 gs5 = E3 ^ E4 ^ gs4;
+        const u32 gc5 = (E3 & E4) | (gs4 & (E3 ^ E4));
+        const u32 gs6 = E0 ^ E1;
+        const u32 gc6 = E0 & E1;
+        const u32 gs7 = E3 ^ E4;
+        const u32 gc7 = E3 & E4;
+        const u32 gs8 = E0 ^ E1;
+        const u32 gc8 = E0 & E1;
+        const u32 gs9 = E3 ^ E4;
+        const u32 gc9 = E3 & E4;
+        const u32 gs10 = E0 ^ E1;
+        const u32 gc10 = E0 & E1;
+        const u32 Yt1 = (gs2) & (w0 & w1);
+        const u32 Yt2 = ~((gs6) & (w0 & ~w1));
+        const u32 Yt3 = ~((E2) & (~w0 & w1));
+        const u32 Yt4 = ~((E5) & (~w0 & ~w1));
+        const u32 Yt5 = ~((gs9) & ~w0);
+        const u32 Yt6 = O0 & ((1u << (len - 1 - 2)) | (1u << (len - 1 - 3)) | (1u << (len - 1 - 4)));
+        const u32 Yt7 = O0 & ((1u << (len - 1 - 0)) | (1u << (len - 1 - 1)));
+        const u32 Yt8 = O1 & ((1u << (len - 1 - 0)) | (1u << (len - 1 - 1)));
+        const u32 Yt9 = ~(O3 & ((1u << (len - 1 - 3)) | (1u << (len - 1 - 4)) | (1u << (len - 1 - 5))));
+        const u32 Yt10 = ~0u;
+        const u32 Yt11 = Yt1 ^ Yt2 ^ Yt3;
+        const u32 Yt12 = (Yt1 & Yt2) | (Yt3 & (Yt1 ^ Yt2));
+        const u32 Yt13 = Yt4 ^ Yt5 ^ Yt6;
+        const u32 Yt14 = (Yt4 & Yt5) | (Yt6 & (Yt4 ^ Yt5));
+        const u32 Yt15 = Yt7 ^ Yt8 ^ Yt9;
+        const u32 Yt16 = (Yt7 & Yt8) | (Yt9 & (Yt7 ^ Yt8));
+        const u32 Yt17 = Yt10 ^ Yt11 ^ Yt13;
+        const u32 Yt18 = (Yt10 & Yt11) | (Yt13 & (Yt10 ^ Yt11));
+        const u32 Yt19 = Yt15 ^ Yt17;
+        const u32 Yt20 = Yt15 & Yt17;
+        const u32 Yt21 = (gc1) & (w0 & w1);
+        const u32 Yt22 = (gc2) & (w0 & w1);
+        const u32 Yt23 = (gs3) & (w0 & w1);
+        const u32 Yt24 = ~((gc6) & (w0 & ~w1));
+        const u32 Yt25 = ~((gs7) & (w0 ^ w1));
+        const u32 Yt26 = ~((E2) & ~(w0 & w1));
+        const u32 Yt27 = ~((gc9) & ~w0);
+        const u32 Yt28 = ~((gs10) & ~w1);
+        const u32 Yt29 = ~(O3 & ((1u << (len - 1 - 0)) | (1u << (len - 1 - 1)) | (1u << (len - 1 - 2))));
+        const u32 Yt30 = O1 & ((1u << (len - 1 - 2)) | (1u << (len - 1 - 3)) | (1u << (len - 1 - 4)));
+        const u32 Yt31 = O0 & ((1u << (len - 1 - 0)) | (1u << (len - 1 - 1)));
+        const u32 Yt32 = O1 & ((1u << (len - 1 - 0)) | (1u << (len - 1 - 1)));
+        const u32 Yt33 = ~0u;
+        const u32 Yt34 = Yt12;
+        const u32 Yt35 = Yt14;
+        const u32 Yt36 = Yt16;
+        const u32 Yt37 = Yt18;
+        const u32 Yt38 = Yt20;
+        const u32 Yt39 = Yt21 ^ Yt22 ^ Yt23;
+        const u32 Yt40 = (Yt21 & Yt22) | (Yt23 & (Yt21 ^ Yt22));
+        const u32 Yt41 = Yt24 ^ Yt25 ^ Yt26;
+        const u32 Yt42 = (Yt24 & Yt25) | (Yt26 & (Yt24 ^ Yt25));
+        const u32 Yt43 = Yt27 ^ Yt28 ^ Yt29;
+        const u32 Yt44 = (Yt27 & Yt28) | (Yt29 & (Yt27 ^ Yt28));
+        const u32 Yt45 = Yt30 ^ Yt31 ^ Yt32;
+        const u32 Yt46 = (Yt30 & Yt31) | (Yt32 & (Yt30 ^ Yt31));
+        const u32 Yt47 = Yt33 ^ Yt34 ^ Yt35;
+        const u32 Yt48 = (Yt33 & Yt34) | (Yt35 & (Yt33 ^ Yt34));
+        const u32 Yt49 = Yt36 ^ Yt37 ^ Yt38;
+        const u32 Yt50 = (Yt36 & Yt37) | (Yt38 & (Yt36 ^ Yt37));
+        const u32 Yt51 = Yt39 ^ Yt41 ^ Yt43;
+        const u32 Yt52 = (Yt39 & Yt41) | (Yt43 & (Yt39 ^ Yt41));
+        const u32 Yt53 = Yt45 ^ Yt47 ^ Yt49;
+        const u32 Yt54 = (Yt45 & Yt47) | (Yt49 & (Yt45 ^ Yt47));
+        const u32 Yt55 = Yt51 ^ Yt53;
+        const u32 Yt56 = Yt51 & Yt53;
+        const u32 Yt57 = (gc3) & (w0 & w1);
+        const u32 Yt58 = (gs5) & (w0 & w1);
+        const u32 Yt59 = ~((gc7) & (w0 ^ w1));
+        const u32 Yt60 = ~((gs8) & (~w0 & w1));
+        const u32 Yt61 = ~((gc10) & ~w1);
+        const u32 Yt62 = O0 & ((1u << (len - 1 - 2)) | (1u << (len - 1 - 3)) | (1u << (len - 1 - 4)));
+        const u32 Yt63 = O0 & ((1u << (len - 1 - 0)) | (1u << (len - 1 - 1)));
+        const u32 Yt64 = Yt40;
+        const u32 Yt65 = Yt42;
+        const u32 Yt66 = Yt44;
+        const u32 Yt67 = Yt46;
+        const u32 Yt68 = Yt48;
+        const u32 Yt69 = Yt50;
+        const u32 Yt70 = Yt52;
+        const u32 Yt71 = Yt54;
+        const u32 Yt72 = Yt56;
+        const u32 Yt73 = Yt57 ^ Yt58 ^ Yt59;
+        const u32 Yt74 = (Yt57 & Yt58) | (Yt59 & (Yt57 ^ Yt58));
+        const u32 Yt75 = Yt60 ^ Yt61 ^ Yt62;
+        const u32 Yt76 = (Yt60 & Yt61) | (Yt62 & (Yt60 ^ Yt61));
+        const u32 Yt77 = Yt63 ^ Yt64 ^ Yt65;
+        const u32 Yt78 = (Yt63 & Yt64) | (Yt65 & (Yt63 ^ Yt64));
+        const u32 Yt79 = Yt66 ^ Yt67 ^ Yt68;
+        const u32 Yt80 = (Yt66 & Yt67) | (Yt68 & (Yt66 ^ Yt67));
+        const u32 Yt81 = Yt69 ^ Yt70 ^ Yt71;
+        const u32 Yt82 = (Yt69 & Yt70) | (Yt71 & (Yt69 ^ Yt70));
+        const u32 Yt83 = Yt72 ^ Yt73 ^ Yt75;
+        const u32 Yt84 = (Yt72 & Yt73) | (Yt75 & (Yt72 ^ Yt73));
+        const u32 Yt85 = Yt77 ^ Yt79 ^ Yt81;
+        const u32 Yt86 = (Yt77 & Yt79) | (Yt81 & (Yt77 ^ Yt79));
+        const u32 Yt87 = Yt83 ^ Yt85;
+        const u32 Yt88 = Yt83 & Yt85;
+        const u32 Yt89 = (gc4) & (w0 & w1);
+        const u32 Yt90 = (gc5) & (w0 & w1);
+        const u32 Yt91 = ~((gc8) & (~w0 & w1));
+        const u32 Yt92 = Yt74;
+        const u32 Yt93 = Yt76;
+        const u32 Yt94 = Yt78;
+        const u32 Yt95 = Yt80;
+        const u32 Yt96 = Yt82;
+        const u32 Yt97 = Yt84;
+        const u32 Yt98 = Yt86;
+        const u32 Yt99 = Yt88;
+        const u32 Yt100 = Yt89 ^ Yt90 ^ Yt91;
+        const u32 Yt101 = (Yt89 & Yt90) | (Yt91 & (Yt89 ^ Yt90));
+        const u32 Yt102 = Yt92 ^ Yt93 ^ Yt94;
+        const u32 Yt103 = (Yt92 & Yt93) | (Yt94 & (Yt92 ^ Yt93));
+        const u32 Yt104 = Yt95 ^ Yt96 ^ Yt97;
+        const u32 Yt105 = (Yt95 & Yt96) | (Yt97 & (Yt95 ^ Yt96));
+        const u32 Yt106 = Yt98 ^ Yt99 ^ Yt100;
+        const u32 Yt107 = (Yt98 & Yt99) | (Yt100 & (Yt98 ^ Yt99));
+        const u32 Yt108 = Yt102 ^ Yt104 ^ Yt106;
+        const u32 Yt109 = (Yt102 & Yt104) | (Yt106 & (Yt102 ^ Yt104));
+        const u32 Yt110 = Yt101;
+        const u32 Yt111 = Yt103;
+        const u32 Yt112 = Yt105;
+        const u32 Yt113 = Yt107;
+        const u32 Yt114 = Yt109;
+        const u32 Yt115 = Yt110 ^ Yt111 ^ Yt112;
+        const u32 Yt116 = (Yt110 & Yt111) | (Yt112 & (Yt110 ^ Yt111));
+        const u32 Yt117 = Yt113 ^ Yt114 ^ Yt115;
+        const u32 Yt118 = (Yt113 & Yt114) | (Yt115 & (Yt113 ^ Yt114));
+        const u32 Yt119 = ~0u;
+        const u32 Yt120 = Yt116;
+        const u32 Yt121 = Yt118;
+        const u32 Yt122 = Yt119 ^ Yt120 ^ Yt121;
+        const u32 Yt123 = (Yt119 & Yt120) | (Yt121 & (Yt119 ^ Yt120));
+        const u32 Yt124 = Yt123;
+        Y0 = Yt19;
+        Y1 = Yt55;
+        Y2 = Yt87;
+        Y3 = Yt108;
+        Y4 = Yt117;
+        Y5 = Yt122;
+    }
+    const u32 MSt1 = ((l1 << 3) | D4);
+    const u32 MSt2 = ~(((l1 << 3) | (l3 << 1)));
+    const u32 MSt3 = ((l1 << 2) | (D4 >> 1));
+    const u32 MSt4 = ~(((l1 << 2) | l3));
+    const u32 MSt5 = (D2 | (D4 >> 2));
+    const u32 MSt6 = ~(((l1 << 1) | (l3 >> 1)));
+    const u32 MSt7 = MSt1 ^ MSt2 ^ MSt3;
+    const u32 MSt8 = (MSt1 & MSt2) | (MSt3 & (MSt1 ^ MSt2));
+    const u32 MSt9 = MSt4 ^ MSt5 ^ MSt6;
+    const u32 MSt10 = (MSt4 & MSt5) | (MSt6 & (MSt4 ^ MSt5));
+    const u32 MSt11 = MSt7 ^ MSt9;
+    const u32 MSt12 = MSt7 & MSt9;
+    const u32 MSt13 = ~0u;
+    const u32 MSt14 = MSt8;
+    const u32 MSt15 = MSt10;
+    const u32 MSt16 = MSt12;
+    const u32 MSt17 = MSt13 ^ MSt14 ^ MSt15;
+    const u32 MSt18 = (MSt13 & MSt14) | (MSt15 & (MSt13 ^ MSt14));
+    const u32 MSt19 = MSt16 ^ MSt17;
+    const u32 MSt20 = MSt16 & MSt17;
+    const u32 MSt21 = MSt18;
+    const u32 MSt22 = MSt20;
+    const u32 MSt23 = MSt21 ^ MSt22;
+    const u32 MSt24 = MSt21 & MSt22;
+    const u32 MSt25 = MSt24;
+    const u32 MLt1 = ((l1 << 5) | D6);
+    const u32 MLt2 = ~(((l1 << 5) | (l3 << 3)));
+    const u32 MLt3 = (D4 | (l3 << 1));
+    const u32 MLt4 = ~(((l1 << 3) | (l3 << 1)));
+    const u32 MLt5 = ((l1 << 1) | (D4 >> 2));
+    const u32 MLt6 = ~(((l1 << 1) | (l3 >> 1)));
+    const u32 MLt7 = ((D2 >> 1) | (D4 >> 3));
+    const u32 MLt8 = ~((l1 | (l3 >> 2)));
+    const u32 MLt9 = (D2 | (l1 >> 1));
+    const u32 MLt10 = ~(((l1 >> 1) | (l3 >> 3)));
+    const u32 MLt11 = MLt1 ^ MLt2 ^ MLt3;
+    const u32 MLt12 = (MLt1 & MLt2) | (MLt3 & (MLt1 ^ MLt2));
+    const u32 MLt13 = MLt4 ^ MLt5 ^ MLt6;
+    const u32 MLt14 = (MLt4 & MLt5) | (MLt6 & (MLt4 ^ MLt5));
+    const u32 MLt15 = MLt7 ^ MLt8 ^ MLt9;
+    const u32 MLt16 = (MLt7 & MLt8) | (MLt9 & (MLt7 ^ MLt8));
+    const u32 MLt17 = MLt10 ^ MLt11 ^ MLt13;
+    const u32 MLt18 = (MLt10 & MLt11) | (MLt13 & (MLt10 ^ MLt11));
+    const u32 MLt19 = MLt15 ^ MLt17;
+    const u32 MLt20 = MLt15 & MLt17;
+    const u32 MLt21 = MLt12;
+    const u32 MLt22 = MLt14;
+    const u32 MLt23 = MLt16;
+    const u32 MLt24 = MLt18;
+    const u32 MLt25 = MLt20;
+    const u32 MLt26 = MLt21 ^ MLt22 ^ MLt23;
+    const u32 MLt27 = (MLt21 & MLt22) | (MLt23 & (MLt21 ^ MLt22));
+    const u32 MLt28 = MLt24 ^ MLt25 ^ MLt26;
+    const u32 MLt29 = (MLt24 & MLt25) | (MLt26 & (MLt24 ^ MLt25));
+    const u32 MLt30 = MLt27;
+    const u32 MLt31 = MLt29;
+    const u32 MLt32 = MLt30 ^ MLt31;
+    const u32 MLt33 = MLt30 & MLt31;
+    const u32 MLt34 = MLt33;
+    const u32 St1 = r0;
+    const u32 St2 = MSt11;
+    const u32 St3 = (MSt11 & G3);
+    const u32 St4 = (Y0 << 1);
+    const u32 St5 = AS0;
+    const u32 St6 = __funnelshift_r(r0, r0, 11);
+    const u32 St7 = St2 ^ St3 ^ St4;
+    const u32 St8 = (St2 & St3) | (St4 & (St2 ^ St3));
+    const u32 St9 = St5 ^ St6 ^ St7;
+    const u32 St10 = (St5 & St6) | (St7 & (St5 ^ St6));
+    const u32 St11 = MSt19;
+    const u32 St12 = (MSt19 & G3);
+    const u32 St13 = (Y1 << 1);
+    const u32 St14 = AS1;
+    const u32 St15 = St8;
+    const u32 St16 = St10;
+    const u32 St17 = St11 ^ St12 ^ St13;
+    const u32 St18 = (St11 & St12) | (St13 & (St11 ^ St12));
+    const u32 St19 = St14 ^ St15 ^ St16;
+    const u32 St20 = (St14 & St15) | (St16 & (St14 ^ St15));
+    const u32 St21 = St17 ^ St19;
+    const u32 St22 = St17 & St19;
+    const u32 St23 = MSt23;
+    const u32 St24 = (MSt23 & G3);
+    const u32 St25 = (Y2 << 1);
+    const u32 St26 = AS2;
+    const u32 St27 = St18;
+    const u32 St28 = St20;
+    const u32 St29 = St22;
+    const u32 St30 = St23 ^ St24 ^ St25;
+    const u32 St31 = (St23 & St24) | (St25 & (St23 ^ St24));
+    const u32 St32 = St26 ^ St27 ^ St28;
+    const u32 St33 = (St26 & St27) | (St28 & (St26 ^ St27));
+    const u32 St34 = St29 ^ St30 ^ St32;
+    const u32 St35 = (St29 & St30) | (St32 & (St29 ^ St30));
+    const u32 St36 = MSt25;
+    const u32 St37 = (MSt25 & G3);
+    const u32 St38 = (Y3 << 1);
+    const u32 St39 = AS3;
+    const u32 St40 = St31;
+    const u32 St41 = St33;
+    const u32 St42 = St35;
+    const u32 St43 = St36 ^ St37 ^ St38;
+    const u32 St44 = (St36 & St37) | (St38 & (St36 ^ St37));
+    const u32 St45 = St39 ^ St40 ^ St41;
+    const u32 St46 = (St39 & St40) | (St41 & (St39 ^ St40));
+    const u32 St47 = St42 ^ St43 ^ St45;
+    const u32 St48 = (St42 & St43) | (St45 & (St42 ^ St43));
+    const u32 St49 = (Y4 << 1);
+    const u32 St50 = AS4;
+    const u32 St51 = St44;
+    const u32 St52 = St46;
+    const u32 St53 = St48;
+    const u32 St54 = St49 ^ St50 ^ St51;
+    const u32 St55 = (St49 & St50) | (St51 & (St49 ^ St50));
+    const u32 St56 = St52 ^ St53 ^ St54;
+    const u32 St57 = (St52 & St53) | (St54 & (St52 ^ St53));
+    const u32 St58 = (Y5 << 1);
+    const u32 St59 = AS5;
+    const u32 St60 = St55;
+    const u32 St61 = St57;
+    const u32 St62 = St58 ^ St59 ^ St60;
+    const u32 St63 = (St58 & St59) | (St60 & (St58 ^ St59));
+    const u32 St64 = St61 ^ St62;
+    const u32 St65 = St61 & St62;
+    const u32 Lt1 = r1;
+    const u32 Lt2 = MLt19;
+    const u32 Lt3 = (MLt19 & G3);
+    const u32 Lt4 = (Y0 << 3);
+    const u32 Lt5 = AL0;
+    const u32 Lt6 = __funnelshift_r(r1, r1, 11);
+    const u32 Lt7 = Lt2 ^ Lt3 ^ Lt4;
+    const u32 Lt8 = (Lt2 & Lt3) | (Lt4 & (Lt2 ^ Lt3));
+    const u32 Lt9 = Lt5 ^ Lt6 ^ Lt7;
+    const u32 Lt10 = (Lt5 & Lt6) | (Lt7 & (Lt5 ^ Lt6));
+    const u32 Lt11 = MLt28;
+    const u32 Lt12 = (MLt28 & G3);
+    const u32 Lt13 = (Y1 << 3);
+    const u32 Lt14 = AL1;
+    const u32 Lt15 = Lt8;
+    const u32 Lt16 = Lt10;
+    const u32 Lt17 = Lt11 ^ Lt12 ^ Lt13;
+    const u32 Lt18 = (Lt11 & Lt12) | (Lt13 & (Lt11 ^ Lt12));
+    const u32 Lt19 = Lt14 ^ Lt15 ^ Lt16;
+    const u32 Lt20 = (Lt14 & Lt15) | (Lt16 & (Lt14 ^ Lt15));
+    const u32 Lt21 = Lt17 ^ Lt19;
+    const u32 Lt22 = Lt17 & Lt19;
+    const u32 Lt23 = MLt32;
+    const u32 Lt24 = (MLt32 & G3);
+    const u32 Lt25 = (Y2 << 3);
+    const u32 Lt26 = AL2;
+    const u32 Lt27 = Lt18;
+    const u32 Lt28 = Lt20;
+    const u32 Lt29 = Lt22;
+    const u32 Lt30 = Lt23 ^ Lt24 ^ Lt25;
+    const u32 Lt31 = (Lt23 & Lt24) | (Lt25 & (Lt23 ^ Lt24));
+    const u32 Lt32 = Lt26 ^ Lt27 ^ Lt28;
+    const u32 Lt33 = (Lt26 & Lt27) | (Lt28 & (Lt26 ^ Lt27));
+    const u32 Lt34 = Lt29 ^ Lt30 ^ Lt32;
+    const u32 Lt35 = (Lt29 & Lt30) | (Lt32 & (Lt29 ^ Lt30));
+    const u32 Lt36 = MLt34;
+    const u32 Lt37 = (MLt34 & G3);
+    const u32 Lt38 = (Y3 << 3);
+    const u32 Lt39 = AL3;
+    const u32 Lt40 = Lt31;
+    const u32 Lt41 = Lt33;
+    const u32 Lt42 = Lt35;
+    const u32 Lt43 = Lt36 ^ Lt37 ^ Lt38;
+    const u32 Lt44 = (Lt36 & Lt37) | (Lt38 & (Lt36 ^ Lt37));
+    const u32 Lt45 = Lt39 ^ Lt40 ^ Lt41;
+    const u32 Lt46 = (Lt39 & Lt40) | (Lt41 & (Lt39 ^ Lt40));
+    const u32 Lt47 = Lt42 ^ Lt43 ^ Lt45;
+    const u32 Lt48 = (Lt42 & Lt43) | (Lt45 & (Lt42 ^ Lt43));
+    const u32 Lt49 = (Y4 << 3);
+    const u32 Lt50 = AL4;
+    const u32 Lt51 = Lt44;
+    const u32 Lt52 = Lt46;
+    const u32 Lt53 = Lt48;
+    const u32 Lt54 = Lt49 ^ Lt50 ^ Lt51;
+    const u32 Lt55 = (Lt49 & Lt50) | (Lt51 & (Lt49 ^ Lt50));
+    const u32 Lt56 = Lt52 ^ Lt53 ^ Lt54;
+    const u32 Lt57 = (Lt52 & Lt53) | (Lt54 & (Lt52 ^ Lt53));
+    const u32 Lt58 = (Y5 << 3);
+    const u32 Lt59 = AL5;
+    const u32 Lt60 = Lt55;
+    const u32 Lt61 = Lt57;
+    const u32 Lt62 = Lt58 ^ Lt59 ^ Lt60;
+    const u32 Lt63 = (Lt58 & Lt59) | (Lt60 & (Lt58 ^ Lt59));
+    const u32 Lt64 = Lt61 ^ Lt62;
+    const u32 Lt65 = Lt61 & Lt62;
+    const u32 D2S1 = D2 >> 1, D2S2 = D2 >> 2, D4S1 = D4 >> 1, D4S3 = D4 >> 3, D6S3 = D6 >> 3;
+    const u32 L1S = l1 >> 1, L3S = l3 >> 1, W0S = w0 >> 1, W1S = w1 >> 1;
+    const u32 valid = (1u << (len - 1)) - 1, V1 = valid & ~1u, V3 = valid & ~7u;
+    u32 c1 = l1, c3 = l3;
+    for (;;) {
+        if ((c1 | c3) == 0) return -1;
+        u32 cs = c1, cl = c3;
+        #define KEEP(sb, lb) { const u32 a_ = cs & (sb), b_ = cl & (lb); const bool any_ = (a_ | b_) != 0; cs = any_ ? a_ : cs; cl = any_ ? b_ : cl; }
+        KEEP(St64, Lt64)
+        KEEP(St56, Lt56)
+        KEEP(St47, Lt47)
+        KEEP(St34, Lt34)
+        KEEP(St21, Lt21)
+        KEEP(St9, Lt9)
+        KEEP(St1, Lt1)
+        #undef KEEP
+        const u32 r2 = r0 >> 16;
+        const u32 rot = ((r2 & 0xFFFFu) * (u32)len) >> 16;
+        const bool leap = cl != 0;
+        const u32 mm = leap ? cl : cs;
+        const int x = (int)((rot + __ffs(__funnelshift_r(mm, mm, rot)) - 1) & 31);
+        const int y = x - (leap ? 3 : 1);
+        const u32 bit = 1u << y, low = (1u << x) - 1;
+        const u32 a1_ = (l1 & low) | (L1S & ~low), a3_ = (l3 & low) | (L3S & ~low);
+        const u32 f1 = leap ? (bit & D4S3) | ((bit << 1) & D2S2) | ((bit << 3) & D2S1) : bit & D2S1;
+        const u32 f3 = leap ? (bit & D6S3) | ((bit << 3) & L1S) | ((bit * 0x30u) & D4S1) : (bit * 7u) & D4S1;
+        const u32 k1 = leap ? bit * 0x0Bu : bit, k3 = leap ? bit * 0x39u : bit * 7u;
+        const u32 nl1 = ((a1_ & ~k1) | f1) & V1, nl3 = ((a3_ & ~k3) | f3) & V3;
+        if ((nl1 | nl3) == 0 && len > 2) return -1;
+        u32 m0 = (w0 & low) | (W0S & ~low), m1 = (w1 & low) | (W1S & ~low);
+        m0 = (m0 & ~bit) | ((w0 >> (x - y)) & bit);
+        m1 = (m1 & ~bit) | ((w1 >> (x - y)) & bit);
+        u32 e = 0;
+        #pragma unroll
+        for (int b = 0; b < 4; b++) e |= B[b] ^ (u32)((int)(B[b] << (31 - y)) >> 31);
+        const u32 pe = ~e;
+        const u32 p = (((pe & low) | ((pe >> 1) & ~low)) & ~bit) | ((pe >> (x - y)) & bit);
+        const u32 v0 = m0 ^ (p & ~(m0 & m1)), v1 = m1 | (m0 & p);   // saturating: target ranks reach 3 with a card still left
+        #pragma unroll
+        for (int b = 0; b < 6; b++) {
+            const u32 v = B[b];
+            B[b] = (((v & low) | ((v >> 1) & ~low)) & ~bit) | ((v >> (x - y)) & bit);
+        }
+        len--;
+        l1 = nl1; l3 = nl3;
+        w0 = v0; w1 = v1;
+        return x << 1 | (leap ? 1 : 0);
+    }
+}
 // A group's kept row, sliced: 10 words of the thread's 16 (word k at w[k * PREFIX_THREADS]).
 __device__ __forceinline__ void slice_keep(u32* w, const u32 (&B)[6], u32 o1, u32 o3, u32 w0, u32 w1) {
     #pragma unroll
@@ -1587,26 +2306,66 @@ extern "C" __global__ void __launch_bounds__(BLOCK, 768 / BLOCK) attempts_split(
         const int kmax = (int)max(prefix, tries2 ? prefix2 : prefix);
         u32* const kw = s_mem + t;
         u32 held = 0, pend = 0;    // as in attempts_stepwise
+        #pragma unroll
+        for (int w = 10; w < 15; w++) kw[w * PREFIX_THREADS] = 0;
+        // Passes over the deals as taken: from b_pass on, each stands for BUNDLE of a deal's groups.
+        const u32 g_all = (all_tries + SHARE_G - 1) / SHARE_G, b_pass = BUNDLE_TRIES / SHARE_G;
+        const u64 v_total = n_deals * (u64)(g_all <= b_pass ? g_all : b_pass + (g_all - b_pass + BUNDLE - 1) / BUNDLE);
+        const u32 st_from = (n_deals & 31) == 0 && n_deals >= 32 * STRETCH_WORDS ? (STRETCH_TRIES / SHARE_G) * n_deals : 0xFFFFFFFFu;
         bool exhausted = false;
         u32 R[RW];
         #pragma unroll
         for (int j = 0; j < RW; j++) R[j] = SENT4;
         for (;;) {
             u32 need = FULL, got = 0, a = 0;
+            // The words of the stretch still to visit, its first group, the last group taken, the bundles to give yet, the lanes whose deal is in one.
+            u32 st_left = kw[10 * PREFIX_THREADS], st_base = kw[11 * PREFIX_THREADS], last_base = kw[12 * PREFIX_THREADS], rep = kw[13 * PREFIX_THREADS], rep_mask = kw[14 * PREFIX_THREADS];
             while (need) {
+                if (!pend && rep) {
+                    rep--;
+                    held += n_deals;
+                    u32 hd, hj;
+                    deal_and_try(held, n_deals, inv_deals, hd, hj);
+                    const bool more = ((rep_mask >> lane) & 1) && (u64)held < total && !*((volatile u32*)&won[hd]);
+                    pend = rep_mask = __ballot_sync(FULL, more);
+                    if (!pend) rep = 0;
+                    continue;
+                }
                 if (!pend) {
-                    if (exhausted) break;
+                    if (exhausted && !st_left) break;
                     u32 base = 0;
-                    if (lane == 0) base = atomicAdd(next_attempt, 32u);
-                    base = __shfl_sync(FULL, base, 0);
+                    if (st_left) {
+                        base = st_base + 32 * (__ffs(st_left) - 1);
+                        st_left &= st_left - 1;
+                    } else {
+                        const u32 step = last_base >= st_from ? 32 * STRETCH_WORDS : 32u;
+                        if (lane == 0) base = atomicAdd(next_attempt, step);
+                        base = __shfl_sync(FULL, base, 0);
+                        last_base = base;
+                        exhausted = __ballot_sync(FULL, (u64)base + step >= v_total) != 0;
+                        if (step != 32u) {
+                            u32 d0, j0;
+                            deal_and_try(base, n_deals, inv_deals, d0, j0);
+                            const u32 wd = d0 + 32 * lane, dw = wd >= n_deals ? wd - n_deals : wd;
+                            const bool here = (u64)base + 32 * lane < v_total;
+                            const bool todo = here && *(volatile u32*)won_bits(lines, dw >> 5) != ~0u;
+                            PROF(if (here && !todo) { taken += 32 * SHARE_G; skipped += 32 * SHARE_G; })
+                            st_left = __ballot_sync(FULL, todo);
+                            st_base = base;
+                            continue;
+                        }
+                    }
                     u64 s = (u64)base + lane;
                     u32 d, j;
                     deal_and_try((u32)s, n_deals, inv_deals, d, j);
-                    bool ok = s < total && !*((volatile u32*)&won[d]);
+                    bool ok = s < v_total && !*((volatile u32*)&won[d]);
                     PROF(if (s < total) { u32 g = min((u32)SHARE_G, all_tries - j * SHARE_G); taken += g; if (!ok) skipped += g; })
+                    const bool deep = j >= b_pass;
+                    if (deep) s = (u64)(b_pass + (j - b_pass) * BUNDLE) * n_deals + d;
                     pend = __ballot_sync(FULL, ok);
                     held = (u32)s;
-                    exhausted = __ballot_sync(FULL, (u64)base + 32 >= total) != 0;
+                    rep_mask = __ballot_sync(FULL, ok && deep);
+                    rep = rep_mask ? BUNDLE - 1 : 0;
                     // A thread that needs one and just found one keeps it.
                     u32 own = pend & need;
                     if ((own >> lane) & 1) a = held;
@@ -1622,6 +2381,7 @@ extern "C" __global__ void __launch_bounds__(BLOCK, 768 / BLOCK) attempts_split(
                 pend &= pend - 1;
                 need &= need - 1;
             }
+            kw[10 * PREFIX_THREADS] = st_left; kw[11 * PREFIX_THREADS] = st_base; kw[12 * PREFIX_THREADS] = last_base; kw[13 * PREFIX_THREADS] = rep; kw[14 * PREFIX_THREADS] = rep_mask;
             WLAP(P_FETCH);
             if (!got) break;
             bool alive = (got >> lane) & 1;
@@ -1748,21 +2508,11 @@ extern "C" __global__ void __launch_bounds__(BLOCK, 768 / BLOCK) attempts_split(
                     // One copy of the code, on the longest row a try can have (more copies, each for fewer cards, do
                     // less work but ran slower: code size shows in the instruction cache).
                     #if SLICED
-                    u32 oc1 = o1, oc3 = o3;
-                    for (; m < min(LOOK_FROM, kmax) || __any_sync(FULL, alive && moves < min(LOOK_FROM, (int)k_moves)); m++) {
-                        PROF(u32 nm = __popc(__ballot_sync(FULL, alive && moves < min(LOOK_FROM, (int)k_moves))); if (lane == 0) { turns++; stepping += nm; })
-                        if (alive && moves < min(LOOK_FROM, (int)k_moves)) {
-                            int played = slice_try<false>(B, len, o1, o3, oc1, oc3, w0, w1, rng, leap_shift);
-                            if (played == -1) k_moves = moves;
-                            else if (played >= 0) moves++;
-                        }
-                    }
-                    for (; m < kmax || __any_sync(FULL, alive && moves < (int)k_moves); m++) {
+                    for (; m < kmax; m++) {
                         PROF(u32 nm = __popc(__ballot_sync(FULL, alive && moves < (int)k_moves)); if (lane == 0) { turns++; stepping += nm; })
                         if (alive && moves < (int)k_moves) {
-                            int played = slice_try<true>(B, len, o1, o3, oc1, oc3, w0, w1, rng, leap_shift);
-                            if (played == -1) k_moves = moves;
-                            else if (played >= 0) moves++;
+                            if (pat_move(B, len, o1, o3, w0, w1, rng, m >= 30) < 0) k_moves = moves;
+                            else moves++;
                         }
                     }
                     unslice_row(B, len, R);
@@ -1817,8 +2567,10 @@ extern "C" __global__ void __launch_bounds__(BLOCK, 768 / BLOCK) attempts_split(
                         }
                     } else {
                         atomicAdd(&deal_counts[deal], (u64)moves << 16 | 1u);
-                        if (search && atomicCAS(&won[deal], 0u, a + 1) == 0u)    // one pile left: won outright
+                        if (search && atomicCAS(&won[deal], 0u, a + 1) == 0u) {   // one pile left: won outright
                             learn_word(lines, deal)[1] = kw[15 * PREFIX_THREADS] >> 17;
+                            atomicOr(won_bits(lines, deal >> 5), 1u << (deal & 31));
+                        }
                     }
                 }
                 WLAP(P_PREFIX);
@@ -1882,7 +2634,7 @@ extern "C" __global__ void __launch_bounds__(BLOCK, 768 / BLOCK) attempts_split(
             if (phase == FINISH) {
                 atomicAdd(&deal_counts[deal], (u64)((moves & 0xFFu) + used) << 16 | 1u);
                 if (win && atomicCAS(&won[deal], 0u, a + 1) == 0u)
-                    { learn_word(lines, deal)[1] = moves >> 8; write_search_f(lines, deal, moves & 0xFF, depth, &VIAS(0), BLOCK - PREFIX_THREADS); }
+                    { learn_word(lines, deal)[1] = moves >> 8; atomicOr(won_bits(lines, deal >> 5), 1u << (deal & 31)); write_search_f(lines, deal, moves & 0xFF, depth, &VIAS(0), BLOCK - PREFIX_THREADS); }
                 win = false;
                 phase = TAKE;
             }
@@ -2058,8 +2810,7 @@ extern "C" __global__ void write_lines(const u8* deals, const u64* deal_masks, u
         slice_row<SLICE_W>(R, B);
         for (int m = share; share && m < all_moves; m++) {
             if (alive && m < moves) {
-                int played = m < LOOK_FROM ? slice_move<false>(B, len, o1, o3, w0, w1, rng, leap_shift)
-                                           : slice_move<true>(B, len, o1, o3, w0, w1, rng, leap_shift);
+                int played = pat_move(B, len, o1, o3, w0, w1, rng, m >= 30);
                 if (played < 0) alive = false; else out[m] = (u8)played;
             }
         }

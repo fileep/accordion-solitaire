@@ -96,9 +96,9 @@ pub struct Settings {
 impl Default for Settings {
     fn default() -> Settings {
         Settings {
-            rungs: vec![[39, 128], [37, 1152]],
+            rungs: vec![[40, 128], [38, 10112]],
             budget: 700,
-            batch: 65536,
+            batch: 131072,
             block: 64,
             blocks_per_sm: 8,
             conn_gate: 19,
@@ -109,9 +109,9 @@ impl Default for Settings {
             stepwise: true,
             split: true,
             prefix_warps: 1,
-            share_group: 4,
+            share_group: 2,
             share_moves: 20,
-            rank_gate: [9, 10],
+            rank_gate: [8, 10],
         }
     }
 }
@@ -398,7 +398,7 @@ const PREPARE_THREADS: usize = 4;
 /// Threads preparing batches ahead for [`Gpu::feed`], a batch each, on their own.
 const PREPARERS: usize = 3;
 /// Launches [`Gpu::feed`] keeps on the GPU, each on a stream of its own, so that one starts as the last one's threads run out.
-const IN_FLIGHT: usize = 2;
+const IN_FLIGHT: usize = 3;
 
 impl Prepared {
     fn new<T: Sync>(items: &[T], position: &(impl Fn(&T) -> [u8; 52] + Sync)) -> Prepared {
