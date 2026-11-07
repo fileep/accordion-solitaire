@@ -11,8 +11,9 @@
 
 use crate::games::Sieve;
 use accordion_core::fast::Position;
-use accordion_core::game::{line_wins, replay_codes, replay_tops};
+use accordion_core::game::{replay_codes, replay_tops};
 use accordion_core::notation::encode_compact;
+use accordion_core::quick;
 use accordion_core::verify::verify;
 use accordion_core::{Deal, Game, Move, Outcome, SolveRecord};
 use accordion_gpu::{BatchResult, Gpu, Settings, deal_codes};
@@ -603,7 +604,7 @@ fn feed(
 ) -> Result<(), (String, Vec<usize>)> {
     let batch = gpu.settings.batch;
     gpu.feed(
-        |&index: &usize| deal_codes(&Deal::from_seed(seeds.seed(index))),
+        |&index: &usize| quick::deal_codes(seeds.seed(index)),
         || {
             // CPU threads that fall behind the GPU (a hot laptop) hold it back, so what waits for them stays small.
             while queue.lock().expect("no panics").len() >= MAX_BACKLOG_BATCHES {
@@ -643,7 +644,7 @@ fn gpu_line_verifies(
 ) -> Result<(), String> {
     let line = result.line(i).expect("it is won");
     // A line that plays out, as nearly all do, needs nothing more unless the full replay is due.
-    if !index.is_multiple_of(FULL_REPLAY_EVERY) && line_wins(result.codes(i), line) {
+    if !index.is_multiple_of(FULL_REPLAY_EVERY) && quick::line_wins(result.codes(i), line) {
         return Ok(());
     }
     moves.clear();

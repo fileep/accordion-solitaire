@@ -217,46 +217,6 @@ pub fn replay_codes(codes: &[u8; 52], line: &[Move]) -> Result<usize, (usize, Mo
     Ok(piles)
 }
 
-/// Whether `line` (compact moves, [`Move::to_byte`]) is a win from the cards' codes: exactly what [`replay_codes`] says of
-/// it, down to one pile. The row isn't closed up after each move: a bit for each card still a pile says which byte the nth
-/// pile is, in a few cycles. No branch per move, as a bad line is a bug, so the answer comes at the end; it takes a few
-/// hundred cycles where replay_codes takes thousands.
-#[cfg(all(target_arch = "x86_64", target_feature = "bmi2"))]
-#[inline]
-pub fn line_wins(codes: &[u8; 52], line: &[u8]) -> bool {
-    use std::arch::x86_64::_pdep_u64;
-    if line.len() != 51 {
-        return false;
-    }
-    let mut tops = [0u8; 64];
-    tops[..52].copy_from_slice(codes);
-    let mut alive = (1u64 << 52) - 1;
-    let mut bad = 0u32;
-    for (played, &byte) in (0u32..).zip(line) {
-        let pile = u32::from(byte >> 1);
-        let target = pile.wrapping_sub(1 + 2 * u32::from(byte & 1));
-        // Past the last pile, or nothing that far to the left (`target` wraps past any row).
-        bad |= u32::from(pile >= 52 - played) | u32::from(target >= 52);
-        // SAFETY: this function is only compiled for a target with BMI2.
-        let (mover_bit, target_bit) =
-            unsafe { (_pdep_u64(1u64 << (pile & 63), alive), _pdep_u64(1u64 << (target & 63), alive)) };
-        let (mover, covered) = (mover_bit.trailing_zeros() & 63, target_bit.trailing_zeros() & 63);
-        let (m, t) = (tops[mover as usize], tops[covered as usize]);
-        let differ = m ^ t;
-        bad |= u32::from(differ & 0x0F != 0) & u32::from(differ & 0x70 != 0);
-        tops[covered as usize] = m;
-        alive &= !mover_bit;
-    }
-    bad == 0
-}
-
-/// [`line_wins`] without BMI2.
-#[cfg(not(all(target_arch = "x86_64", target_feature = "bmi2")))]
-pub fn line_wins(codes: &[u8; 52], line: &[u8]) -> bool {
-    let moves: Vec<Move> = line.iter().map(|&b| Move::from_byte(b)).collect();
-    replay_codes(codes, &moves) == Ok(1)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -310,8 +270,6 @@ mod tests {
                 };
                 line.push(mv);
                 assert_eq!(replay_codes(&codes, &line), replay_tops(&deal, &line));
-                let bytes: Vec<u8> = line.iter().map(|m| m.to_byte()).collect();
-                assert_eq!(line_wins(&codes, &bytes), replay_codes(&codes, &line) == Ok(1), "{bytes:?}");
                 match game.apply(mv) {
                     Ok(()) => assert_eq!(replay_tops(&deal, &line), Ok(game.pile_count())),
                     Err(e) => {
@@ -326,51 +284,6 @@ mod tests {
             }
         }
         assert!(illegal > 1000, "only {illegal} lines ended on an illegal move");
-    }
-
-    #[test]
-    fn a_winning_line_changed_anywhere_is_judged_as_replay_codes_judges_it() {
-        // Wins are rare among real deals played at random, so these rows have few kinds of card, and most lines win. Each
-        // winning line is changed one byte at a time: every byte value at every place.
-        let mut rng = crate::rng::Xoshiro256StarStar::from_seed(7);
-        let mut wins = 0;
-        for _ in 0..2_000 {
-            let codes: [u8; 52] = std::array::from_fn(|_| (rng.below(2) << 4 | rng.below(2)) as u8);
-            let mut tops = codes.to_vec();
-            let mut line = Vec::new();
-            while tops.len() > 1 {
-                let moves: Vec<Move> = (1..tops.len())
-                    .flat_map(|p| [Move::slide(p as u8), Move::leap(p as u8)])
-                    .filter(|m| {
-                        let (p, d) = (m.pile as usize, m.distance());
-                        p >= d && ((tops[p] ^ tops[p - d]) & 0x0F == 0 || (tops[p] ^ tops[p - d]) & 0x70 == 0)
-                    })
-                    .collect();
-                if moves.is_empty() {
-                    break;
-                }
-                let mv = moves[rng.below(moves.len() as u64) as usize];
-                let (p, d) = (mv.pile as usize, mv.distance());
-                tops[p - d] = tops[p];
-                tops.remove(p);
-                line.push(mv.to_byte());
-            }
-            if tops.len() != 1 {
-                continue;
-            }
-            wins += 1;
-            assert!(line_wins(&codes, &line));
-            for at in 0..line.len() {
-                let original = line[at];
-                for byte in 0..=255u8 {
-                    line[at] = byte;
-                    let moves: Vec<Move> = line.iter().map(|&b| Move::from_byte(b)).collect();
-                    assert_eq!(line_wins(&codes, &line), replay_codes(&codes, &moves) == Ok(1));
-                }
-                line[at] = original;
-            }
-        }
-        assert!(wins > 0, "no deal was won by chance");
     }
 
     #[test]

@@ -9,6 +9,7 @@ pub mod deck_input;
 pub mod fast;
 pub mod game;
 pub mod notation;
+pub mod quick;
 pub mod rng;
 pub mod selfcheck;
 pub mod solve_file;

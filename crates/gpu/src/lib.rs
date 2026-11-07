@@ -8,6 +8,7 @@
 
 use accordion_core::Deal;
 use accordion_core::fast::Position;
+use accordion_core::quick;
 use cudarc::driver::{
     CudaContext, CudaFunction, CudaSlice, CudaStream, DriverError, LaunchConfig, PushKernelArg,
 };
@@ -377,6 +378,10 @@ pub fn position_codes(codes: &[u8]) -> [u8; 52] {
 }
 
 fn piles(position: &[u8; 52]) -> usize {
+    // Nearly always all 52 piles, which this settles in a few instructions.
+    if !position.iter().fold(false, |any, &c| any | (c == SENTINEL)) {
+        return 52;
+    }
     position.iter().position(|&c| c == SENTINEL).unwrap_or(52)
 }
 
@@ -422,7 +427,7 @@ impl Prepared {
                     for (i, item) in items.iter().enumerate() {
                         let codes = position(item);
                         let n = piles(&codes);
-                        let (l1, l3, present) = Position::masks_of_codes(&codes[..n]);
+                        let (l1, l3, present) = if n == 52 { quick::masks52(&codes) } else { Position::masks_of_codes(&codes[..n]) };
                         flat[i * 52..(i + 1) * 52].copy_from_slice(&codes);
                         masks[i * 3..(i + 1) * 3].copy_from_slice(&[l1, l3, present]);
                         piles_out[i] = n;
@@ -445,7 +450,7 @@ impl Prepared {
         for (item, ((flat, masks), piles_out)) in items.iter().zip(parts) {
             let codes = position(item);
             let n = piles(&codes);
-            let (l1, l3, present) = Position::masks_of_codes(&codes[..n]);
+            let (l1, l3, present) = if n == 52 { quick::masks52(&codes) } else { Position::masks_of_codes(&codes[..n]) };
             *flat = codes;
             *masks = [l1, l3, present];
             *piles_out = n;
