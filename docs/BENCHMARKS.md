@@ -2077,3 +2077,48 @@ x1.31 and x1.39 on whole runs. **What binds now: the GPU,** busy 99.7-100% in ei
 - **Recording prefix moves instead of `write_lines` replaying them:** estimated x1.05-1.08. A host change, as the first bytes of a line hold learning and won bits until the launch ends. Not built.
 - **Dropping pattern features:** x1.00-1.04 in a noisy hold, attempts 3-7% up.
 - **The second part of the clean-up** (runtime `leftmost` and `conn_gate` duplicated by macros): changes the hot kernel, so it needs its own timing.
+
+## After Phase 8 — shared moves and lines on planes, own moves recorded
+
+Three kernel changes, each small: 4.95M deals/s sustained against 4.61M on c2adb22, x1.07, over 10-minute runs as a long run. Every line verified. GPU alone x1.148 on runs of 2M deals, but x1.058 on runs of 30M, where the GPU sits at its power cap, as it does in `acc batch`.
+
+**The steps, GPU alone.** 2M deals a run, 3 passes, alternated, one hold for each step, lines verified on 2M each:
+
+| Step | Against | Ratio (range by pass) |
+|---|---|---|
+| 1. Shared prefix moves on one-word planes, only among the first 32 piles | c2adb22 | 1.052 (1.007-1.060) |
+| 2. `write_lines` replays the shared moves with `win_try` on planes, not `rrow_move` on the 13-word row: same choices, same lines | step 1 | 1.034 (1.019-1.035) |
+| 3. Own moves recorded as they are played, written into the line by the search that wins; `write_lines` replays only the shared moves | step 2 | 1.038 (1.035-1.044) |
+| All three, 4 passes: **this build** | c2adb22 | **1.148** (1.138-1.170) |
+
+- **Recording own moves.** A byte a move goes into words 10-14 of a thread's 16 kept words. Those held the warp's scan state, the same in every thread, which moves to shared memory (20 B). The moves travel with the residual through the queue (5 words a slot); shared memory goes from 7,308 to 7,968 B a block, so 8 blocks still fit. Deals whose line bytes hold won bits during the launch, and prefixes that leave more than 20 own moves, are replayed as before.
+- **Before these, `write_lines` took about 15.7% of GPU time.** With it left out, x1.157 was the ceiling.
+- 7.04 attempts a deal against 6.79, 624 positions against 613: the search is a little dearer, the rest cheaper. 79 registers, 8 B of local memory.
+
+**Long runs, GPU alone.** 300M deals of warm-up, then 30M a run, 2 passes, alternated, one hold, no line check: 5,006,814 against 4,731,783, x1.058 (1.054-1.062), 1,465-1,487 MHz at 28.7 W. Short runs gave this kernel over twice its sustained gain. A likely reason, not tested: what it saves is mostly memory traffic, which costs fewer cycles at the capped clock.
+
+**The build's own kernel, verified with the host's settings:**
+
+| Deals, seeds from | GPU time, deals/s | Won by the GPU | Failed | Misses, all won by the CPU |
+|---|---|---|---|---|
+| 2,000,000, 600,000,000,000 | 4,597,321 | 1,999,998 | 0 | 2 |
+| 4,000,000, 925,000,000,000 | 4,952,548 | 3,999,999 | 0 | 1 |
+| 6,553,600, 927,000,000,000 | 5,037,165 | 6,553,597 | 0 | 3 |
+
+**Sustained `acc batch`,** as a long run (`--count 1000000000000`, `--stop-after 0.1667`), 10 minutes a run, alternated, in order, each from its own seeds. Power from 20 s samples:
+
+| Build | Seeds from | Deals/s, whole run | Last half | GPU busy, last half | CPU package, last half (whole run) | GPU | Verifying, CPU ns a deal | Misses | Proven lost | Failed |
+|---|---|---|---|---|---|---|---|---|---|---|
+| This build | 940,000,000,000 | 4,947,897 | 4,903,046 | 99.4% | 14.0 W (11.8-24.9) | 28.9 W | 604 | 2,175 | 3 | 0 |
+| c2adb22 | 945,000,000,000 | 4,601,603 | 4,628,617 | 100% | 14.5 W (11.5-24.9) | 29.1 W | 670 | 1,521 | 3 | 0 |
+| c2adb22 | 950,000,000,000 | 4,625,621 | 4,617,478 | 99.2% | 11.9 W (11.6-12.2) | 29.2 W | 699 | 1,585 | 0 | 0 |
+| This build | 955,000,000,000 | 4,948,115 | 4,838,002 | 99.9% | 11.9 W (11.4-25.0) | 28.8 W | 678 | 2,196 | 4 | 0 |
+
+x1.075 and x1.070 on whole runs; x1.059 and x1.048 on last halves. **The GPU still binds,** 99-100% busy near its 30 W cap in either CPU state; workers wait for it about 75% of their time. The gain matches the long GPU-alone runs, not the short ones. Hot comparisons and GPU-alone ones that matter should use long runs past a long warm-up.
+
+**Tests.** No golden values changed. Four crates pass, kernel tests with the GPU. Clippy: no warnings.
+
+**Tried, not kept:**
+- **The clean scan** (no `BREAK` regime in the scan of won deals), ported with the pattern policy's bundles: x0.971 GPU alone; with step 1, x1.025 against step 1's x1.052. On this kernel it doesn't clear the `BREAK` regime (34 `BREAK`s before and after) and adds a 32 B spill.
+- **Host-side planes for each deal**, so the kernel skips one `win_load` a group: priced, not built. Two extra `win_load` calls a group cost x0.984, so dropping one is worth about 1%, and it needs host changes.
+- **`write_lines` held to 64 registers:** x1.015 against step 2's x1.034; it spills 32 B.
