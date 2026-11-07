@@ -1668,3 +1668,277 @@ and carried on to the end, for the arithmetic past 2³².
 top of the range above. Why it held there when those back-to-back runs fell to 760,000 wasn't measured; the laptop had cooled to 40 °C
 before it started. The GPU didn't stop and nothing needed resuming, so of all this only the check on disk was called on. It took about
 27 minutes, under the 36 estimated: up to 100 GB, and 89,070 fingerprints looked up (the formula, n²/2 over 2⁵¹, says 88,818).
+
+## After Phase 8 — the search step, exact choice, and what the rest came to
+
+The 20 billion run (934,074 deals/s, commit 575a396) left a clear picture: the GPU is the limit, the search is 60% of its warp
+time, and the CPU is half idle. Several pieces of work ran side by side from that commit, each measured on its own and, if kept,
+merged here into one build. Seven changes were kept; the rest came to nothing or to a few percent, and are listed below with their
+numbers. Speeds are deals per second; "GPU alone" is `accgpu --cpu-threads 1`, "hot" is `acc batch` over 60 million deals or more,
+second half of the run, configurations alternated with the order swapped each pass.
+
+**Where the time went, at 575a396** (a 200M-deal run, second half, 860,928 deals/s). The GPU was busy 99.3-99.7% of the time, at its
+power cap (28.8 W, 1,451 MHz of 2,100). The feeder thread waited on the GPU 56% of the time, the 15 workers 73%; all CPU work came
+to about 5,600 ns a deal, 4.9 of 16 threads. Inside the GPU, the search step was 59.6% of warp time, the prefix's own moves 16.2%,
+the queue 7.5% and shared moves 5.9%. `write_lines` is 2.2% of a launch. Two launches in flight add nothing but close a 17% gap.
+
+**Kept:**
+
+| Change | Measured |
+|---|---|
+| **Exact best-class choice** for the prefix's moves (it plays a move covering the card whose rank has the fewest others left, and of those one whose mover isn't among the last three piles) | Hot, 60M deals, three runs each: 1,058,141, 1,102,022, 1,112,099 against 923,252, 901,587, 892,305 (**+20.4%**). GPU misses per 60M 6,393 to 2,640. All verified |
+| **One-pass search step:** back up, masks, then move in one turn, a move tested before it is played; the won flag polled in the take block; connectivity by a table over the 6 pair links; packed masks; `leftmost` and `conn_gate` fixed at compile time | GPU alone 927,994 to 1,102,713 (**+18.8%**), same misses; on exact choice 1,126,288 to 1,542,980 (+37%). Hot with exact choice: second half mean 925,170 to 1,522,531 (**+64.6%** over the old kernel) |
+| **Bit-plane search row** (from the DEAD work): the search's at most 16 cards as 3 words of two 16-bit planes each, not 4 words of bytes, so one shift and xor compares the whole row with itself and a move is a mask and a shift on each word | DEAD, GPU alone, 6.55M deals: 1,795,577 to 2,060,816 (**+14.8%**), the same 481 misses, 79 registers; a search step's PTX 509 to 377 (-26%). Here, GPU alone, 2M deals, 2 passes: 2,048,814 and 2,075,470 against 1,743,920 and 1,797,725 (+16.5%). 4M deals with every line verified by the CPU: 0 failed, all won. Hot, 60M deals: +14% (below) |
+| `select_bit64` with one copy of its steps, and `write_search` out of line | +1.6% and +0.6% on the old kernel, together +2.7% to +3.7%; 76 to 72 registers. Not timed again on the merged kernel |
+| **One more prefix move:** rungs [39, 128] and [37, 1152], where it was [38, 128] and [36, 1152] | GPU alone, exact kernel, 3.3M deals: about 1,280,000 against 1,112,000, search positions a deal about 1,346 against 1,792 |
+| **Warps 8 blocks of 64** (1 prefix warp, 1 search warp), where it was 5 of 96 | Screen, GPU alone, 2M deals, ratio to 5 of 96: 1.086-1.090 (see below) |
+| **CPU cleanups:** a GPU line is replayed from the 52 bytes the GPU was given, not from a deal shuffled again (all the way from the seed every 256th deal, as the reference check always did); masks without the unused hash | 400-500 ns of CPU a deal, each. No direct speed: the GPU sets it. Verifying a line is 1.2 µs on a cool CPU, against 3.2 µs hot before; in the long runs below, with the CPU at half speed, 3-8 µs |
+
+The CPU changes and the host side of the trillion work meet in the worker loop: the deal is made once, and only when something wants
+it (the sample of the repeat check, or the full replay that is due), not for every deal.
+
+**Screen of settings on the combined kernel,** GPU alone, 2M deals, ratio to 5 blocks of 96 at 39 moves:
+
+| Warps | Ratio |
+|---|---|
+| 8 x 64 | 1.086-1.090 |
+| 10 x 64 | 1.084 |
+| 4 x 128, 2 prefix warps | 1.076 |
+| 12 x 64 | 1.072 |
+| 6 x 64 | 1.071 |
+| 3 x 160, 2 prefix warps | 1.044 |
+| 4 x 128, 1 prefix warp | 0.827 |
+
+- **Moves in the prefix:** 38 moves 0.960 on 5 x 96 and 0.973 on 8 x 64; 40 moves 0.859 and about even. The default stays at 39.
+- **Connectivity test every other turn:** 0.538. **Groups of 3 or 2 tries** (base 4): 0.969, 0.879. **The order a deal's tries are
+  searched in:** within 2.5%.
+
+**The retune on the merged build,** rungs [39, 128] and [37, 1152], 8 blocks of 64, everything else as before. GPU alone, 2M deals from
+seed 600,000,000,000, 1 CPU thread, 2 passes alternated:
+
+| Setting | Pass 1 | Pass 2 | Mean | Against the defaults |
+|---|---|---|---|---|
+| Defaults | 1,869,387 | 1,776,081 | 1,822,734 | |
+| 10 blocks of 64 | 1,754,921 | 1,732,496 | 1,743,709 | -4.3% |
+| Rank gate [8, 9] (was [9, 10]) | 1,851,238 | 1,849,127 | 1,850,183 | +1.5% |
+| Second rung [37, 576] (was 1,152) | 1,921,292 | 1,800,109 | 1,860,701 | +2.1% |
+
+Then hot `acc batch`, 60M deals from seed 700,000,000,000, three passes (the order reversed in the second), second half of the run:
+
+| Setting | Runs | Mean | Against the defaults | GPU misses in 60M |
+|---|---|---|---|---|
+| Defaults | 1,736,398, 1,736,429, 1,760,835 | 1,744,554 | | 4,436 |
+| Rank gate [8, 9] | 1,720,918, 1,809,459, 1,775,858 | 1,768,745 | +1.4% | 5,677 |
+| Second rung [37, 576] | 1,736,414, 1,790,185, 1,601,819 | 1,709,473 | -2.0% | 15,934 |
+
+Nothing clearly won, so **the defaults stay.** The rank gate's +1.4% is inside the spread between runs (4-5%). The shorter second rung
+quadruples the misses, which only `acc batch` pays for: in its last run the CPU threads spent 45.7% of their time on misses and waited
+for the GPU only 11.8%, the CPU nearly the limit as the laptop heated. 10 blocks of 64 lost.
+
+**The bit-plane row on the merged build.** Verified before it was kept: the kernel tests pass (`cargo test -p accordion-gpu`, including
+`playouts_match_the_rust_engines`), and `accgpu` over 4,000,000 deals (seeds from 610,000,000,000) had every GPU line replayed by
+the CPU: 3,999,724 won and verified, 0 failed, all 4M won (the CPU solved the other 276). Against the build before it (GPU alone, 2M
+deals from 600,000,000,000, 1 CPU thread, 2 passes alternated): 2,048,814 and 2,075,470 against 1,743,920 and 1,797,725 (+16.5%).
+Hot `acc batch`, 60M deals, three passes alternated: the whole-run figures swung from 0.9M to 1.9M deals/s, because other work on the
+laptop took CPU during some runs (verifying a line cost 5 µs where it costs 2), so only the per-second rate over the last three
+quarters of each run is compared, and only runs the machine left alone: bit-plane 1.90M and 1.89M, before it 1.65M and 1.68M
+(**+14%**); the third run of each was slowed to about 1.0M and is left out. Reading them as run (second half of the run, whole run):
+bit-plane 1,878,957 / 1,907,474, 1,506,416 / 1,640,306, 1,132,183 / 1,006,715; before 1,550,538 / 1,622,804, 919,364 / 1,041,058,
+1,315,279 / 1,467,692.
+
+**The sampled repeat check, in the merge.** With the sample on (`--games-memory 1 --games-disk 0.01`, 0.5% of 200M deals), the first
+merge made the deal from its seed for every deal to hash its first cards: 1,562,854 and 1,672,713 deals/s against 1,688,147 and
+1,738,897 without it (-7.4% and -3.8%), the CPU threads' verifying 22-36% of their time, with the sample 46-49%. The sample now takes the hash from
+the 52 card bytes the GPU was given (`Sieve::note_codes`, tested against `Sieve::note` on 20,000 deals) and shuffles a deal again
+only if it is in the sample: 1,743,564 and 1,724,842 against 1,744,676 and 1,735,952, **-0.1% and -0.6%**, within the spread.
+
+**The long hot comparison.** The bit-plane build against the old binary (the kernel of the 20 billion run), `acc batch`, 200M deals from seed
+700,000,000,000 a run, in one hold of the machine, in the order new, old, old, new, new, old, old, new (pass 1 forwards, pass 2 reversed, and so on),
+with the GPU and the CPU sampled every 5 s. All 200M won and verified in every run, 0 lines failed; GPU misses 14,736 in 200M for the new
+kernel (1 in 13,572) and 21,719 for the old (1 in 9,209). The sampled repeat check was not on (below 2 billion deals every deal is checked, in
+memory). All eight runs, in the order they ran:
+
+| Run | Second half | Whole run | GPU busy, mean (min) | GPU clock, mean (min) MHz | CPU speed, mean (min) | CPU busy, mean | CPU threads waiting for the GPU | Verify, µs a line |
+|---|---|---|---|---|---|---|---|---|
+| New | 1,820,435 | 1,768,538 | 93% (47) | 1,448 (1,380) | 107% (77) | 59% | 46.5% | 3.1 |
+| Old | 850,822 | 857,234 | 98% (81) | 1,491 (1,410) | 56% (41) | 68% | 60.3% | 4.5 |
+| Old | 869,100 | 869,214 | 100% (90) | 1,477 (1,440) | 58% (40) | 52% | 64.7% | 4.0 |
+| New | 907,827 | 1,122,739 | 59% (14) | 1,400 (705) | 49% (39) | 73% | 31.8% | 6.2 |
+| Old | 494,294 | 563,239 | 67% (17) | 1,496 (1,260) | 59% (37) | 53% | 26.6% | 11.9 |
+| New | 813,863 | 985,755 | 48% (18) | 1,591 (1,125) | 65% (39) | 55% | 18.8% | 8.1 |
+| New | 1,254,944 | 1,297,088 | 66% (20) | 1,496 (1,080) | 62% (43) | 74% | 39.8% | 4.8 |
+| Old | 817,324 | 831,744 | 94% (50) | 1,522 (1,440) | 49% (38) | 71% | 55.0% | 5.2 |
+| **Mean of four, new / old** | **1,199,267 / 757,885** | | | | | | | **x1.58** |
+
+The pairs next to each other give x2.14, x1.04, x1.65 and x1.54. The spread is not noise in the kernel: **the CPU limits the new build once
+the laptop is hot.** In the first run, with the CPU cool (107% of its base speed, boosting), the GPU was 93% busy and the CPU threads waited for it
+46% of the time: about balanced at 1.8M deals/s. After that the CPU's speed fell to 49-65% of base (minimum 37-43%) and stayed there, and with it
+verifying a line went from 3.1 µs to 4.8-8.1, the CPU threads' waiting share fell to 19-40% (from 46-65%), and the GPU went idle for stretches:
+busy 48-66% on average and 14-20% at the minimum, its idle throttle reason (`0x1`) appearing in the samples, its power falling from 28.6-28.8 W to
+24.7-27.9 W and its clock dipping to 705-1,125 MHz while it waited. The temperatures (77-80 °C) barely moved. The old binary lost the same CPU speed,
+but its GPU is the slower part: it was 94-100% busy in three of its four runs (CPU waiting 55-65%), and in the fourth (the third in all) the CPU
+slowed further (verifying 11.9 µs a line) and its GPU fell to 67% busy. So a long run at this speed is set by the CPU's sustained speed, which is
+a matter of the laptop's cooling and power as much as of the code: the time for a trillion deals below is a range, not a figure.
+
+Before the bit-plane row was added, the same comparison (not sampled, earlier in the day) gave 1,705,622 and 1,633,793 for the new build against
+881,585 and 896,167 for the old (x1.878), with the GPU 100% busy and the CPU threads waiting for it 67-71% of the time.
+
+**Tried, not kept:**
+- **Openings made on the CPU:** all of a deal's groups sharing their first K moves, played on the GPU to measure only the lost variety:
+  K=4 986,576 deals/s against about 1,138,000, K=20 146,282. The GPU would save at most 5.9% of its time. The shuffle was already on
+  the CPU.
+- **Prefix and search in separate kernels:** on the same work with wins not stopping anything, 73.23 ms a launch against 79.97 mixed
+  (-8.4%), under the 15% that would pay for a rewrite, and each round costs about 1 ms. Alone the prefix is 19% of the time, not the
+  33% its warp time says (that includes waiting for a turn). **Searching a deal's residuals best first:** 0.4% to 36% worse (the
+  positions it saves cost more in extra prefixes).
+- **Code size.** Making the hot code smaller by loops, calls or merged copies lost 3% to 14%: draws in a loop -8.4%, one call site
+  -9.6%, own moves on the wide row in two copies -13.7%, uniform guards around the wide parts -5.5%, `select_bit` a real call -2.7%.
+  A backward loop of 2 iterations costs about 11 instructions an iteration, a divergent branch about 6. No compile option helped
+  (CUBIN -0.2%, `ptxas -O1` -1.7%, launch bounds -0.4%, -0.5%); NVRTC takes no `-O` options. `cfold` (+2.6% more on the old
+  kernel) wasn't merged, since the search step fixes both tests at compile time.
+- **The search step, other forms:** a second mask computation after the move +0.8%; more than one move tried a turn, on exact choice
+  2 tries -1.5%, 3 -5.4%, 4 -9.4%; polling the won flag every other take -1.3%; the `__all_sync` moved out of the turn -1.9%
+  (cause unknown); `TAKE_MIN` 2 or 3 +0.5%; dead-pile pruning +1.0% (positions 2,813 to 2,680, misses 714 to 693); one multiply to
+  gather 8 bits -0.1%.
+- **Pruning inside the search.** Rank limits: +0.7% on the GPU, with 16% fewer positions, 8.7% more attempts and 40-60% more misses.
+  A 16-entry cache of positions seen 0.976 (4.6% of positions in the simulator, 2% in the kernel). In the simulator: a whole table of
+  positions -11.7% positions (free, worth about 7%; 256 entries are 512 bytes a thread, more than the shared memory there is);
+  Bloom filters, whose false hits cut off wins (misses 33 to 6,278 per 100,000); limits on children, positions under a node, linked
+  pairs, and skipping moves onto a rank with others left: all flat or worse. The best model at one level, 12 piles: 2% of wins lost
+  for 11% of the positions. Search positions are worth less at the margin than their 60% suggests, about 45%, so a rule has to save
+  2.2 times the wins it loses.
+- **Looking ahead for the prefix's moves,** best of k candidates by the next moves it sets up, in the kernel: k=2 -24%, k=3 -33%,
+  k=4 -41% in speed, for 42% fewer attempts at k=3, 72% fewer misses, all verified; each candidate costs a whole after-move mask
+  computation, and the code spills. In the simulator (39 moves, 8,000 deals) the same choice makes attempts 20.8 (exact) to 15.0, 11.5,
+  9.5 and 8.0 at k=2, 3, 4, 6.
+- **Sharper residual gate** (ranks, isolated cards, suit minimum, links; as good as boosted trees, AUC 0.89 against 0.79 for ranks):
+  +0.8%. **A lower or value-based budget:** wins per 1,000 positions are flat over a search (1.45 at 50-100 positions, 0.81 at
+  600-700), above the all-in rate, so 700 is about right. **Hard filters after exact choice** (covered card with no move of its own,
+  mover with no other move, middle piles, leaps, near the last move, gaps, no link broken): all worse or level.
+- **In the simulator, 39 moves, base 20.69 attempts and 1,073 search positions:** closed-form endings are dead (positions at 4 piles
+  or fewer are 1.6%); random first K moves K=5 +2% attempts, K=10 +12%, K=20 +69%; re-rolling the last moves, sweeping windows,
+  skipping repeated residuals (0.41 a deal, -2.1% positions), target ranks, per-deal rank priorities (46 to 247 attempts): all worse.
+  Cheap score terms: covered suit scarcity 17.82 attempts but 1,271 positions; far2 19.96 and 1,060; low target pile 19.88 and
+  1,125; others level or worse.
+- **Dead positions and dead moves in the search** (DEAD). The uncoverable-card rule (a card with at most one partner and none on its
+  right can never be covered, so two such cards make a position dead) is exact, checked on 56,800 residuals with no budget, and its cut
+  is real in the kernel (search positions a deal 1,996 to 1,866), but it runs -7.3%: its test costs more than the moves it saves, since
+  a warp pays for a block if any thread runs it. The bulk dead-move filter (the ranks a suit reaches the rest only through, and the
+  path of 4 suits; 62% of the moves at arrival are dead) runs -8.0%, both together -14.0%. Half of even a perfect filter's turns
+  try no move, so no filter of this kind gets below 2 turns per kept move. A wider "gap form" of the rule fired on won positions
+  (15 of them) and isn't exact. Untried: the rule only on a residual as it is taken, where it costs little.
+- **Small things on the merged build** (SMALL, 2M deals, 3 passes, base 1,780,453): diverse first draws 0.975; a queue of 64 0.975;
+  groups of 5 0.991; every non-search thread taking residuals 1.006 (not repeatable); `TAKE_MIN` 1 0.980; budget 1,000 0.994 (misses
+  -11%, but the CPU waits for the GPU 18-71% of its time, so that buys nothing); EcoQoS on the CPU workers about even.
+- **Retune:** on this build, 10 blocks of 64 4.3% slower than 8; the rank gate [8, 9] +1.5% alone, +1.4% hot, inside the noise; the
+  second rung [37, 576] +2.1% alone and -2.0% hot (below).
+
+**Considered, not tried:**
+- **Gathered endgame lookups** (TABLE), built on the old kernel: 11 piles +6.6%, 10 piles +0.5%; attempts 26.2 against 27.7,
+  positions 1,793 against 2,816. It needs 1.15 GB on the GPU and wasn't merged with the new search step, so there is no number for
+  it there; the search is now a smaller share, so less is likely.
+- **Removing the `deal_counts` count** (`NOCOUNT`): estimated at +1.3%; SMALL built it as an option and measured 1.039 (1.049, 1.052,
+  1.017). It leaves the report's GPU attempts and positions at zero, so it isn't in the default; `patches/small-nocount.patch` has it.
+- **Learning within a deal**: in the simulator 17.07 attempts against 20.69 and 868 positions
+  against 1,073, but about 4 times the misses; not tried in the kernel. Deals are persistent: wins of the two halves of a deal's tries
+  correlate 0.41.
+- **Group allocation, early abort** (ALLOC): only the one-more-move result was reached. The row's value predicts a win with AUC 0.68 at
+  move 20, 0.75 at 28, 0.80 at 32 and 0.86 at 36, so an early abort has less to go on the earlier it is made.
+- **Dead moves filtered in bulk** in the search (bridge links with a single shared rank give the dead cards at once, about 100
+  operations): dead tries are half of the search's thread-turns, so it is the one large prize left there, but several tries a turn
+  lost, and this adds about a third to a turn before it saves any.
+- **Exact dead-end tests stronger than connectivity:** no candidate found; the rest is the endgame table's work.
+- **The machine code:** only PTX could be read (no `cuobjdump`), so the costs of the search step are by instruction counts.
+
+**Neural nets for the random moves (provisional; `neural` notes, held-out deals).** A value net, trained 3.5 minutes in numpy on rows from
+the old policy, rates a prefix row better than the hand-made models (AUC at move 20 0.778 against 0.681 for the best of them, 0.925
+against 0.864 at move 36). Played in the simulator (300 fresh deals, exact choice for the 20 shared moves, then the move whose row the
+net rates highest, softmax at strength tau): from move 20, 3.22 attempts and 604 search positions a deal at tau 12, against 15.88 and
+1,466 for exact choice and 4.30 for the best fitted model, so the search positions fall too. On the last moves only, exact before:
+from move 30, 5.81 attempts and 874 positions; from move 34, 9.43 and 1,134 (exact 15.90 and 1,533 there). But the net is about 290,000
+multiply-adds a row, and a deal has about 480,000 thread-cycles at this speed, so it is a ceiling, not a method. An N-tuple form that
+would fit the kernel doesn't work yet: 39.86 attempts and 1,634 positions (base 25.2), as an unfinished run. And a win as a parse of
+stretches of 3 piles needs no attempts: 50% of deals at cap 1, 98.7% at cap 8, but 30,000 to 900,000 merges a deal at tens of
+operations each, more than today's solve costs.
+
+## After Phase 8 — a trillion deals
+
+What it would take to run a trillion seeds (from seed 22,000,000,000 on) on this laptop, and what had to change
+for it. Nothing here depends on the GPU's speed; only the time does.
+
+| | 200 billion | 1 trillion |
+|---|---|---|
+| Solving at 934,074 deals/s (the 20 billion run) | 59.5 h | 297 h, 12.4 days |
+| At 1.82M deals/s (the first run of the final build, CPU cool) | 30.5 h | 153 h, 6.4 days |
+| At 1.20M deals/s (the mean of four runs of it, CPU slowing as the laptop heats) | 46.3 h | 231 h, 9.6 days |
+| Checking the sample at the end (estimated) | about 4 min | about 4 min |
+| Disk, peak and written in all | about 51 GB | about 52 GB |
+| RAM | about 2 GB, up to 12 GB in a rare large proof, 18 GB in the check | about 3 GB, the same peaks |
+
+**What was audited, and what the 20 billion run's rates make of it** (1 deal in 9,290 on the CPU, 1 loss in 960M deals):
+- **The check that no two deals are the same** was the one thing that didn't scale: 5 bytes a deal on disk is 5 TB at a trillion,
+  with 523 GB free, and its two passes 16.5 hours. Now up to `--games-memory` (16 GB, 2 billion deals) every deal is checked
+  exactly, as before; past that a sample is noted during the run, below.
+- **Fine as it is:** 64-bit fingerprints (27,105 collisions at a trillion, compared card by card); the file of costs (1.72 GB); the
+  checkpoint (3.9 KB, doesn't grow); about 1,040 proofs, each under a minute; dossiers and loss records (5 MB); the speed log (75 MB);
+  counters, which are `u64`; seeds past 2^32, 2^37 and 2^40; the win rate to 10 decimals (matches exact arithmetic at a trillion);
+  memory and handles over 3,039 launches (flat). The games log's index is 40 bits, so a run over 1.0995 trillion is refused unless
+  it passes `--no-games-check`.
+- **Pausing:** `--stop-after <hours>` and `--until <deals>` pause the run, and `--resume` goes on. A GPU that fails to open on resuming
+  or answers nothing for 15 minutes exits 75; a disk under `--keep-free` (5 GB) or 5 failed saves in a row, 74; the log being
+  unwritable, 74 at once. `tools/long-run.ps1` carries on after 75 and stops with a message if `acc` won't start (Smart App
+  Control blocked a fresh `acc.exe` twice in this work, exit 126). `.events.log` and `.status.json` sit beside the checkpoint.
+  The checkpoint format is now 2: no older checkpoint resumes.
+
+**The repeat check, past 2 billion deals.** The user's decision was that no proof is needed if the odds of a repeat are under 1 in
+1,000. By the birthday bound at 1.022 trillion they are about 9.7e-34 for the same game with suits and ranks renamed, and 6.5e-45
+for the same deal, if the generator behaves like a random one; so the check only backs that assumption. A hash of the game's first
+16 cards, unchanged by renaming, picks the deals: each costs 10 bytes (a 5-byte key and a 5-byte position) in an append-only log in
+seed order, so a checkpoint can say how much of it counts and a resume can cut it back. At the end it is read a part at a time
+within `--games-memory` and deals sharing a key are compared card by card. The default room is 50 GB (or half of what is free): 0.5%
+of the deals at a trillion. It would still show a flaw that makes more than 598 repeated pairs, and the count of chance matches of 40
+bits tests the generator to about 0.03%. `--games-disk` with room for 5 bytes a deal asks for the full check, two more passes at the
+end; room for 10 bytes a deal logs every deal and counts as exact. The report says "all deals differ" only if every deal was
+looked at; for a sample it says "not all checked", how many repeated pairs it would have seen with 95% chance, and the chance matches
+against the formula.
+
+The hash costs 23-30 ns a deal on a cool thread (85 ns with branches: whether a rank is new among the first cards can't be
+predicted). Hot `acc batch`, 100M deals a run, alternated, with a 2.6% sample, on 575a396: 826,809 and 827,861 deals/s on average,
+the same within a noise of about 5%; verifying a line looked slightly dearer (5.7-5.8 µs against 4.3-6.2), with the CPU about half idle.
+
+**Rehearsals:**
+
+| What | Result |
+|---|---|
+| 30M deals at seeds from 1,021,900,000,000: paused by file, killed, carried on | Pause took 0.35 s; the checkpoint counted 5,767,050 log bytes of 6,272,800 on disk and the rest were cut; the GPU was given exactly 30,000,000, 0 lines failed; 780,189 sampled, as computed directly |
+| A trillion-deal checkpoint moved on to its last million | Report correct: 999,999,998,960 won, 1,040 lost, CI [99.9999998895%, 99.9999999021%], 15,258,789 launches |
+| 2B seeds, 1/8 sample, a repeat planted every million | 249,970,595 records; 28,232 chance matches against 28,415 by formula; **244 of 2,000 planted found**, expected 250 ± 15; 59 s to write, 6 s to check |
+| 2B seeds, every deal in the log (20 GB, 2 parts) | 1,817,977 chance matches against 1,818,989; 0 repeats; 156 s to write, 71 s to check |
+| `long-run.ps1` killed twice, run in legs, binary missing | All behaved |
+| Disk | 2.37 GB/s write, 2.91 GB/s read (51 GB) |
+
+**Not verified:** a run of days; 15 million launches; the check on a real 50 GB log; a full disk, a power cut, a reboot, a sleep, or a
+real GPU failure; the watchdog firing for real. The timing tests in `pause_resume.rs` failed now and then on a loaded laptop: a run still starting
+up deletes a pause file it finds, so the single request they wrote 250 ms after a start could be lost and the run went on to the end. They now
+ask again every 250 ms until the run ends. That exposed a real fault, fixed in this build: a pause (or a crash) after the last deal, while the
+last proofs and the check ran, left the checkpoint with the length `--out` had before its last records, and the resume cut the file back to it,
+losing up to a few thousand records (4,929 of 60,000 in the test). The proofs test now compares the records as well as the report.
+
+**Left to the user:** Windows Update (active hours 17:00-23:00, so a restart can come at any other time); starting again after a
+reboot (nothing does this unless a logon task is added); keeping the laptop plugged in; heat and battery over days (the GPU reached
+72 °C within 4 minutes; CPU temperature and the battery weren't measured); legs or straight through; and copying `acc.exe` somewhere
+that stays put and using that copy for the whole run, without rebuilding in place:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File tools\long-run.ps1 -Acc C:\runs\acc.exe -From 22000000000 -Count 1000000000000
+```
+
+**Considered, not tried** (for the repeat check):
+- **Every deal, in partitions to fit the disk:** 20 passes and lookups at 261 GB, about 2 weeks at a trillion.
+- **A sample taken at the end:** keys only, twice the coverage per byte but two passes (16.5 h); with positions, one pass, 8.2 h, for what
+  the run can note as it goes.
+- **A sample of seeds:** sees a given repeat with the fraction squared, 0.0025% at 0.5%.
+- **A Bloom filter or a distinct-count sketch in memory:** 16 GB is 0.13 bits a deal at a trillion, so a filter saturates; a sketch's error,
+  about 8 million, hides anything smaller.
+- **Log files by key, smaller records** (positions as differences: 25-40% more coverage for a harder format), **fingerprints when the
+  deals are prepared for the GPU,** **a wider generator** (by decision: it wouldn't change the same-game figure).

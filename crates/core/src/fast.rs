@@ -141,6 +141,21 @@ impl Position {
         pos
     }
 
+    /// A position's slide and leap masks and cards present from its top cards' codes: [`Position::from_codes`] without
+    /// the hash, for what only wants these (the GPU's batches, at a million deals a second).
+    pub fn masks_of_codes(codes: &[u8]) -> (u64, u64, u64) {
+        debug_assert!(!codes.is_empty() && codes.len() <= 52, "1 to 52 piles");
+        let mut buf = [SENTINEL; 64];
+        let mut present = 0u64;
+        for (i, &c) in codes.iter().enumerate() {
+            buf[OFF + i] = c;
+            present |= 1 << c;
+        }
+        let pos = Position { buf, len: codes.len() as u8, link_broken: false, present, l1: 0, l3: 0, hash: 0 };
+        let (l1, l3) = pos.full_masks();
+        (l1, l3, present)
+    }
+
     pub fn len(&self) -> usize {
         self.len as usize
     }

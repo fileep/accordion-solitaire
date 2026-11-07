@@ -54,7 +54,9 @@ pub struct Settings {
     pub batch: usize,
     /// Threads per block (the kernel's shared memory is sized for it: 64 bytes per thread). On the T550, 64 fits
     /// 1,024 attempts per multiprocessor, its maximum (32 fits 512, the most blocks it takes); with `split`, whose
-    /// queue takes shared memory too, 8 blocks of 96 or 12 of 64 fit, and 5 of 96 are all it can use.
+    /// queue takes shared memory too, 8 blocks of 64 (one prefix warp, one search warp) fit, the default: 8 of 64 blocks
+    /// ran 8.6 to 9% faster than 5 of 96, and 10 of 64 was no better (docs/BENCHMARKS.md, "After Phase 8 — the search
+    /// step, exact choice, and what the rest came to").
     pub block: u32,
     /// Thread blocks per multiprocessor. Fewer than fit, when they keep it busy, leave fewer attempts running on deals
     /// already won.
@@ -84,13 +86,9 @@ pub struct Settings {
     /// deal's tries go in groups of `share_group`, whose first `share_moves` prefix moves are played once; each try
     /// then plays the rest of its prefix from the row they left, and searches. 1 shares nothing.
     pub share_group: u32,
-    /// From 4 up to the shorter rung's random moves when `share_group` is more than 1.
+    /// From 20 (the masks a group keeps then fit 32 bits) up to the shorter rung's random moves when `share_group` is
+    /// more than 1.
     pub share_moves: u32,
-    /// Random draws from the legal moves for each of a try's own prefix moves (`split` only; kernel.cu `DRAWS`): the
-    /// one played covers the card whose rank has the fewest others left. 1 chooses at random.
-    pub draws: u32,
-    /// The same for the moves a group shares (kernel.cu `SHARED_DRAWS`): those moves' code is the dearest.
-    pub shared_draws: u32,
     /// The most ranks a residual of each rung may have to be searched (`split` only; kernel.cu `RANK_GATE`).
     pub rank_gate: [u32; 2],
 }
@@ -98,11 +96,11 @@ pub struct Settings {
 impl Default for Settings {
     fn default() -> Settings {
         Settings {
-            rungs: vec![[38, 128], [36, 1152]],
+            rungs: vec![[39, 128], [37, 1152]],
             budget: 700,
             batch: 65536,
-            block: 96,
-            blocks_per_sm: 5,
+            block: 64,
+            blocks_per_sm: 8,
             conn_gate: 19,
             leftmost: true,
             leap_weight: 8,
@@ -113,8 +111,6 @@ impl Default for Settings {
             prefix_warps: 1,
             share_group: 4,
             share_moves: 20,
-            draws: 5,
-            shared_draws: 3,
             rank_gate: [9, 10],
         }
     }
@@ -133,9 +129,6 @@ impl Settings {
         let tries: u64 = self.rungs.iter().map(|&[_, t]| u64::from(t)).sum();
         if tries > u64::from(MAX_TRIES) {
             return Err(format!("rungs: {tries} tries per deal in all; at most {MAX_TRIES}"));
-        }
-        if !(1..=8).contains(&self.draws) || !(1..=8).contains(&self.shared_draws) {
-            return Err(format!("draws: {} and {}; 1 to 8", self.draws, self.shared_draws));
         }
         if !self.leap_weight.is_power_of_two() || self.leap_weight > 1 << 16 {
             return Err(format!("leap_weight: {}; a power of two up to 65536", self.leap_weight));
@@ -158,10 +151,10 @@ impl Settings {
         }
         if let Some(shortest) = self.rungs.iter().map(|&[p, _]| p).min()
             && self.share_group > 1
-            && !(4..=shortest).contains(&self.share_moves)
+            && !(20..=shortest).contains(&self.share_moves)
         {
             return Err(format!(
-                "share_moves: {}; 4 to {shortest}, the shorter rung's moves",
+                "share_moves: {}; 20 to {shortest}, the shorter rung's moves",
                 self.share_moves
             ));
         }
@@ -226,6 +219,8 @@ pub struct BatchResult {
     counts: Vec<u64>,
     /// Piles of each position: its line has one move fewer.
     piles: Vec<usize>,
+    /// Each position's 52 bytes, as the GPU had them (empty for a batch it never got).
+    codes: Vec<u8>,
     /// The kernel's [`PROFILE_SLOTS`] counters for the launch, when profiling (empty otherwise).
     pub profile: Vec<u64>,
 }
@@ -238,6 +233,7 @@ impl BatchResult {
             lines: Vec::new(),
             counts: vec![0; n],
             piles: vec![0; n],
+            codes: Vec::new(),
             profile: Vec::new(),
         }
     }
@@ -257,6 +253,11 @@ impl BatchResult {
     /// Position `i`'s winning line (compact moves, `pile << 1 | leap`), if an attempt won it.
     pub fn line(&self, i: usize) -> Option<&[u8]> {
         self.is_won(i).then(|| &self.lines[i * 51..i * 51 + self.piles[i] - 1])
+    }
+
+    /// Position `i`'s 52 bytes, as the GPU had them.
+    pub fn codes(&self, i: usize) -> &[u8; 52] {
+        self.codes[i * 52..(i + 1) * 52].try_into().expect("52 bytes")
     }
 
     /// Positions generated on position `i`, prefix moves included, over every attempt.
@@ -285,6 +286,7 @@ pub struct Pending {
     stream: Arc<CudaStream>,
     /// Piles of each position: its line has one move fewer.
     piles: Vec<usize>,
+    codes: Vec<u8>,
     won: CudaSlice<u32>,
     lines: CudaSlice<u8>,
     /// Per position: positions generated << 16 | attempts run.
@@ -369,9 +371,9 @@ impl Prepared {
                     for (i, item) in items.iter().enumerate() {
                         let codes = position(item);
                         let n = piles(&codes);
-                        let pos = Position::from_codes(&codes[..n]);
+                        let (l1, l3, present) = Position::masks_of_codes(&codes[..n]);
                         flat[i * 52..(i + 1) * 52].copy_from_slice(&codes);
-                        masks[i * 3..(i + 1) * 3].copy_from_slice(&[pos.slides(), pos.leaps(), pos.present()]);
+                        masks[i * 3..(i + 1) * 3].copy_from_slice(&[l1, l3, present]);
                         piles_out[i] = n;
                     }
                 });
@@ -461,10 +463,10 @@ fn compile(ctx: &CudaContext, settings: &Settings, source: &str) -> Result<cudar
                 format!("-DPREFIX_THREADS={}", 32 * settings.prefix_warps),
                 format!("-DSHARE_G={}", settings.share_group),
                 format!("-DSHARE_K={}", if settings.share_group > 1 { settings.share_moves } else { 0 }),
-                format!("-DDRAWS={}", settings.draws),
-                format!("-DSHARED_DRAWS={}", settings.shared_draws),
                 format!("-DRANK_GATE={}", settings.rank_gate[0]),
                 format!("-DRANK_GATE2={}", settings.rank_gate[1]),
+                format!("-DLEFTMOST={}", u32::from(settings.leftmost)),
+                format!("-DCONN_GATE={}", settings.conn_gate),
             ]
             .into_iter()
             .chain(settings.profile.then(|| "-DPROFILE".to_string()))
@@ -611,6 +613,7 @@ impl Gpu {
         Ok(Pending {
             stream: s.clone(),
             piles: prepared.piles,
+            codes: prepared.flat,
             won,
             lines,
             counts,
@@ -722,7 +725,7 @@ impl Pending {
             Some(p) => s.clone_dtoh(p).map_err(err)?,
             None => Vec::new(),
         };
-        Ok(BatchResult { won, lines, counts, piles: self.piles, profile })
+        Ok(BatchResult { won, lines, counts, piles: self.piles, codes: self.codes, profile })
     }
 }
 

@@ -234,7 +234,7 @@ pub fn run(args: &ExperimentArgs) -> Result<bool, String> {
                             *o.stages.entry(Stage::Gpu.to_string()).or_default() += n;
                             return Ok(());
                         }
-                        Finished::Checkpoint(_) => return Ok(()),
+                        Finished::Checkpoint(_) | Finished::Sampled(_) => return Ok(()),
                     };
                     let won = matches!(s.report.verdict, Verdict::Win(_)) && s.verified.is_ok();
                     if s.verified.is_err() {

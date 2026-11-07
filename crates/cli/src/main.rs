@@ -70,6 +70,7 @@ mod bench;
 mod dossier;
 mod endgame;
 mod experiment;
+mod games;
 mod pause;
 mod progress;
 mod prove;

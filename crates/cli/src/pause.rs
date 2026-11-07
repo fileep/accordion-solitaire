@@ -13,6 +13,19 @@ pub fn requested() -> bool {
     PAUSE.load(Ordering::Relaxed)
 }
 
+/// Asks for a pause, as Ctrl+C does.
+pub fn ask() {
+    PAUSE.store(true, Ordering::Relaxed);
+}
+
+/// Asks for a pause once `wait` has gone by.
+pub fn after(wait: Duration) {
+    std::thread::spawn(move || {
+        std::thread::sleep(wait);
+        ask();
+    });
+}
+
 /// Ctrl+C was pressed. Atomics only, as this may run in a signal handler.
 fn pressed() {
     if PRESSES.fetch_add(1, Ordering::Relaxed) == 0 {

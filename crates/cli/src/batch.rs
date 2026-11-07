@@ -2,15 +2,18 @@
 //! there is one (PLAN.md Phases 4, 5 and 8). Every win is verified by the reference rules before it counts; every
 //! deal that isn't won gets a dossier, and a proof attempt on a thread of its own while the run goes on: two
 //! exhaustive runs that must agree before a loss counts ([`prove::prove_both`]). The summary gives the win rate with
-//! a Wilson 95% interval, counting undecided deals both ways, and checks that the deals are all different games.
+//! a Wilson 95% interval, counting undecided deals both ways, and the odds that any two deals are the same game, which it
+//! checks: exactly when memory holds all the deals, by a sample past that ([`crate::games`]).
 //!
 //! A long run can stop and carry on. Results are applied in seed order, so where a run stands is one number, and every
 //! minute that number and all the totals go to a checkpoint (written whole or not at all, after the results it counts
 //! are safely on disk). Ctrl+C or a file beside the checkpoint pauses the run; a crash costs the last minute;
 //! `--resume` carries on from either, with the settings the run began with. At the end the checkpoint gives way to the
-//! report, saved beside it.
+//! report, saved beside it. Beside it too, for reading from elsewhere while it goes, are a status file (`.status.json`)
+//! and a log of what has happened to the run (`.events.log`).
 
 use crate::dossier;
+use crate::games::{self, Found, Sieve};
 use crate::pause;
 use crate::progress::Meter;
 use crate::prove::{self, Finding, Limits};
@@ -97,27 +100,53 @@ pub struct BatchArgs {
     #[arg(long)]
     checkpoint: Option<PathBuf>,
     /// Keep no checkpoint: the run can't pause, and if the GPU fails the CPU solves the rest.
-    #[arg(long, conflicts_with_all = ["checkpoint", "resume"])]
+    #[arg(long, conflicts_with_all = ["checkpoint", "resume", "until", "stop_after"])]
     no_checkpoint: bool,
     /// How often to save the checkpoint, in seconds.
     #[arg(long, default_value_t = 60)]
     checkpoint_every: u64,
     /// Carry on with the paused or crashed run in this checkpoint, from the directory it started in, with the settings
-    /// it started with: only --threads, --checkpoint-every, --log-dir, --no-log, --games-memory and --no-games-check
-    /// may be given.
+    /// it started with: only --threads, --checkpoint-every, --log-dir, --no-log, --games-memory, --no-games-check,
+    /// --keep-free, --until and --stop-after may be given.
     #[arg(long, conflicts_with_all = [
         "from", "count", "max_nodes", "config", "out", "dossiers", "no_dossiers", "table", "gpu", "gpu_config",
-        "endgame_dir", "endgame", "gallery", "prove", "prove_memory", "checkpoint",
+        "endgame_dir", "endgame", "gallery", "prove", "prove_memory", "checkpoint", "games_disk", "plant_repeats",
     ])]
     resume: Option<PathBuf>,
-    /// Memory the check that the deals are all different games may take, in GB; a run too large for it works from
-    /// disk, at about 5 bytes a deal (in the checkpoint's directory, or the system's temporary one without a
-    /// checkpoint), and it takes longer.
+    /// Memory the check that the deals are all different games may take, in GB. A run that fits has them all checked at
+    /// the end. Past that, it checks a sample of them as it goes.
     #[arg(long, default_value_t = 16)]
     games_memory: u64,
+    /// Room the sample may take on disk, in GB, at 10 bytes a deal (in the checkpoint's directory, or the system's temporary
+    /// one without a checkpoint): by default 50, or half of what is free if that's less. Room for 5 bytes for every deal asks
+    /// for the full check on disk instead, which takes two more passes over the deals at the end.
+    #[arg(long)]
+    games_disk: Option<f64>,
     /// Skip the check that the deals are all different games.
     #[arg(long)]
     no_games_check: bool,
+    /// Pause, with exit code 74, when less than this is free on the checkpoint's disk, in GB.
+    #[arg(long, default_value_t = 5.0)]
+    keep_free: f64,
+    /// Pause once this many of the run's deals are done: a way to run in legs.
+    #[arg(long)]
+    until: Option<u64>,
+    /// Pause after this many hours of this session: a way to run in legs.
+    #[arg(long)]
+    stop_after: Option<f64>,
+    /// For testing the check for repeated games: every Nth deal is the deal before it.
+    #[arg(long, hide = true)]
+    plant_repeats: Option<usize>,
+}
+
+/// How a run checks that its deals are different games.
+#[derive(Clone, Copy, PartialEq, Serialize, Deserialize)]
+enum GamesPlan {
+    Off,
+    /// Every deal, at the end.
+    Whole,
+    /// A sample of the deals, noted as they are solved.
+    Sampled(Sieve),
 }
 
 /// What the proofs of the deals the solver didn't win found.
@@ -146,10 +175,23 @@ fn prover(
     tables: Option<Arc<Endgame>>,
     dossiers: Option<PathBuf>,
     state: &Mutex<ProofState>,
+    events: &Events,
 ) {
     for seed in seeds {
         let mut found = Proofs::default();
         prove_one(seed, &limits, tables.as_deref(), dossiers.as_deref(), &mut found);
+        events.note(&format!(
+            "seed {seed}: {}",
+            if found.lost > 0 {
+                "proven lost"
+            } else if found.won > 0 {
+                "won by the exhaustive search"
+            } else if found.undecided > 0 {
+                "undecided"
+            } else {
+                "PROOF FAILED"
+            }
+        ));
         let mut state = state.lock().expect("no panics");
         state.tally.lost += found.lost;
         state.tally.won += found.won;
@@ -209,7 +251,7 @@ fn prove_one(seed: u64, limits: &Limits, tables: Option<&Endgame>, dossiers: Opt
 }
 
 /// The run's tallies of the deals handed on so far.
-#[derive(Default, Serialize, Deserialize)]
+#[derive(Default, Clone, Serialize, Deserialize)]
 struct Tally {
     won: u64,
     exhausted: u64,
@@ -227,11 +269,24 @@ struct Tally {
 }
 
 /// A checkpoint's format.
-const VERSION: u32 = 1;
+const VERSION: u32 = 2;
 /// The bytes of a deal in the file of costs: its positions, and its microseconds.
 const COST_BYTES: usize = 16;
 /// The exit code of a run that paused because the GPU failed: try again, as a new process may well get the GPU back.
 const EXIT_GPU_FAILED: i32 = 75;
+/// The exit code of a run that paused or stopped because it can't save: make room on the disk, and carry on.
+const EXIT_NO_ROOM: i32 = 74;
+/// Checkpoints in a row that fail to save before the run pauses, rather than go on with nothing to show for it.
+const SAVES_FAILED_AT_MOST: u32 = 5;
+/// With no deal finished for this long, the GPU must have stuck where its watchdog didn't catch it.
+const STUCK_AFTER: Duration = Duration::from_secs(15 * 60);
+/// The most room the sample takes unless asked for more. It has only to back the assumption that the generator behaves like
+/// a random one: 5 billion records, enough to show a flaw that made more than a few hundred repeats in a trillion deals.
+const GAMES_DISK_MOST: u64 = 50_000_000_000;
+/// The number of deals, and of games: deals with suits and ranks renamed, each game being 4!·13! different deals, since no
+/// renaming leaves a deal of 52 different cards as it was.
+const DEALS: f64 = 8.065_817_517_094_388e67;
+const RENAMINGS: f64 = 149_448_499_200.0;
 /// How large a solve record is, about, to warn when --out won't fit.
 const RECORD_BYTES: u64 = 350;
 
@@ -259,8 +314,47 @@ struct Checkpoint {
     proofs: Proofs,
     proofs_pending: Vec<u64>,
     out_bytes: u64,
+    games: GamesPlan,
+    /// How much of the log of the sample counts, and how far checking it has got.
+    games_bytes: u64,
+    games_found: Found,
     /// The check for repeated games, once it is made.
     same: Option<Vec<(u64, u64)>>,
+}
+
+/// What has happened to a long run, a line each, with the time: `.events.log` beside the checkpoint, for reading after
+/// the terminal's history has gone. Nothing is written for a run with no checkpoint on disk, so short runs leave no trace.
+#[derive(Clone)]
+struct Events(Option<PathBuf>);
+
+impl Events {
+    fn note(&self, what: &str) {
+        let Some(checkpoint) = self.0.as_ref().filter(|p| p.exists()) else { return };
+        let log = OpenOptions::new().append(true).create(true).open(checkpoint.with_extension("events.log"));
+        if let Ok(mut log) = log {
+            let _ = writeln!(log, "{} {what}", dossier::now_utc());
+        }
+    }
+}
+
+/// Whether a run has stuck: no deals finished for [`STUCK_AFTER`].
+struct Stuck {
+    done: usize,
+    since: Instant,
+}
+
+impl Stuck {
+    fn new() -> Stuck {
+        Stuck { done: 0, since: Instant::now() }
+    }
+
+    fn after(&mut self, done: usize, now: Instant) -> bool {
+        if done != self.done {
+            self.done = done;
+            self.since = now;
+        }
+        now.duration_since(self.since) >= STUCK_AFTER
+    }
 }
 
 impl Checkpoint {
@@ -286,14 +380,50 @@ impl Checkpoint {
         self.proofs_pending = proofs.pending.iter().copied().collect();
     }
 
-    /// Saves it at `path`: first what it counts (`out`, and the costs of the deals solved on the CPU), so that it never
-    /// counts what a crash could lose, then itself, replacing the last one only once it is whole.
+    /// Writes the status file: where the run stands, for anything but the run to read. `session` is when this session
+    /// started and the deals done by then. It doesn't matter if this fails.
+    fn write_status(&self, path: &Path, word: &str, session: (Instant, usize), free: Option<u64>) {
+        let (done, count) = (self.standing.done as u64, self.args.count);
+        let per_s = (done - session.1 as u64) as f64 / session.0.elapsed().as_secs_f64().max(1e-3);
+        let status = serde_json::json!({
+            "state": word,
+            "updated": dossier::now_utc(),
+            "from": self.args.from,
+            "count": count,
+            "done": done,
+            "left": count - done,
+            "percent": 100.0 * done as f64 / count.max(1) as f64,
+            "deals_per_s_this_session": per_s.round(),
+            "deals_per_s_overall": (done as f64 / self.elapsed_s.max(1e-3)).round(),
+            "hours_left": if per_s > 0.0 { Some((count - done) as f64 / per_s / 3600.0) } else { None },
+            "hours_so_far": self.elapsed_s / 3600.0,
+            "sessions": self.sessions,
+            "commit": self.commits.last(),
+            "hardware": self.hardware,
+            "not_won_by_solver": self.tally.exhausted + self.tally.unknown,
+            "failed_verification": self.tally.failed + self.standing.gpu.failed,
+            "proofs": { "lost": self.proofs.lost, "won": self.proofs.won, "undecided": self.proofs.undecided,
+                        "failed": self.proofs.failed, "in_hand": self.proofs_pending.len() },
+            "gpu": { "won": self.standing.gpu.won, "launches": self.standing.gpu.launches,
+                     "attempts": self.standing.gpu.attempts },
+            "deals_on_cpu": self.tally.cpu_deals,
+            "games_log_gb": self.games_bytes as f64 / 1e9,
+            "disk_free_gb": free.map(|f| f as f64 / 1e9),
+        });
+        let text = serde_json::to_string_pretty(&status).expect("serializable") + "\n";
+        let (new, file) = (path.with_extension("status.tmp"), path.with_extension("status.json"));
+        let _ = std::fs::write(&new, text).and_then(|()| std::fs::rename(&new, &file));
+    }
+
+    /// Saves it at `path`: first what it counts (`out`, the log of the sample and the costs of the deals solved on the
+    /// CPU), so that it never counts what a crash could lose, then itself, replacing the last one only once it is whole.
     fn save(
         &mut self,
         path: &Path,
         nodes: &[u64],
         micros: &[u64],
         out: Option<&mut BufWriter<File>>,
+        games: Option<&mut BufWriter<File>>,
     ) -> Result<(), String> {
         if let Some(parent) = path.parent().filter(|p| !p.as_os_str().is_empty()) {
             std::fs::create_dir_all(parent).map_err(|e| format!("creating {}: {e}", parent.display()))?;
@@ -301,6 +431,10 @@ impl Checkpoint {
         if let Some(w) = out {
             let synced = w.flush().and_then(|()| w.get_ref().sync_data()).and_then(|()| w.get_ref().metadata());
             self.out_bytes = synced.map_err(|e| format!("writing --out: {e}"))?.len();
+        }
+        if let Some(w) = games {
+            let synced = w.flush().and_then(|()| w.get_ref().sync_data()).and_then(|()| w.get_ref().metadata());
+            self.games_bytes = synced.map_err(|e| format!("writing the log of the sample: {e}"))?.len();
         }
         let costs = path.with_extension("costs");
         let writing = |e: std::io::Error| format!("writing {}: {e}", costs.display());
@@ -352,6 +486,9 @@ pub fn run(given: &BatchArgs) -> Result<bool, String> {
             no_log: given.no_log,
             games_memory: given.games_memory,
             no_games_check: given.no_games_check,
+            keep_free: given.keep_free,
+            until: given.until,
+            stop_after: given.stop_after,
             ..c.args.clone()
         },
         None => given.clone(),
@@ -406,9 +543,13 @@ pub fn run(given: &BatchArgs) -> Result<bool, String> {
             proofs: Proofs::default(),
             proofs_pending: Vec::new(),
             out_bytes: 0,
+            games: GamesPlan::Off,
+            games_bytes: 0,
+            games_found: Found::default(),
             same: None,
         },
     };
+    let events = Events(path.clone());
     state.sessions += 1;
     let commit = crate::experiment::commit();
     if state.commits.last() != Some(&commit) {
@@ -421,7 +562,15 @@ pub fn run(given: &BatchArgs) -> Result<bool, String> {
     let some_left = state.standing.done < count;
     let gpu = match (is_resumed, some_left) {
         (_, false) => None,
-        (true, true) if state.gpu_name.is_some() => runner::open_gpu("on", settings)?,
+        (true, true) if state.gpu_name.is_some() => match runner::open_gpu("on", settings) {
+            Ok(gpu) => gpu,
+            Err(e) => {
+                // Not there for now, after a driver reset, say: this is as good as its failing during the run.
+                eprintln!("{e}");
+                events.note(&format!("session {} could not open the GPU: {e}", state.sessions));
+                std::process::exit(EXIT_GPU_FAILED);
+            }
+        },
         (true, true) => None,
         (false, true) => runner::open_gpu(&args.gpu, settings)?,
     };
@@ -461,7 +610,10 @@ pub fn run(given: &BatchArgs) -> Result<bool, String> {
         "seeds {}..{last_seed} ({} deals{carrying_on}), up to {} positions per deal, {hardware}",
         args.from, args.count, args.max_nodes
     );
-    let seeds = Seeds::Range { from: args.from, count };
+    let seeds = match args.plant_repeats {
+        Some(every) => Seeds::Repeating { from: args.from, count, every: every.max(2) },
+        None => Seeds::Range { from: args.from, count },
+    };
     let about = format!(
         "acc batch: seeds {}..{last_seed} ({} deals{carrying_on}), {hardware}, commit {commit}",
         args.from, args.count
@@ -480,14 +632,17 @@ pub fn run(given: &BatchArgs) -> Result<bool, String> {
         let _ = std::fs::remove_file(&pause_file);
         pause::catch_ctrl_c();
         pause::watch(pause_file.clone());
+        if let Some(hours) = args.stop_after {
+            pause::after(Duration::from_secs_f64(hours.max(0.0) * 3600.0));
+        }
         eprintln!(
             "checkpoint: {}; to pause, press Ctrl+C or create {}",
             path.display(),
             pause_file.display()
         );
     }
-    // The check for repeated games, at the end, in memory if it fits.
-    let check_games = !args.no_games_check && state.same.is_none();
+    // The check for repeated games: at the end, in memory if it fits, and on disk if it doesn't; of a sample if that won't
+    // fit either.
     let on_disk = args.count.saturating_mul(8) > args.games_memory.saturating_mul(1 << 30);
     let work_dir = path
         .as_deref()
@@ -495,10 +650,78 @@ pub fn run(given: &BatchArgs) -> Result<bool, String> {
         .filter(|p| !p.as_os_str().is_empty())
         .map_or_else(|| if path.is_some() { PathBuf::from(".") } else { std::env::temp_dir() }, Path::to_path_buf);
     let games_dir = work_dir.join(format!("games-{}-{}", args.from, args.count));
-    if check_games && on_disk {
-        std::fs::create_dir_all(&work_dir).map_err(|e| format!("creating {}: {e}", work_dir.display()))?;
-        warn_of_space(&work_dir, runner::same_games_disk_bytes(args.count), "the check for repeated games at the end");
+    let games_log = match &path {
+        Some(path) => path.with_extension("games"),
+        None => std::env::temp_dir().join(format!("acc-games-{}.log", std::process::id())),
+    };
+    if !is_resumed {
+        state.games = if args.no_games_check {
+            GamesPlan::Off
+        } else if !on_disk {
+            GamesPlan::Whole
+        } else {
+            std::fs::create_dir_all(&work_dir).map_err(|e| format!("creating {}: {e}", work_dir.display()))?;
+            let asked = args.games_disk.map(|gb| (gb * 1e9) as u64);
+            let room = asked.unwrap_or_else(|| {
+                free_bytes(&work_dir).map_or(GAMES_DISK_MOST, |free| (free / 2).min(GAMES_DISK_MOST))
+            });
+            if asked.is_some_and(|room| runner::same_games_disk_bytes(args.count) <= room) {
+                GamesPlan::Whole
+            } else if args.count > games::MAX_DEALS {
+                return Err(format!(
+                    "a run of more than {} deals is too long for the check for repeated games: run it in two, or add --no-games-check",
+                    games::MAX_DEALS
+                ));
+            } else {
+                GamesPlan::Sampled(Sieve::for_bytes(room, args.count))
+            }
+        };
+    } else if args.no_games_check && state.games != GamesPlan::Off {
+        // For good: a log that had missed some deals couldn't be taken up again.
+        state.games = GamesPlan::Off;
+        let _ = std::fs::remove_file(&games_log);
     }
+    let check_games = state.games != GamesPlan::Off && state.same.is_none();
+    match state.games {
+        GamesPlan::Whole if check_games && on_disk => {
+            std::fs::create_dir_all(&work_dir).map_err(|e| format!("creating {}: {e}", work_dir.display()))?;
+            warn_of_space(&work_dir, runner::same_games_disk_bytes(args.count), "the check for repeated games at the end");
+        }
+        GamesPlan::Sampled(sieve) => {
+            let room = (sieve.fraction() * args.count as f64) as u64 * games::RECORD as u64;
+            eprintln!(
+                "check for repeated games: a sample of {:.2}% of the deals, up to {:.0} GB in {}",
+                100.0 * sieve.fraction(),
+                room as f64 / 1e9,
+                games_log.display()
+            );
+            warn_of_space(&work_dir, room.saturating_sub(state.games_bytes), "the log of the sample");
+        }
+        _ => {}
+    }
+    let sieve = match state.games {
+        GamesPlan::Sampled(sieve) if some_left => Some(sieve),
+        _ => None,
+    };
+    let mut games_out = match sieve {
+        None => None,
+        Some(_) if is_resumed => {
+            let writing = |e: std::io::Error| format!("opening {}: {e}", games_log.display());
+            let mut file = OpenOptions::new().write(true).create(true).truncate(false).open(&games_log).map_err(writing)?;
+            if file.metadata().map_err(writing)?.len() < state.games_bytes {
+                return Err(format!("{} is shorter than the checkpoint says", games_log.display()));
+            }
+            file.set_len(state.games_bytes).map_err(writing)?;
+            file.seek(SeekFrom::End(0)).map_err(writing)?;
+            Some(BufWriter::new(file))
+        }
+        Some(_) => {
+            std::fs::create_dir_all(&work_dir).map_err(|e| format!("creating {}: {e}", work_dir.display()))?;
+            Some(BufWriter::new(
+                File::create(&games_log).map_err(|e| format!("creating {}: {e}", games_log.display()))?,
+            ))
+        }
+    };
     if let Some(p) = &args.out {
         let dir = p.parent().filter(|p| !p.as_os_str().is_empty()).unwrap_or(Path::new("."));
         warn_of_space(dir, (args.count - done_before as u64) * RECORD_BYTES, "the solve records of --out");
@@ -516,25 +739,35 @@ pub fn run(given: &BatchArgs) -> Result<bool, String> {
             Limits { positions: args.prove, bytes: args.prove_memory << 30, rng_seed: 1, pattern_piles: 16 };
         let (tables, dir) = (endgame.clone(), (!args.no_dossiers).then(|| args.dossiers.clone()));
         let proofs_state = Arc::clone(&proofs_state);
-        (Some(tx), Some(std::thread::spawn(move || prover(rx, limits, tables, dir, &proofs_state))))
+        let events = events.clone();
+        (Some(tx), Some(std::thread::spawn(move || prover(rx, limits, tables, dir, &proofs_state, &events))))
     } else {
         (None, None)
     };
     let start = Instant::now();
     let elapsed_before = state.elapsed_s;
     let mut gpu_error = None;
+    let session = (start, done_before);
+    let mut no_room = false;
+    let mut saves_failed = 0;
+    let mut starting = Some(format!("session {} started at {done_before} deals, on commit {commit}", state.sessions));
+    if is_resumed {
+        events.note(starting.take().as_deref().unwrap_or_default());
+    }
+    let on_the_gpu = gpu.is_some();
+    let mut stuck = Stuck::new();
     if some_left {
         let opts = Options {
             threads: workers,
             table_log2: args.table,
             endgame: endgame.clone(),
             records: out.is_some(),
-            each_gpu_win: false,
             gpu,
             from: state.standing.clone(),
             pause: path.is_some().then_some(&pause::PAUSE),
             checkpoint_every: path.is_some().then_some(every),
             pause_if_gpu_fails: path.is_some(),
+            sieve,
             ..Options::default()
         };
         let ran = runner::run(
@@ -549,15 +782,53 @@ pub fn run(given: &BatchArgs) -> Result<bool, String> {
                         state.tally.gpu_stage += n;
                         return Ok(());
                     }
+                    Finished::Sampled(records) => {
+                        let log = games_out.as_mut().expect("a sample is only asked for with a log");
+                        if let Err(e) = log.write_all(&records) {
+                            // The last checkpoint stands, and what it counts of the log.
+                            let what = format!("writing {}: {e}: make room and carry on", games_log.display());
+                            eprintln!("\n{what}");
+                            events.note(&what);
+                            std::process::exit(EXIT_NO_ROOM);
+                        }
+                        return Ok(());
+                    }
                     Finished::Checkpoint(standing) => {
                         state.standing = standing;
                         state.elapsed_s = elapsed_before + start.elapsed().as_secs_f64();
                         state.note_proofs(&proofs_state);
                         let path = path.as_ref().expect("a checkpoint is only asked for with a path");
-                        // The last one stands, if something has this one's file open for the moment.
-                        if let Err(e) = state.save(path, &nodes, &micros, out.as_mut()) {
-                            eprintln!("\ncheckpoint: {e}; trying again next time");
+                        let free = free_bytes(&work_dir);
+                        if free.is_some_and(|free| (free as f64) < args.keep_free * 1e9) && !no_room {
+                            let what = format!(
+                                "less than {} GB free in {}: pausing; make room and carry on",
+                                args.keep_free,
+                                work_dir.display()
+                            );
+                            eprintln!("\n{what}");
+                            events.note(&what);
+                            no_room = true;
+                            pause::ask();
                         }
+                        // The last one stands, if something has this one's file open for the moment.
+                        match state.save(path, &nodes, &micros, out.as_mut(), games_out.as_mut()) {
+                            Ok(()) => {
+                                saves_failed = 0;
+                                if let Some(text) = starting.take() {
+                                    events.note(&text);
+                                }
+                            }
+                            Err(e) => {
+                                saves_failed += 1;
+                                eprintln!("\ncheckpoint: {e}; trying again next time");
+                                events.note(&format!("checkpoint: {e}"));
+                                if saves_failed >= SAVES_FAILED_AT_MOST && !no_room {
+                                    no_room = true;
+                                    pause::ask();
+                                }
+                            }
+                        }
+                        state.write_status(path, "running", session, free);
                         return Ok(());
                     }
                 };
@@ -577,6 +848,7 @@ pub fn run(given: &BatchArgs) -> Result<bool, String> {
                 if let Err(e) = &s.verified {
                     tally.failed += 1;
                     eprintln!("\nseed {}: VERIFICATION FAILED: {e}", s.seed);
+                    events.note(&format!("seed {}: VERIFICATION FAILED: {e}", s.seed));
                 } else {
                     match s.report.verdict {
                         Verdict::Win(_) => {
@@ -615,7 +887,19 @@ pub fn run(given: &BatchArgs) -> Result<bool, String> {
                 }
                 Ok(())
             },
-            |p| meter.update(&p),
+            |p| {
+                meter.update(&p);
+                if args.until.is_some_and(|until| p.done as u64 >= until) {
+                    pause::ask();
+                }
+                // Nothing else would notice a GPU that never answers, and it would hold the run up for good.
+                if on_the_gpu && events.0.is_some() && stuck.after(p.done, Instant::now()) {
+                    let what = format!("no deal finished in {} minutes: stopping", STUCK_AFTER.as_secs() / 60);
+                    eprintln!("\n{what}; the last checkpoint stands");
+                    events.note(&what);
+                    std::process::exit(if pause::requested() { 0 } else { EXIT_GPU_FAILED });
+                }
+            },
         )?;
         gpu_error = ran.gpu.as_ref().and_then(|t| t.error.clone());
         state.standing = Standing { done: ran.done, gpu: ran.gpu.unwrap_or_default() };
@@ -625,22 +909,50 @@ pub fn run(given: &BatchArgs) -> Result<bool, String> {
     if state.standing.done < count {
         let Some(path) = &path else { return Err("the run stopped early, with no checkpoint".into()) };
         state.note_proofs(&proofs_state);
-        state.save(path, &nodes, &micros, out.as_mut())?;
+        let saved = state.save(path, &nodes, &micros, out.as_mut(), games_out.as_mut());
+        if let Err(e) = saved {
+            if no_room {
+                eprintln!("{e}; the last checkpoint stands");
+                events.note(&format!("{e}; the last checkpoint stands"));
+                std::process::exit(EXIT_NO_ROOM);
+            }
+            return Err(e);
+        }
         eprintln!(
             "paused after {} of {} deals\ncarry on with: acc batch --resume {}",
             state.standing.done,
             args.count,
             path.display()
         );
-        if gpu_error.is_some() {
+        if let Some(text) = starting.take() {
+            events.note(&text);
+        }
+        let free = free_bytes(&work_dir);
+        if let Some(e) = &gpu_error {
+            events.note(&format!("paused at {} deals: the GPU failed: {e}", state.standing.done));
+            state.write_status(path, "paused: the GPU failed", session, free);
             std::process::exit(EXIT_GPU_FAILED);
         }
+        if no_room {
+            state.write_status(path, "paused: no room", session, free);
+            std::process::exit(EXIT_NO_ROOM);
+        }
+        events.note(&format!("paused at {} deals", state.standing.done));
+        state.write_status(path, "paused", session, free);
         return Ok(true);
     }
     if let Some(w) = out.as_mut() {
-        w.flush().map_err(|e| e.to_string())?;
+        // The checkpoint counts these bytes from here on: a resume cuts --out back to the length the checkpoint has, so a pause
+        // or a crash while the last proofs and the check run must not leave it at the length before the last records.
+        let synced = w.flush().and_then(|()| w.get_ref().sync_data()).and_then(|()| w.get_ref().metadata());
+        state.out_bytes = synced.map_err(|e| format!("writing --out: {e}"))?.len();
     }
     drop(out);
+    if let Some(w) = games_out.as_mut() {
+        let synced = w.flush().and_then(|()| w.get_ref().sync_data()).and_then(|()| w.get_ref().metadata());
+        state.games_bytes = synced.map_err(|e| format!("writing {}: {e}", games_log.display()))?.len();
+    }
+    drop(games_out);
     // The rest can take hours, and it can pause too: it is all done again from here, but for the proofs finished.
     drop(to_prover);
     let pending = proofs_state.lock().expect("no panics").pending.len();
@@ -649,8 +961,17 @@ pub fn run(given: &BatchArgs) -> Result<bool, String> {
         1 => eprintln!("finishing the proof of the deal not won"),
         _ => eprintln!("finishing the proofs of the {pending} deals not won"),
     }
+    let games_found = Arc::new(Mutex::new(state.games_found.clone()));
     let mut check = check_games.then(|| {
-        if on_disk {
+        let sampled = matches!(state.games, GamesPlan::Sampled(_));
+        if sampled {
+            eprintln!(
+                "checking the sample for repeats: {:.0} GB in {}, at most {} GB of it at a time",
+                state.games_bytes as f64 / 1e9,
+                games_log.display(),
+                args.games_memory
+            );
+        } else if on_disk {
             eprintln!(
                 "checking that the deals all differ, on disk: up to {:.0} GB in {} for now",
                 runner::same_games_disk_bytes(args.count) as f64 / 1e9,
@@ -658,9 +979,18 @@ pub fn run(given: &BatchArgs) -> Result<bool, String> {
             );
         }
         let dir = games_dir.clone();
+        let (log, bytes, memory, found) =
+            (games_log.clone(), state.games_bytes, args.games_memory << 30, Arc::clone(&games_found));
         std::thread::spawn(move || {
             let print = |s| runner::fingerprint(&Deal::from_seed(s));
-            if on_disk { runner::same_games_on_disk(seeds, print, &dir) } else { Ok(runner::same_games(seeds, print)) }
+            if sampled {
+                games::check(&log, bytes, seeds, memory, &found)?;
+                Ok(found.lock().expect("no panics").same.clone())
+            } else if on_disk {
+                runner::same_games_on_disk(seeds, print, &dir)
+            } else {
+                Ok(runner::same_games(seeds, print))
+            }
         })
     });
     let mut games_error = None;
@@ -673,7 +1003,7 @@ pub fn run(given: &BatchArgs) -> Result<bool, String> {
                 Err(e) if path.is_some() => {
                     let path = path.as_ref().expect("just checked");
                     state.note_proofs(&proofs_state);
-                    state.save(path, &nodes, &micros, None)?;
+                    state.save(path, &nodes, &micros, None, None)?;
                     return Err(format!(
                         "the check for repeated games: {e}\nnothing is lost: carry on with `acc batch --resume {}`, adding --no-games-check to skip it",
                         path.display()
@@ -687,6 +1017,13 @@ pub fn run(given: &BatchArgs) -> Result<bool, String> {
         let before = (state.proofs, state.proofs_pending.len());
         state.note_proofs(&proofs_state);
         unsaved |= before != (state.proofs, state.proofs_pending.len());
+        // How far the check of the sample has got, to carry on from there.
+        if let Ok(found) = games_found.try_lock()
+            && *found != state.games_found
+        {
+            state.games_found = found.clone();
+            unsaved = true;
+        }
         let over = check.is_none() && proved;
         // Runs short enough to end here at once leave no files behind.
         let paused = pause::requested();
@@ -695,7 +1032,8 @@ pub fn run(given: &BatchArgs) -> Result<bool, String> {
             && !over
             && (paused || final_stage.elapsed() >= Duration::from_secs(1))
         {
-            state.save(path, &nodes, &micros, None)?;
+            state.save(path, &nodes, &micros, None, None)?;
+            state.write_status(path, "finishing", session, free_bytes(&work_dir));
             unsaved = false;
         }
         if over {
@@ -704,6 +1042,8 @@ pub fn run(given: &BatchArgs) -> Result<bool, String> {
         if paused {
             let path = path.as_ref().expect("only a run with a checkpoint pauses");
             eprintln!("paused after all the deals\ncarry on with: acc batch --resume {}", path.display());
+            events.note("paused after all the deals");
+            state.write_status(path, "paused", session, free_bytes(&work_dir));
             std::process::exit(0);
         }
         std::thread::sleep(Duration::from_millis(100));
@@ -712,10 +1052,11 @@ pub fn run(given: &BatchArgs) -> Result<bool, String> {
         h.join().expect("the prover does not panic");
     }
     let proofs = state.proofs;
-    let Tally { won, exhausted, unknown, failed, gpu_stage, mut stages, total_nodes, any_dossier, hardest, .. } = state.tally;
+    let Tally { won, exhausted, unknown, failed, gpu_stage, mut stages, total_nodes, any_dossier, hardest, .. } =
+        state.tally.clone();
     let elapsed = state.elapsed_s;
-    let gpu_totals = state.gpu_name.is_some().then_some(state.standing.gpu);
-    let same = state.same;
+    let gpu_totals = state.gpu_name.is_some().then_some(state.standing.gpu.clone());
+    let same = state.same.clone();
     if gpu_stage > 0 {
         stages.insert(Stage::Gpu.to_string(), gpu_stage);
     }
@@ -818,7 +1159,41 @@ pub fn run(given: &BatchArgs) -> Result<bool, String> {
         );
     }
     say!("failed to verify {failed}");
+    let in_sample = state.games_bytes / games::RECORD as u64;
+    let fraction = in_sample as f64 / n as f64;
+    let found = games_found.lock().expect("no panics").clone();
+    let pairs = n as f64 * (n as f64 - 1.0) / 2.0;
+    say!(
+        "repeat odds      {:.1e} that any two of these deals are the same game (suits and ranks renamed), {:.1e} the same deal, if the generator behaves like a random one (n²/2 over 52!/(4!·13!), and over 52!)",
+        pairs / (DEALS / RENAMINGS),
+        pairs / DEALS
+    );
     match &same {
+        Some(_) if matches!(state.games, GamesPlan::Sampled(_)) && found.repeats == 0 && in_sample == n => {
+            say!("distinct games   all {n} deals differ, even with suits and ranks renamed");
+        }
+        Some(_) if matches!(state.games, GamesPlan::Sampled(_)) => {
+            let chance = format!(
+                "{} other pairs share 40 bits of their fingerprints, against {:.0} by chance",
+                found.chance,
+                games::chance_matches(in_sample)
+            );
+            if found.repeats == 0 {
+                say!(
+                    "distinct games   not all checked: no repeats among the {in_sample} deals a hash of the game picked, {:.3}% of the {n}, even with suits and ranks renamed. Any two the same are picked together, so {} or more pairs the same among the {n} would have been seen with 95% chance. {chance}",
+                    100.0 * fraction,
+                    games::repeats_ruled_out(fraction)
+                );
+            } else {
+                let shown: Vec<String> = found.same.iter().take(20).map(|(a, b)| format!("{a}={b}")).collect();
+                say!(
+                    "distinct games   {} pairs of seeds deal the same game (up to renamed suits and ranks), among the {in_sample} deals a hash of the game picked, {:.3}% of the {n}: {}. {chance}",
+                    found.repeats,
+                    100.0 * fraction,
+                    shown.join(", ")
+                );
+            }
+        }
         Some(same) if same.is_empty() => {
             say!("distinct games   all {n} deals differ, even with suits and ranks renamed");
         }
@@ -916,11 +1291,23 @@ pub fn run(given: &BatchArgs) -> Result<bool, String> {
             true
         };
         if saved {
+            if began.elapsed() >= every || is_resumed {
+                events.note(&format!("finished: {} deals, report in {}", args.count, report_file.display()));
+                state.write_status(path, "finished", session, free_bytes(&work_dir));
+            } else {
+                // A run this short leaves nothing behind.
+                let _ = std::fs::remove_file(path.with_extension("status.json"));
+                let _ = std::fs::remove_file(path.with_extension("events.log"));
+            }
             let _ = std::fs::remove_file(path);
+            let _ = std::fs::remove_file(&games_log);
             let _ = std::fs::remove_file(path.with_extension("costs"));
             let _ = std::fs::remove_file(path.with_extension("tmp"));
             let _ = std::fs::remove_dir_all(&games_dir);
         }
+    }
+    if path.is_none() {
+        let _ = std::fs::remove_file(&games_log);
     }
     Ok(failed == 0 && proofs.failed == 0 && gpu_totals.is_none_or(|t| t.failed == 0))
 }
@@ -977,3 +1364,20 @@ fn stay_awake() {
 
 #[cfg(not(windows))]
 fn stay_awake() {}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn stuck_means_no_deals_for_the_whole_time() {
+        let mut stuck = Stuck::new();
+        let t = stuck.since;
+        assert!(!stuck.after(0, t + STUCK_AFTER / 2));
+        assert!(stuck.after(0, t + STUCK_AFTER));
+        // A deal finishing starts the time again.
+        assert!(!stuck.after(1, t + STUCK_AFTER * 2));
+        assert!(!stuck.after(1, t + STUCK_AFTER * 2 + STUCK_AFTER / 2));
+        assert!(stuck.after(1, t + STUCK_AFTER * 3));
+    }
+}

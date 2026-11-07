@@ -88,21 +88,33 @@ report comes out as for one run:
 cargo run --release -p accordion-cli -- batch --resume checkpoints/batch-0-100000.json
 ```
 
-Only `--threads`, `--checkpoint-every`, `--log-dir`, `--no-log`, `--games-memory` and `--no-games-check` can be given with
-`--resume`. A run that ends removes its checkpoint, and if it took over a minute it leaves its report beside where that
+Only `--threads`, `--checkpoint-every`, `--log-dir`, `--no-log`, `--games-memory`, `--no-games-check`, `--keep-free`, `--until`
+and `--stop-after` can be given with `--resume`. A run that ends removes its checkpoint, and if it took over a minute it leaves its report beside where that
 was (`.report.txt`). Starting a run whose checkpoint is still there is an error, so a paused run can't be overwritten by
 accident; `--checkpoint <path>` puts it elsewhere and `--no-checkpoint` keeps none.
 
-If the GPU fails, the run pauses rather than go on at the CPU's speed, and exits with code 75: a new process usually gets
-the GPU back. To restart it by itself, in PowerShell:
+If the GPU fails, or no deal finishes for 15 minutes, the run stops rather than go on at the CPU's speed, and exits with code
+75: a new process usually gets the GPU back. If the disk has under `--keep-free` left (5 GB), or checkpoints keep failing to
+save, it pauses and exits with code 74: make room and carry on. For a run of days, `tools/long-run.ps1` sees it through: it
+starts the run, or carries on if its checkpoint is there, and carries on again after a GPU failure or a crash until that stops
+making progress. Give it a copy of `acc.exe` that has been seen to start, as Smart App Control can block a rebuilt one:
 
 ```powershell
-do { cargo run --release -p accordion-cli -- batch --resume checkpoints/batch-0-100000.json } while ($LASTEXITCODE -eq 75)
+powershell -ExecutionPolicy Bypass -File tools\long-run.ps1 -Acc C:\runs\acc.exe -From 22000000000 -Count 200000000000
 ```
 
-The check that the deals are all different games holds 8 bytes a deal in memory up to `--games-memory` (16 GB, 2 billion
-deals) and works from disk past that, about 5 bytes a deal for a while; `--no-games-check` skips it. See "pausing, and tens
-of billions of deals" in [docs/BENCHMARKS.md](docs/BENCHMARKS.md).
+A run can go in legs: `--stop-after 8` pauses it after 8 hours of the session and `--until 50000000000` once that many deals are
+done, and either goes with `--resume` (or `-StopAfterHours` and `-Until` on the script). Beside the checkpoint,
+`.status.json` says where the run stands, updated every minute, and `.events.log` says what has happened to it (sessions,
+pauses, GPU failures, proofs), which outlasts the terminal's history. Neither takes the place of the report.
+
+The report gives the odds that any two of the deals are the same game, by the birthday bound and on the condition that the
+generator behaves like a random one: about 1 in 10³³ at a trillion deals. The check backs that condition. Up to `--games-memory`
+(16 GB, 2 billion deals) it looks at every deal, at the end, and only then does the report say that all the deals differ. Past
+that it looks at a sample, picked by a hash of the game as the deals are solved, 10 bytes each in up to `--games-disk` (by default
+50 GB, or half of what is free if that's less), and the report says how many repeats it would have seen. Room for 5 bytes a deal
+in `--games-disk` asks for the full check on disk instead, two more passes over the deals at the end. `--no-games-check` skips
+the check. See "pausing, and tens of billions of deals" and "a trillion deals" in [docs/BENCHMARKS.md](docs/BENCHMARKS.md).
 
 Prove a deal or position lost by two independent exhaustive searches, each with an exact (lossless) set of dead
 positions. A typical winnable deal is far out of reach, but lost deals tend to be small: the three found in two billion

@@ -9,8 +9,9 @@
 //! is replayed by the reference rules, and a deal the GPU didn't win goes through the CPU solver from the start, like
 //! any other.
 
+use crate::games::Sieve;
 use accordion_core::fast::Position;
-use accordion_core::game::replay_tops;
+use accordion_core::game::{replay_codes, replay_tops};
 use accordion_core::notation::encode_compact;
 use accordion_core::verify::verify;
 use accordion_core::{Deal, Game, Move, Outcome, SolveRecord};
@@ -35,12 +36,14 @@ use std::time::{Duration, Instant};
 pub enum Seeds<'a> {
     Range { from: u64, count: usize },
     List(&'a [u64]),
+    /// A range in which every `every`th deal is the deal before it: repeats, to test the check for them with.
+    Repeating { from: u64, count: usize, every: usize },
 }
 
 impl Seeds<'_> {
     pub fn count(&self) -> usize {
         match *self {
-            Seeds::Range { count, .. } => count,
+            Seeds::Range { count, .. } | Seeds::Repeating { count, .. } => count,
             Seeds::List(seeds) => seeds.len(),
         }
     }
@@ -50,6 +53,7 @@ impl Seeds<'_> {
         match *self {
             Seeds::Range { from, .. } => from + i as u64,
             Seeds::List(seeds) => seeds[i],
+            Seeds::Repeating { from, every, .. } => from + i as u64 - u64::from(i % every == every - 1),
         }
     }
 }
@@ -76,6 +80,8 @@ pub struct Options {
     /// If the GPU fails, pause rather than solve the rest on the CPU, which at these counts would take a month; the GPU
     /// may well work again for a new process.
     pub pause_if_gpu_fails: bool,
+    /// Hand on [`Finished::Sampled`] for the deals in this sample.
+    pub sieve: Option<Sieve>,
     /// Make the GPU fail after this many launches, with the next batch in its hands.
     #[cfg(test)]
     pub fail_gpu_after: Option<u64>,
@@ -87,6 +93,8 @@ pub enum Finished {
     Deal(Solved),
     /// This many more deals won on the GPU, all verified, when no records of them are wanted.
     GpuWins(u64),
+    /// The log's records ([`crate::games`]) of the deals about to be handed on, or counted in [`Finished::GpuWins`].
+    Sampled(Vec<u8>),
     /// Where the run stands, with all that the sink has been handed so far.
     Checkpoint(Standing),
 }
@@ -217,6 +225,8 @@ struct Stretch {
     count: usize,
     /// How many of them the GPU won, when no record of those is wanted.
     wins: u64,
+    /// The log's records of those in the sample.
+    sampled: Vec<u8>,
     /// The others, in order.
     solved: Vec<Solved>,
     /// What the GPU did for them.
@@ -403,6 +413,18 @@ pub fn run(
                         for i in run {
                             let index = batch.indices[i];
                             let seed = seeds.seed(index);
+                            // The deal is made only when something wants it: the full replay that is due, and the few
+                            // deals in the sample (the GPU's batches have the cards' codes to take the sample by).
+                            if let Some(sieve) = &opts.sieve {
+                                if batch.given {
+                                    sieve.note_codes(batch.result.codes(i), index, &mut done.sampled, || {
+                                        Deal::from_seed(seed)
+                                    });
+                                } else {
+                                    sieve.note(&Deal::from_seed(seed), index, &mut done.sampled);
+                                }
+                            }
+                            let deal = index.is_multiple_of(FULL_REPLAY_EVERY).then(|| Deal::from_seed(seed));
                             if batch.given {
                                 done.gpu.deals += 1;
                                 done.gpu.attempts += u64::from(batch.result.tries(i));
@@ -413,7 +435,7 @@ pub fn run(
                                     gpu_win_recorded(&batch.result, i, index, seed, opts.records)
                                         .map(|solved| done.solved.push(solved))
                                 } else {
-                                    gpu_line_verifies(&batch.result, i, index, seed, &mut moves)
+                                    gpu_line_verifies(&batch.result, i, index, deal.as_ref(), &mut moves)
                                         .map(|()| done.wins += 1)
                                 };
                                 match verified {
@@ -451,6 +473,9 @@ pub fn run(
                         }
                         done.first = index;
                         done.count = 1;
+                        if let Some(sieve) = &opts.sieve {
+                            sieve.note(&Deal::from_seed(seeds.seed(index)), index, &mut done.sampled);
+                        }
                         done.solved.push(solve_one(index, seeds.seed(index), config, &mut search, opts.records));
                         time.own += us(t);
                     }
@@ -502,9 +527,11 @@ pub fn run(
                     {
                         standing.done += stretch.count;
                         standing.gpu.add(&stretch.gpu);
+                        let sampled = (!stretch.sampled.is_empty()).then_some(Finished::Sampled(stretch.sampled));
                         let wins = (stretch.wins > 0).then_some(Finished::GpuWins(stretch.wins));
-                        result = wins
+                        result = sampled
                             .into_iter()
+                            .chain(wins)
                             .chain(stretch.solved.into_iter().map(Finished::Deal))
                             .try_for_each(&mut sink);
                     }
@@ -577,18 +604,31 @@ fn feed(
 }
 
 /// Verifies the line of the deal the GPU won at `i` of `result`, without allocating (`moves`: a buffer, used over and
-/// over).
+/// over). `deal` is the seed's deal, which the caller makes (once) when the full replay is due.
 fn gpu_line_verifies(
     result: &BatchResult,
     i: usize,
     index: usize,
-    seed: u64,
+    deal: Option<&Deal>,
     moves: &mut Vec<Move>,
 ) -> Result<(), String> {
     let line = result.line(i).expect("it is won");
     moves.clear();
     moves.extend(line.iter().map(|&b| Move::from_byte(b)));
-    replay(index, &Deal::from_seed(seed), moves, true)
+    let codes = result.codes(i);
+    let piles = replay_codes(codes, moves).map_err(|(i, e)| format!("move {}: {e}", i + 1))?;
+    if piles != 1 {
+        return Err(format!("the line ends with {piles} piles, not one"));
+    }
+    // Now and then all the way from the seed, with the reference engine: that the GPU had this seed's deal, and the rules.
+    if index.is_multiple_of(FULL_REPLAY_EVERY) {
+        let deal = deal.expect("the worker makes the deal for every full replay");
+        if deal_codes(deal) != *codes {
+            return Err("the GPU's deal isn't this seed's".to_string());
+        }
+        replay(index, deal, moves, true)?;
+    }
+    Ok(())
 }
 
 /// A deal the GPU won with all that is known of it, verified, or the error if its line fails.
@@ -680,14 +720,16 @@ fn replay(index: usize, deal: &Deal, line: &[Move], won: bool) -> Result<(), Str
     Ok(())
 }
 
+/// SplitMix64's finisher: every bit of `z` in every bit of the result.
+pub fn mix(mut z: u64) -> u64 {
+    z = (z ^ (z >> 30)).wrapping_mul(0xBF58_476D_1CE4_E5B9);
+    z = (z ^ (z >> 27)).wrapping_mul(0x94D0_49BB_1331_11EB);
+    z ^ (z >> 31)
+}
+
 /// A 64-bit fingerprint of the deal with suits and ranks renamed ([`Deal::relabelled`]): deals that play alike
 /// share it, and different ones almost never do.
 pub fn fingerprint(deal: &Deal) -> u64 {
-    let mix = |mut z: u64| {
-        z = (z ^ (z >> 30)).wrapping_mul(0xBF58_476D_1CE4_E5B9);
-        z = (z ^ (z >> 27)).wrapping_mul(0x94D0_49BB_1331_11EB);
-        z ^ (z >> 31)
-    };
     deal.relabelled().cards().chunks(8).fold(0x9E37_79B9_7F4A_7C15, |h, chunk| {
         mix(h ^ chunk.iter().fold(0u64, |w, c| w << 8 | u64::from(c.code())))
     })
@@ -863,6 +905,14 @@ mod tests {
     use super::*;
 
     #[test]
+    fn wilson_at_a_trillion_deals_is_good_to_the_digits_printed() {
+        // By Python's decimal module, to the 10 decimals of a percentage that the report prints.
+        let (lo, hi) = wilson(1_000_000_000_000 - 1_040, 1_000_000_000_000);
+        assert!((100.0 * lo - 99.9999998895_f64).abs() < 1e-10, "{}", 100.0 * lo);
+        assert!((100.0 * hi - 99.9999999021_f64).abs() < 1e-10, "{}", 100.0 * hi);
+    }
+
+    #[test]
     fn wilson_interval_matches_known_values() {
         let (lo, hi) = wilson(0, 10);
         assert!(lo == 0.0 && (hi - 0.2775).abs() < 1e-3, "{hi}");
@@ -894,6 +944,7 @@ mod tests {
                         return Ok(());
                     }
                     Finished::Checkpoint(_) => panic!("none were asked for"),
+                    Finished::Sampled(_) => panic!("no sample was asked for"),
                 };
                 let index = (s.seed - seeds[0]) as usize;
                 assert!(last_index.is_none_or(|last| last < index), "out of order");
@@ -971,6 +1022,7 @@ mod tests {
                             }
                         }
                         Finished::GpuWins(_) => panic!("each win was asked for"),
+                        Finished::Sampled(_) => panic!("no sample was asked for"),
                         // Every deal before a checkpoint has been handed on, and no others.
                         Finished::Checkpoint(standing) => assert_eq!(standing.done, handed_on),
                     }
@@ -1061,6 +1113,69 @@ mod tests {
                 check_pause(Some(Arc::clone(&gpu)), 30_000, 400, &PAUSE);
                 check_gpu_failure(gpu);
             }
+            None => eprintln!("skipped: no GPU"),
+        }
+    }
+
+    /// A sample's records come out in seed order, each once, whatever happens to the run on the way.
+    fn check_sample(gpu: Option<Arc<Gpu>>, count: usize, pause: &'static AtomicBool) {
+        let seeds = Seeds::Range { from: 1 << 40, count };
+        let sieve = Sieve { below: 1 << 61 };
+        let mut want = Vec::new();
+        for i in 0..count {
+            sieve.note(&Deal::from_seed(seeds.seed(i)), i, &mut want);
+        }
+        assert!(want.len() > 10 * crate::games::RECORD, "{} bytes", want.len());
+        let (mut got, mut from, mut goes) = (Vec::new(), Standing::default(), 0);
+        while from.done < count {
+            goes += 1;
+            pause.store(false, Ordering::Relaxed);
+            let opts = Options {
+                threads: 4,
+                table_log2: 12,
+                gpu: gpu.clone(),
+                from: from.clone(),
+                pause: Some(pause),
+                sieve: Some(sieve),
+                ..Options::default()
+            };
+            let mut stretches = 0;
+            let ran = run(
+                seeds,
+                &Config::default(),
+                &opts,
+                |finished| {
+                    if let Finished::Sampled(records) = finished {
+                        got.extend(records);
+                        stretches += 1;
+                        if stretches == 8 {
+                            pause.store(true, Ordering::Relaxed);
+                        }
+                    }
+                    Ok(())
+                },
+                |_| {},
+            )
+            .unwrap();
+            from = Standing { done: ran.done, gpu: ran.gpu.unwrap_or_default() };
+        }
+        assert!(got == want, "{} bytes, not {}", got.len(), want.len());
+        if gpu.is_some() {
+            assert!(goes > 1, "it never paused");
+        }
+    }
+
+    #[test]
+    fn a_sample_comes_out_in_order() {
+        static PAUSE: AtomicBool = AtomicBool::new(false);
+        check_sample(None, 3_000, &PAUSE);
+    }
+
+    #[test]
+    fn a_sample_comes_out_in_order_with_the_gpu_too() {
+        static PAUSE: AtomicBool = AtomicBool::new(false);
+        match open_gpu("auto", Settings::default()).unwrap() {
+            Some(gpu) => check_sample(Some(gpu), 300_000, &PAUSE),
             None => eprintln!("skipped: no GPU"),
         }
     }

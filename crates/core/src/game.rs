@@ -192,6 +192,31 @@ pub fn replay_tops(deal: &Deal, line: &[Move]) -> Result<usize, (usize, MoveErro
     Ok(piles)
 }
 
+/// [`replay_tops`] from the cards' codes, as a batch for the GPU already has them, so that a deal isn't shuffled again
+/// to check its line.
+pub fn replay_codes(codes: &[u8; 52], line: &[Move]) -> Result<usize, (usize, MoveError)> {
+    let mut tops = *codes;
+    let mut piles = tops.len();
+    let card = |c: u8| Card::from_code(c).expect("a card's code");
+    for (i, &mv) in line.iter().enumerate() {
+        let (pile, distance) = (mv.pile as usize, mv.distance());
+        let error = if pile >= piles {
+            MoveError::NoSuchPile { pile, piles }
+        } else if pile < distance {
+            MoveError::NothingToTheLeft { pile, distance }
+        } else if (tops[pile] ^ tops[pile - distance]) & 0x0F != 0 && (tops[pile] ^ tops[pile - distance]) & 0x70 != 0 {
+            MoveError::NoMatch { mover: card(tops[pile]), target: card(tops[pile - distance]) }
+        } else {
+            tops[pile - distance] = tops[pile];
+            tops.copy_within(pile + 1..piles, pile);
+            piles -= 1;
+            continue;
+        };
+        return Err((i, error));
+    }
+    Ok(piles)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -233,6 +258,7 @@ mod tests {
         let mut illegal = 0;
         for seed in 0..2000 {
             let deal = Deal::from_seed(seed);
+            let codes: [u8; 52] = std::array::from_fn(|i| deal.cards()[i].code());
             let mut game = Game::new(&deal);
             let mut line = Vec::new();
             loop {
@@ -243,6 +269,7 @@ mod tests {
                     legal[rng.below(legal.len() as u64) as usize]
                 };
                 line.push(mv);
+                assert_eq!(replay_codes(&codes, &line), replay_tops(&deal, &line));
                 match game.apply(mv) {
                     Ok(()) => assert_eq!(replay_tops(&deal, &line), Ok(game.pile_count())),
                     Err(e) => {
