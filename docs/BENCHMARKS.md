@@ -1945,7 +1945,7 @@ powershell -ExecutionPolicy Bypass -File tools\long-run.ps1 -Acc C:\runs\acc.exe
 
 ## After Phase 8 — look-ahead, learning within a deal, and a feed that keeps the GPU busy
 
-A kernel with fewer attempts a deal, and a host that doesn't starve the GPU: 3.17M deals/s hot against 1.87M on 406bb98, x1.69, every line verified. The CPU stayed above its 12 W state in these runs, so this isn't yet a sustained figure (below).
+A kernel with fewer attempts a deal, and a host that doesn't starve the GPU: 3.17M deals/s hot against 1.87M on 406bb98, x1.69, every line verified. The CPU stayed above its 12 W state in these runs, so this isn't yet a sustained figure (below). **Sustained, measured since:** 3,130,008 and 3,045,882 against 1,506,523 and 1,520,620, x2.04, by 10-minute runs (next section).
 
 **The kernel, step by step, GPU alone.** One hold, 3 alternated passes, 2M deals a run, seeds from 600,000,000,000, timed without verifying, then one more run of each with every line verified. Medians:
 
@@ -2012,3 +2012,58 @@ No golden values changed. Clippy: no warnings.
 - **The batch line check and deal maker** (`quick.rs`): line check 93 ns on a P-core against 147 for this build's, 0 disagreements on 110M real lines. It conflicts with the feed in `runner.rs`, and adds 1.1% hot while the GPU is the limit. Next build.
 - **The bit-parallel pattern policy** in the kernel: x1.187 on the first stack step alone (13.0 attempts, 1,040 positions, 6.55M lines verified, 0 failed), reported as this build closed. Not on one draw a turn or learning, kernel tests and hot not run. Next build.
 - **The kernel's clean-up** (507 lines of unused kernels and helpers): same machine code, so no hurry, and it would have moved every patch here.
+
+## After Phase 8 — patterns in the prefix, a cheaper line check, three launches in flight
+
+A prefix policy of bit-parallel patterns, a cheap scan of the deals already won, a third launch in flight and the line check of `quick.rs`: 3.88M deals/s sustained against 3.01M on be759ba, x1.29 over 10-minute runs, every line verified. GPU alone x1.37.
+
+**The steps, GPU alone.** Built-in kernels and hosts, one hold, 3 alternated passes, 8M deals a run, seeds from 600,000,000,000, no line check. Medians:
+
+| Build | Deals/s | Against be759ba | Attempts | Positions |
+|---|---|---|---|---|
+| be759ba | 3,170,230 | 1.000 | 10.69 | 1150 |
+| Patterns, scan, config, with 2 launches in flight | 4,170,970 | 1.316 | 6.80 | 613 |
+| + 3 in flight: **this build** | 4,338,715 | **1.368** (1.368-1.371 by pass) | 6.80 | 613 |
+
+Three in flight against two: x1.040 (1.032-1.060 by pass).
+
+- **Patterns replace look-ahead.** One copy of the scorer in a fixed-length loop, with no retries. Its weights were tuned by play in the kernel, 1M deals an evaluation, which took attempts from 7.61 to 6.67 on the tuning seeds. Learning needs no new code: the targets arrive through the same two words.
+- **The scan of won deals was what hid the policy's gain.** Loading a won flag per deal, per pass, took 17% of thread time with groups of 2. From 64 tries, a warp takes 32 words of groups at once and reads their won bits, kept in free bytes of low deals' lines. Stale bits only cost a needless visit. It's off unless the batch is a multiple of 32 and at least 1,024 deals.
+- **Bundles.** From 128 tries, a pass gives each deal still left 32 groups at once, so passes and scans come 32 times less often, and 10,240 tries cost next to nothing: misses per 100k fell from about 1 to 0.05. The tries are the same tries, in another order.
+- **Config, now the defaults:** rungs `[[40,128],[38,10112]]`, groups of 2, gate `[8,10]`, batch 131072.
+- **The third launch.** With two, the GPU sat idle between attempts kernels while the host uploaded.
+- **`quick.rs`.** Line check at 93 ns on a P-core against 147 for the one it replaces (773 for the reference replay), by PDEP on a bit per pile, with the rank-or-suit, byte-range and full-deck checks in bulk at the end. Deal maker 105 ns against 146; masks about 5 against 52. Anything it doesn't accept goes to the reference engine, which decides, as does the full replay on every 256th deal. 0 disagreements on 111.99M real lines, 440M+ mutants and 1.11B seeds.
+
+**The build's own kernel, verified with the host's settings:**
+
+| Deals, seeds from | GPU time, deals/s | Won by the GPU | Failed | Misses, all won by the CPU |
+|---|---|---|---|---|
+| 2,000,000, 600,000,000,000 | 4,043,537 | 2,000,000 | 0 | 0 |
+| 4,000,000, 915,000,000,000 | 4,594,210 | 3,999,997 | 0 | 3 |
+| 6,553,600, 920,000,000,000 | 4,673,224 | 6,553,596 | 0 | 4 |
+
+**Sustained `acc batch`,** 10 minutes a run by `--stop-after`, alternated, from 900,000,000,000, in order. Under 13 W and over 13 W split each run by the CPU package's power, sampled every 20 s:
+
+| Build | Deals/s, whole run | Last half | Under 13 W | Over 13 W | Samples under 13 W | GPU busy | Misses | Failed |
+|---|---|---|---|---|---|---|---|---|
+| This build | 3,902,267 | 3,527,848 | 3,550,225 | 4,559,307 | 18 of 28 | 94.2% | 1,246 | 0 |
+| be759ba | 2,975,636 | 2,930,562 | 2,849,580 | 3,293,920 | 20 of 28 | 92.2% | 18,329 | 0 |
+| be759ba | 3,042,525 | 2,995,225 | 2,876,402 | 3,238,011 | 15 of 28 | 97.2% | 18,746 | 0 |
+| This build | 3,859,063 | 4,127,209 | 3,581,423 | 4,556,813 | 20 of 28 | 95.3% | 1,225 | 0 |
+
+x1.29 on whole runs (x1.311 and x1.268 by pair). Last halves give x1.20 and x1.38, but those depend on when the CPU changes state, which it does by itself, so I'd go by the whole runs and the two states: x1.24 under 13 W, x1.40 over it. A hold before these, the same machine code, ran 4,009,608 for a whole run with the CPU at 16 W; with two in flight, the next run, 3,616,592 (one pair, x1.109).
+
+**What binds now: the CPU's 12 W state.** It comes on after about 3.5 minutes, and may leave for a few minutes at 18 W. Above it this build makes 4.56M deals/s with the GPU 98-100% busy at about 1,440 MHz: the GPU is the limit. In it, 3.57M, with the GPU busy 92-93% at about 1,630 MHz. Workers aren't what's short: they wait for the GPU about 40% of their time, and less than one batch waits for them.
+
+**Correction to the last section.** Its 3.17M against 1.87M, x1.69, came from runs of 60M deals, too short to reach the 12 W state. By 10-minute runs that build and 406bb98 gave 3,130,008 and 3,045,882 against 1,506,523 and 1,520,620, last half of each, x2.04.
+
+**The clean-up.** The kernels `attempts` and `attempts_stepwise`, the `stepwise` and `split` settings, 19 device functions nothing named and 10 profile slots are gone: about 840 lines net. The PTX of `attempts_split`, `write_lines` and `playouts` is identical apart from label numbers. **A checkpoint with `stepwise` or `split` in its settings won't resume:** finish such a run with the build that started it.
+
+**Tests.** No golden values changed. One kernel test expected groups of 4; it now expects 2, and also runs 64 + 200 tries, past where the scan of won deals and the bundles start. `game::line_wins` and its tests went with the code that called it; `quick.rs` has the same checks. Four crates pass, kernel tests with the GPU. Clippy: no warnings.
+
+**Considered, not taken in this build:**
+- **Screening's config on be759ba** (`[[40,64],[37,768]]` and others, x1.07-1.11): measured on the old policy, and its fewer tries trade away misses that bundles now get for free.
+- **The scan without a `BREAK` regime:** x1.036 GPU alone. Under 5%.
+- **Recording prefix moves instead of `write_lines` replaying them:** estimated x1.05-1.08. A host change, as the first bytes of a line hold learning and won bits until the launch ends. Not built.
+- **Dropping pattern features:** x1.00-1.04 in a noisy hold, attempts 3-7% up.
+- **The second part of the clean-up** (runtime `leftmost` and `conn_gate` duplicated by macros): changes the hot kernel, so it needs its own timing.

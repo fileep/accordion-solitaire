@@ -88,6 +88,7 @@ report comes out as for one run:
 cargo run --release -p accordion-cli -- batch --resume checkpoints/batch-0-100000.json
 ```
 
+A checkpoint from before the `stepwise` and `split` settings went won't resume: finish that run with the build that started it.
 Only `--threads`, `--checkpoint-every`, `--log-dir`, `--no-log`, `--games-memory`, `--no-games-check`, `--keep-free`, `--until`
 and `--stop-after` can be given with `--resume`. A run that ends removes its checkpoint, and if it took over a minute it leaves its report beside where that
 was (`.report.txt`). Starting a run whose checkpoint is still there is an error, so a paused run can't be overwritten by

@@ -1,7 +1,7 @@
 //! GPU ladder attempts (PLAN.md Phase 5 track F, Phase 8). The kernel (`kernel.cu`, compiled at run time with
 //! NVRTC) runs one attempt per thread: a random prefix, then a small first-win search of what is left. The host
 //! sends positions in batches short enough for Windows' GPU watchdog, and every win comes back as a move line for
-//! the CPU to verify. A batch is submitted on a stream and collected later; [`Gpu::feed`] keeps two in flight, so
+//! the CPU to verify. A batch is submitted on a stream and collected later; [`Gpu::feed`] keeps three in flight, so
 //! the GPU never waits for the host.
 //!
 //! `acc batch --gpu` runs this next to the CPU solver (crates/cli/src/runner.rs); `accgpu` measures it alone.
@@ -28,17 +28,13 @@ pub const RESIDUAL: usize = 16;
 pub const MAX_TRIES: u32 = 0xFFFF;
 /// NVRTC 12.9 writes PTX that needs a driver for CUDA 12.9 or later.
 const MIN_DRIVER: i32 = 12090;
-/// The kernel's profile counters (kernel.cu, with [`Settings::profile`]), in order: cycles taking work, loading the
-/// position, playing the prefix, the dead-end gate, searching, writing the result and skipping a won deal's attempt
-/// (summed over threads); steps of the search loop by warps and by threads, and of the prefix loop; attempts taken
-/// and skipped; searches by positions generated (0-15, 16-63, 64-255, 256-1023, 1024 up to the budget, the budget);
-/// prefixes that got stuck, left more than [`RESIDUAL`] piles, or left a disconnected residual, and the moves the
-/// stuck ones played (`attempts_stepwise` only); thread spans summed (ns); the latest end (ns); the earliest start,
-/// bit-inverted (ns); and turns of `attempts_split`'s prefix threads with a residual its queue had no room for, and
-/// of its search threads with none to take. In `attempts_split` the first four count its prefix warps (the fourth
-/// queueing residuals), the next three its search warps (searching, taking residuals and writing results, waiting
-/// for residuals); it leaves the prefix and search tallies to `attempts_stepwise`, whose attempts are the same.
-pub const PROFILE_SLOTS: usize = 28;
+/// The kernel's profile counters (kernel.cu, with [`Settings::profile`]), in order: cycles of its prefix warps taking
+/// work, loading the position, playing the prefix and queueing residuals, and of its search warps searching, taking
+/// residuals and writing results, and waiting for residuals (summed over threads); steps of the search loop by warps
+/// and by threads, and of the prefix loop; attempts taken and skipped; thread spans summed (ns); the latest end (ns);
+/// the earliest start, bit-inverted (ns); and turns of prefix threads with a residual the queue had no room for, and
+/// of search threads with none to take.
+pub const PROFILE_SLOTS: usize = 18;
 
 /// How `acc batch` uses the GPU (`--gpu-config`, JSON; fields left out keep these defaults, measured in Phase 5
 /// track F).
@@ -54,8 +50,8 @@ pub struct Settings {
     /// fewer leave several attempts at once on each deal, which wastes those still running once it is won).
     pub batch: usize,
     /// Threads per block (the kernel's shared memory is sized for it: 64 bytes per thread). On the T550, 64 fits
-    /// 1,024 attempts per multiprocessor, its maximum (32 fits 512, the most blocks it takes); with `split`, whose
-    /// queue takes shared memory too, 8 blocks of 64 (one prefix warp, one search warp) fit, the default: 8 of 64 blocks
+    /// 1,024 attempts per multiprocessor, its maximum (32 fits 512, the most blocks it takes); the queue takes
+    /// shared memory too, 8 blocks of 64 (one prefix warp, one search warp) fit, the default: 8 of 64 blocks
     /// ran 8.6 to 9% faster than 5 of 96, and 10 of 64 was no better (docs/BENCHMARKS.md, "After Phase 8 — the search
     /// step, exact choice, and what the rest came to").
     pub block: u32,
@@ -73,24 +69,16 @@ pub struct Settings {
     pub seed: u64,
     /// Compile the kernel with its profile counters ([`BatchResult::profile`]); slower, for measuring only.
     pub profile: bool,
-    /// Run attempts a step at a time (kernel.cu `attempts_stepwise`), so a warp's threads step together: 1.7 times
-    /// as many deals a second on the T550 as `attempts`, where each thread runs its own attempts start to finish.
-    pub stepwise: bool,
-    /// Play prefixes and search in different warps (kernel.cu `attempts_split`; `stepwise` then doesn't matter):
-    /// `prefix_warps` of a block's warps play prefixes and queue the residuals for the others to search, so neither
-    /// waits for the other's step; the prefix's row is in registers and its warps go in lockstep. About 3.5 times the
-    /// deals a second of `attempts_stepwise` on the T550. `block` must be a multiple of 32.
-    pub split: bool,
-    /// The warps of a block that play prefixes with `split` (kernel.cu `PREFIX_THREADS`); `block` must hold more.
+    /// The warps of a block that play prefixes (kernel.cu `PREFIX_THREADS`); `block` must hold more.
     pub prefix_warps: u32,
-    /// Shared early prefix moves (`split` only, the other kernels ignore them; kernel.cu `SHARE_G` and `SHARE_K`): a
+    /// Shared early prefix moves (kernel.cu `SHARE_G` and `SHARE_K`): a
     /// deal's tries go in groups of `share_group`, whose first `share_moves` prefix moves are played once; each try
     /// then plays the rest of its prefix from the row they left, and searches. 1 shares nothing.
     pub share_group: u32,
     /// From 20 (the masks a group keeps then fit 32 bits) up to the shorter rung's random moves when `share_group` is
     /// more than 1.
     pub share_moves: u32,
-    /// The most ranks a residual of each rung may have to be searched (`split` only; kernel.cu `RANK_GATE`).
+    /// The most ranks a residual of each rung may have to be searched (kernel.cu `RANK_GATE`).
     pub rank_gate: [u32; 2],
 }
 
@@ -107,8 +95,6 @@ impl Default for Settings {
             leap_weight: 8,
             seed: 0x5EED,
             profile: false,
-            stepwise: true,
-            split: true,
             prefix_warps: 1,
             share_group: 2,
             share_moves: 20,
@@ -137,13 +123,9 @@ impl Settings {
         if self.batch == 0 || self.block == 0 || self.block > 256 || self.blocks_per_sm == 0 {
             return Err("batch, block (at most 256) and blocks_per_sm must be positive".into());
         }
-        if self.split
-            && (!self.block.is_multiple_of(32)
-                || self.prefix_warps == 0
-                || self.prefix_warps >= self.block / 32)
-        {
+        if !self.block.is_multiple_of(32) || self.prefix_warps == 0 || self.prefix_warps >= self.block / 32 {
             return Err(format!(
-                "block {}, prefix_warps {}: with split, whole warps, at least one playing prefixes and one searching",
+                "block {}, prefix_warps {}: whole warps, at least one playing prefixes and one searching",
                 self.block, self.prefix_warps
             ));
         }
@@ -160,15 +142,6 @@ impl Settings {
             ));
         }
         Ok(())
-    }
-
-    /// The attempt kernel these settings run.
-    pub fn kernel(&self) -> &'static str {
-        match (self.split, self.stepwise) {
-            (true, _) => "attempts_split",
-            (false, true) => "attempts_stepwise",
-            (false, false) => "attempts",
-        }
     }
 
     /// The settings for launch number `launch`: its own random seed.
@@ -348,7 +321,7 @@ pub struct Playout {
 
 pub struct Gpu {
     ctx: Arc<CudaContext>,
-    /// [`Settings::kernel`].
+    /// `attempts_split`.
     attempts: CudaFunction,
     write_lines: CudaFunction,
     playouts: CudaFunction,
@@ -630,7 +603,7 @@ impl Gpu {
         check_defines(source, defines)?;
         let ptx = compile(&ctx, &settings, source, defines)?;
         let module = ctx.load_module(ptx).map_err(|e| format!("loading the kernel: {e:?}"))?;
-        let attempts = module.load_function(settings.kernel()).map_err(err)?;
+        let attempts = module.load_function("attempts_split").map_err(err)?;
         let write_lines = module.load_function("write_lines").map_err(err)?;
         let playouts = module.load_function("playouts").map_err(err)?;
         Ok(Gpu { ctx, attempts, write_lines, playouts, name, sms, settings })
@@ -734,27 +707,25 @@ impl Gpu {
         // `n` positions as the kernel indexes them.
         unsafe { launch.launch(cfg) }.map_err(err)?;
         let mut next_line = s.alloc_zeros::<u32>(1).map_err(err)?;
-        if self.settings.split {
-            // On the same stream, so after the attempts are done.
-            let mut launch = s.launch_builder(&self.write_lines);
-            launch
-                .arg(&d_positions)
-                .arg(&d_masks)
-                .arg(&n)
-                .arg(&a.tries)
-                .arg(&a.prefix)
-                .arg(&a.tries2)
-                .arg(&a.prefix2)
-                .arg(&a.leap_shift)
-                .arg(&a.seed)
-                .arg(&won)
-                .arg(&mut lines)
-                .arg(&mut next_line);
-            let cfg = LaunchConfig { grid_dim: (self.blocks(), 1, 1), block_dim: (32, 1, 1), shared_mem_bytes: 0 };
-            // SAFETY: the argument list matches write_lines's signature in kernel.cu, and every buffer is sized for `n`
-            // positions as the kernel indexes them.
-            unsafe { launch.launch(cfg) }.map_err(err)?;
-        }
+        // On the same stream, so after the attempts are done.
+        let mut launch = s.launch_builder(&self.write_lines);
+        launch
+            .arg(&d_positions)
+            .arg(&d_masks)
+            .arg(&n)
+            .arg(&a.tries)
+            .arg(&a.prefix)
+            .arg(&a.tries2)
+            .arg(&a.prefix2)
+            .arg(&a.leap_shift)
+            .arg(&a.seed)
+            .arg(&won)
+            .arg(&mut lines)
+            .arg(&mut next_line);
+        let cfg = LaunchConfig { grid_dim: (self.blocks(), 1, 1), block_dim: (32, 1, 1), shared_mem_bytes: 0 };
+        // SAFETY: the argument list matches write_lines's signature in kernel.cu, and every buffer is sized for `n`
+        // positions as the kernel indexes them.
+        unsafe { launch.launch(cfg) }.map_err(err)?;
         Ok(Pending {
             stream: s.clone(),
             piles: prepared.piles,

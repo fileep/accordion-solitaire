@@ -201,7 +201,7 @@ fn run(args: &Args) -> Result<bool, String> {
             std::fs::write(path, text).map_err(|e| format!("{}: {e}", path.display()))?;
         }
         if gpu.settings.profile && !args.json {
-            print_profile(&profile, gpu.settings.split, gpu_time, gpu.threads(), attempts, nodes);
+            print_profile(&profile, gpu_time, gpu.threads(), attempts, nodes);
         }
         if args.json {
             println!(
@@ -309,7 +309,7 @@ fn run(args: &Args) -> Result<bool, String> {
         std::fs::write(path, text).map_err(|e| format!("{}: {e}", path.display()))?;
     }
     if gpu.settings.profile && !args.json {
-        print_profile(&profile, gpu.settings.split, gpu_time, gpu.threads(), attempts, nodes);
+        print_profile(&profile, gpu_time, gpu.threads(), attempts, nodes);
     }
     say!("all won            {}", if won + cpu_won == n { "yes" } else { "NO" });
     if args.json {
@@ -352,33 +352,20 @@ fn find_endgame(given: &Path) -> PathBuf {
 /// Where the kernel's thread time went (kernel.cu's profile counters, summed over launches).
 fn print_profile(
     p: &[u64; PROFILE_SLOTS],
-    split: bool,
     gpu_time: f64,
     threads: u64,
     attempts: u64,
     nodes: u64,
 ) {
-    let names = if split {
-        [
-            "prefix: taking work",
-            "prefix: loading",
-            "prefix: moves",
-            "prefix: queueing",
-            "search: searching",
-            "search: taking, results",
-            "search: waiting",
-        ]
-    } else {
-        [
-            "taking work",
-            "loading the deal",
-            "random prefix",
-            "dead-end gate",
-            "search",
-            "writing results",
-            "skipping won deals",
-        ]
-    };
+    let names = [
+        "prefix: taking work",
+        "prefix: loading",
+        "prefix: moves",
+        "prefix: queueing",
+        "search: searching",
+        "search: taking, results",
+        "search: waiting",
+    ];
     let cycles: u64 = p[..names.len()].iter().sum();
     println!(
         "kernel profile     thread time by phase (a thread waiting on others in its warp counts where it is):"
@@ -402,43 +389,17 @@ fn print_profile(
         p[12],
         100.0 * p[12] as f64 / p[11].max(1) as f64
     );
-    if split {
-        println!(
-            "                   prefix threads waiting for room in the queue {:.1}% of their turns, search threads with no residual to take {:.1}%",
-            100.0 * p[26] as f64 / (32 * p[9]).max(1) as f64,
-            100.0 * p[27] as f64 / (32 * p[7]).max(1) as f64
-        );
-    }
-    let ended = p[13..19].iter().sum::<u64>() + p[19] + p[20] + p[21];
-    if p[19] + p[20] + p[21] > 0 {
-        println!(
-            "                   prefixes: {:.1}% stuck (after {:.1} moves on average), {:.1}% left more than 16 piles, {:.1}% left a disconnected residual, {:.1}% searched",
-            100.0 * p[19] as f64 / ended.max(1) as f64,
-            p[22] as f64 / p[19].max(1) as f64,
-            100.0 * p[20] as f64 / ended.max(1) as f64,
-            100.0 * p[21] as f64 / ended.max(1) as f64,
-            100.0 * p[13..19].iter().sum::<u64>() as f64 / ended.max(1) as f64
-        );
-    }
-    let searches: u64 = p[13..19].iter().sum();
-    let share = |i: usize| 100.0 * p[i] as f64 / searches.max(1) as f64;
-    if searches > 0 {
-        println!(
-            "                   {searches} searches by positions: 0-15 {:.1}%, 16-63 {:.1}%, 64-255 {:.1}%, 256-1023 {:.1}%, 1024+ {:.1}%, the whole budget {:.1}%",
-            share(13),
-            share(14),
-            share(15),
-            share(16),
-            share(17),
-            share(18)
-        );
-    }
+    println!(
+        "                   prefix threads waiting for room in the queue {:.1}% of their turns, search threads with no residual to take {:.1}%",
+        100.0 * p[16] as f64 / (32 * p[9]).max(1) as f64,
+        100.0 * p[17] as f64 / (32 * p[7]).max(1) as f64
+    );
     println!(
         "                   {:.0} cycles of thread time a position (prefix moves and search positions)",
         cycles as f64 / nodes.max(1) as f64
     );
     println!(
         "                   threads busy {:.1}% of the GPU time ({threads} threads resident, {gpu_time:.2} s)",
-        100.0 * p[23] as f64 / 1e9 / (threads as f64 * gpu_time)
+        100.0 * p[13] as f64 / 1e9 / (threads as f64 * gpu_time)
     );
 }

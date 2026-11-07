@@ -11,7 +11,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from ab import S, TOOLS, fail, parse_variant
 
 BIN_GLOB = TOOLS + "/.tools"
-DEFAULTS = {"block": 64, "prefix_warps": 1, "share_group": 4, "share_moves": 20, "rank_gate": [9, 10], "leftmost": True, "conn_gate": 19, "profile": False, "split": True, "stepwise": True}
+DEFAULTS = {"block": 64, "prefix_warps": 1, "share_group": 2, "share_moves": 20, "rank_gate": [8, 10], "leftmost": True, "conn_gate": 19, "profile": False}
 
 
 def host_flags(config):
