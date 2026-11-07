@@ -70,6 +70,14 @@ pub struct BatchArgs {
     /// GPU settings as JSON (see `accordion_gpu::Settings`), e.g. '{"budget": 4000}'.
     #[arg(long)]
     gpu_config: Option<String>,
+    /// Compile this kernel source instead of the built-in one (to time a variant without a rebuild).
+    #[arg(long)]
+    #[serde(default)]
+    gpu_kernel: Option<PathBuf>,
+    /// A define for the kernel's compile, NAME=VALUE; may be repeated.
+    #[arg(long, value_name = "NAME=VALUE")]
+    #[serde(default)]
+    gpu_define: Vec<String>,
     /// Directory holding endgame tables (`acc endgame build`).
     #[arg(long, default_value = "endgame")]
     endgame_dir: PathBuf,
@@ -110,6 +118,7 @@ pub struct BatchArgs {
     /// --keep-free, --until and --stop-after may be given.
     #[arg(long, conflicts_with_all = [
         "from", "count", "max_nodes", "config", "out", "dossiers", "no_dossiers", "table", "gpu", "gpu_config",
+        "gpu_kernel", "gpu_define",
         "endgame_dir", "endgame", "gallery", "prove", "prove_memory", "checkpoint", "games_disk", "plant_repeats",
     ])]
     resume: Option<PathBuf>,
@@ -562,7 +571,7 @@ pub fn run(given: &BatchArgs) -> Result<bool, String> {
     let some_left = state.standing.done < count;
     let gpu = match (is_resumed, some_left) {
         (_, false) => None,
-        (true, true) if state.gpu_name.is_some() => match runner::open_gpu("on", settings) {
+        (true, true) if state.gpu_name.is_some() => match runner::open_gpu_kernel("on", settings, args.gpu_kernel.as_deref(), &args.gpu_define) {
             Ok(gpu) => gpu,
             Err(e) => {
                 // Not there for now, after a driver reset, say: this is as good as its failing during the run.
@@ -572,7 +581,7 @@ pub fn run(given: &BatchArgs) -> Result<bool, String> {
             }
         },
         (true, true) => None,
-        (false, true) => runner::open_gpu(&args.gpu, settings)?,
+        (false, true) => runner::open_gpu_kernel(&args.gpu, settings, args.gpu_kernel.as_deref(), &args.gpu_define)?,
     };
     // The GPU's feeder needs a thread of its own, or the GPU waits on it (docs/BENCHMARKS.md, Phase 5 track F).
     let workers = if gpu.is_some() { threads.saturating_sub(1).max(1) } else { threads };

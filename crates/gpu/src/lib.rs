@@ -447,9 +447,55 @@ fn add_bundled_nvrtc() {
 #[cfg(not(windows))]
 fn add_bundled_nvrtc() {}
 
+/// The built-in kernel's source (kernel.cu), for tools that look at the source a run would compile.
+pub fn builtin_source() -> &'static str {
+    SOURCE
+}
+
+/// Refuses a define that couldn't do what it says: a name the source never mentions, a name the kernel sets without
+/// `#ifndef` (its own `#define` would win), or a name the host sets from [`Settings`] (the two would disagree).
+pub fn check_defines(source: &str, defines: &[String]) -> Result<(), String> {
+    const FROM_SETTINGS: [&str; 9] = [
+        "BLOCK", "PREFIX_THREADS", "SHARE_G", "SHARE_K", "RANK_GATE", "RANK_GATE2", "LEFTMOST", "CONN_GATE", "PROFILE",
+    ];
+    let word = |c: char| c.is_ascii_alphanumeric() || c == '_';
+    for define in defines {
+        let name = define.split('=').next().unwrap_or_default();
+        if name.is_empty() || !name.chars().all(word) {
+            return Err(format!("--define {define:?}: expected NAME=VALUE"));
+        }
+        if FROM_SETTINGS.contains(&name) {
+            return Err(format!("--define {name}: the host sets this from the GPU settings; use --gpu-config"));
+        }
+        if !source.split(|c: char| !word(c)).any(|w| w == name) {
+            return Err(format!("--define {name}: the kernel source never mentions it, so it would do nothing"));
+        }
+        let mut guarded = false;
+        for line in source.lines() {
+            let is_directive = line.trim_start().starts_with('#');
+            let mut parts = line.trim_start().trim_start_matches('#').split_whitespace();
+            let (first, second) = (parts.next().unwrap_or_default(), parts.next().unwrap_or_default());
+            if is_directive && second == name && (first == "ifndef" || first == "undef") {
+                guarded = true;
+            }
+            if is_directive && first == "define" && second.split('(').next() == Some(name) && !guarded {
+                return Err(format!(
+                    "--define {name}: the kernel has its own #define {name} with no #ifndef, which would win"
+                ));
+            }
+        }
+    }
+    Ok(())
+}
+
 /// The kernels (`source`: kernel.cu) compiled to PTX for `ctx`'s device with `settings` (its block size, shared
 /// moves, and profiling).
-fn compile(ctx: &CudaContext, settings: &Settings, source: &str) -> Result<cudarc::nvrtc::Ptx, String> {
+fn compile(
+    ctx: &CudaContext,
+    settings: &Settings,
+    source: &str,
+    defines: &[String],
+) -> Result<cudarc::nvrtc::Ptx, String> {
     use cudarc::driver::sys::CUdevice_attribute as A;
     let major = ctx.attribute(A::CU_DEVICE_ATTRIBUTE_COMPUTE_CAPABILITY_MAJOR).map_err(err)?;
     let minor = ctx.attribute(A::CU_DEVICE_ATTRIBUTE_COMPUTE_CAPABILITY_MINOR).map_err(err)?;
@@ -470,6 +516,7 @@ fn compile(ctx: &CudaContext, settings: &Settings, source: &str) -> Result<cudar
             ]
             .into_iter()
             .chain(settings.profile.then(|| "-DPROFILE".to_string()))
+            .chain(defines.iter().map(|d| format!("-D{d}")))
             .collect(),
             ..Default::default()
         },
@@ -485,6 +532,11 @@ impl Gpu {
 
     /// [`Gpu::new`] with another version of kernel.cu (`accgpu --kernel`, for trying changes without a rebuild).
     pub fn with_source(settings: Settings, source: &str) -> Result<Gpu, String> {
+        Gpu::with_defines(settings, source, &[])
+    }
+
+    /// [`Gpu::with_source`] with `NAME=VALUE` defines for the compiler (`accgpu --define`). See [`check_defines`].
+    pub fn with_defines(settings: Settings, source: &str, defines: &[String]) -> Result<Gpu, String> {
         use cudarc::driver::sys::CUdevice_attribute as A;
         settings.check()?;
         find_libraries()?;
@@ -493,7 +545,8 @@ impl Gpu {
         ctx.set_blocking_synchronize().map_err(err)?;
         let name = ctx.name().unwrap_or_default();
         let sms = ctx.attribute(A::CU_DEVICE_ATTRIBUTE_MULTIPROCESSOR_COUNT).map_err(err)? as u32;
-        let ptx = compile(&ctx, &settings, source)?;
+        check_defines(source, defines)?;
+        let ptx = compile(&ctx, &settings, source, defines)?;
         let module = ctx.load_module(ptx).map_err(|e| format!("loading the kernel: {e:?}"))?;
         let attempts = module.load_function(settings.kernel()).map_err(err)?;
         let write_lines = module.load_function("write_lines").map_err(err)?;
@@ -508,9 +561,19 @@ impl Gpu {
 
     /// The kernels' PTX for these settings, as NVRTC writes it (to read what the code compiles to).
     pub fn ptx(settings: &Settings, source: Option<&str>) -> Result<String, String> {
+        Gpu::ptx_with_defines(settings, source, &[])
+    }
+
+    /// [`Gpu::ptx`] with `NAME=VALUE` defines for the compiler.
+    pub fn ptx_with_defines(
+        settings: &Settings,
+        source: Option<&str>,
+        defines: &[String],
+    ) -> Result<String, String> {
+        check_defines(source.unwrap_or(SOURCE), defines)?;
         find_libraries()?;
         let ctx = CudaContext::new(0).map_err(|e| format!("no CUDA device: {e:?}"))?;
-        Ok(compile(&ctx, settings, source.unwrap_or(SOURCE))?.to_src())
+        Ok(compile(&ctx, settings, source.unwrap_or(SOURCE), defines)?.to_src())
     }
 
     /// The attempt kernel's registers and local memory per thread, and how many of its blocks a multiprocessor holds.

@@ -301,14 +301,29 @@ pub fn load_endgame(dir: &Path, piles: usize) -> Result<Option<Arc<Endgame>>, St
 
 /// Opens the GPU for `--gpu`: `on` (an error without one), `auto` (CPU only, with a note, without one) or `off`.
 pub fn open_gpu(flag: &str, settings: Settings) -> Result<Option<Arc<Gpu>>, String> {
+    open_gpu_kernel(flag, settings, None, &[])
+}
+
+/// [`open_gpu`] with another kernel source and compiler defines (`acc batch --gpu-kernel`, `--gpu-define`), to time a
+/// variant without a rebuild. With neither, the built-in kernel, as in `open_gpu`.
+pub fn open_gpu_kernel(
+    flag: &str,
+    settings: Settings,
+    kernel: Option<&std::path::Path>,
+    defines: &[String],
+) -> Result<Option<Arc<Gpu>>, String> {
     let required = match flag {
         "off" => return Ok(None),
         "on" => true,
         "auto" => false,
         f => return Err(format!("--gpu: {f:?} (auto, on or off)")),
     };
+    let source = match kernel {
+        Some(path) => std::fs::read_to_string(path).map_err(|e| format!("{}: {e}", path.display()))?,
+        None => accordion_gpu::builtin_source().to_string(),
+    };
     let start = Instant::now();
-    match Gpu::new(settings) {
+    match Gpu::with_defines(settings, &source, defines) {
         Ok(gpu) => {
             eprintln!(
                 "GPU: {} ({} multiprocessors), kernel compiled in {:.1} s",
@@ -316,6 +331,10 @@ pub fn open_gpu(flag: &str, settings: Settings) -> Result<Option<Arc<Gpu>>, Stri
                 gpu.sms,
                 start.elapsed().as_secs_f64()
             );
+            if kernel.is_some() || !defines.is_empty() {
+                let name = kernel.map_or("built-in".to_string(), |p| p.display().to_string());
+                eprintln!("GPU kernel: {name}, defines {defines:?} (NOT the built-in kernel as it stands)");
+            }
             Ok(Some(Arc::new(gpu)))
         }
         Err(e) if required => Err(format!("--gpu on: {e}")),

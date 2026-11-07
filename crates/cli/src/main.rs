@@ -56,7 +56,7 @@ enum Command {
     /// Solve one deal or position on every core and print a verified solve file.
     Solve(solve::SolveArgs),
     /// Solve a range of seeded deals on every core; report the win rate, effort and throughput.
-    Batch(batch::BatchArgs),
+    Batch(Box<batch::BatchArgs>),
     /// Run solver configurations over a fixed deal set and record what each costs (PLAN.md Phase 5).
     Experiment(experiment::ExperimentArgs),
     /// Build the complete endgame tables (one bit per suit/rank pattern) used by `search.endgame_piles`.
