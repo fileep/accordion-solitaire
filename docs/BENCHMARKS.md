@@ -2015,7 +2015,7 @@ No golden values changed. Clippy: no warnings.
 
 ## After Phase 8 — patterns in the prefix, a cheaper line check, three launches in flight
 
-A prefix policy of bit-parallel patterns, a cheap scan of the deals already won, a third launch in flight and the line check of `quick.rs`: 3.88M deals/s sustained against 3.01M on be759ba, x1.29 over 10-minute runs, every line verified. GPU alone x1.37.
+A prefix policy of bit-parallel patterns, a cheap scan of the deals already won, a third launch in flight and the line check of `quick.rs`: 3.88M deals/s sustained against 3.01M on be759ba, x1.29 over 10-minute runs of 3 billion deals. As a long run, with the games check at its usual 0.5% sample: 4.42M and 4.69M against 3.38M, x1.31 and x1.39, with the GPU the limit. Every line verified. GPU alone x1.37.
 
 **The steps, GPU alone.** Built-in kernels and hosts, one hold, 3 alternated passes, 8M deals a run, seeds from 600,000,000,000, no line check. Medians:
 
@@ -2053,7 +2053,17 @@ Three in flight against two: x1.040 (1.032-1.060 by pass).
 
 x1.29 on whole runs (x1.311 and x1.268 by pair). Last halves give x1.20 and x1.38, but those depend on when the CPU changes state, which it does by itself, so I'd go by the whole runs and the two states: x1.24 under 13 W, x1.40 over it. A hold before these, the same machine code, ran 4,009,608 for a whole run with the CPU at 16 W; with two in flight, the next run, 3,616,592 (one pair, x1.109).
 
-**What binds now: the CPU's 12 W state.** It comes on after about 3.5 minutes, and may leave for a few minutes at 18 W. Above it this build makes 4.56M deals/s with the GPU 98-100% busy at about 1,440 MHz: the GPU is the limit. In it, 3.57M, with the GPU busy 92-93% at about 1,630 MHz. Workers aren't what's short: they wait for the GPU about 40% of their time, and less than one batch waits for them.
+**In these runs the CPU's 12 W state binds.** It comes on after about 3.5 minutes, and may leave for a few minutes at 18 W. Above it this build makes 4.56M deals/s with the GPU 98-100% busy at about 1,440 MHz: the GPU is the limit. In it, 3.57M, with the GPU busy 92-93% at about 1,630 MHz. Workers aren't what's short: they wait for the GPU about 40% of their time, and less than one batch waits for them.
+
+**As a long run would, with the games check at its usual sample.** The runs above have 3 billion deals, few enough that the check for repeated games takes every deal: each is shuffled again and fingerprinted, about 1.45 µs of CPU a deal in the workers' verifying, and that is what makes the 12 W state bind. With `--count 1000000000000` the sample is 0.50%, as in a long run. Same seeds, 10 minutes a run, in order:
+
+| Build | Deals/s, whole run | Last half | GPU busy, last half | CPU package, last half | Verifying, CPU ns a deal | Misses | Failed |
+|---|---|---|---|---|---|---|---|
+| This build | 4,422,779 | 4,446,916 | 99.7% | 13.8 W | 583 | 1,424 | 0 |
+| be759ba | 3,380,968 | 3,359,840 | 99.9% | 12.0 W | 729 | 20,733 | 0 |
+| This build | 4,690,251 | 4,706,231 | 100% | 12.0 W | 719 | 1,514 | 0 |
+
+x1.31 and x1.39 on whole runs. **What binds now: the GPU,** busy 99.7-100% in either CPU state, near its 30 W cap (about 29 W, 1,380-1,490 MHz). The workers wait for it 74-80% of their time, so the next gains are in the kernel. A hot comparison should run this way, by `--stop-after` with a large `--count`: at 3 billion deals or fewer it measures the games check as much as the build.
 
 **Correction to the last section.** Its 3.17M against 1.87M, x1.69, came from runs of 60M deals, too short to reach the 12 W state. By 10-minute runs that build and 406bb98 gave 3,130,008 and 3,045,882 against 1,506,523 and 1,520,620, last half of each, x2.04.
 
