@@ -16,8 +16,55 @@ use cudarc::nvrtc::{CompileOptions, compile_ptx_with_opts};
 use serde::{Deserialize, Serialize};
 use std::collections::VecDeque;
 use std::sync::{Arc, Condvar, Mutex};
+use std::time::Instant;
+use cudarc::driver::{CudaEvent, PinnedHostSlice};
 
 const SOURCE: &str = include_str!("kernel.cu");
+
+// FEED2 timing (off unless set): ACC_FEEDPROF=<file> appends a summary every 50 launches of Gpu::feed.
+fn feedprof() -> Option<&'static str> {
+    static P: std::sync::OnceLock<Option<String>> = std::sync::OnceLock::new();
+    P.get_or_init(|| std::env::var("ACC_FEEDPROF").ok()).as_deref()
+}
+struct Prof {
+    take: f64,
+    fill: f64,
+    wait: f64,
+    htod: f64,
+    alloc: f64,
+    launch: f64,
+    before: u8,
+    after: u8,
+    ev: [CudaEvent; 4],
+}
+fn ms(t: Instant) -> f64 {
+    t.elapsed().as_secs_f64() * 1e3
+}
+fn prev_state<T>(q: &VecDeque<(Vec<T>, Pending)>) -> u8 {
+    match q.back() {
+        None => 2,
+        Some((_, p)) => match &p.prof {
+            Some(pr) => u8::from(pr.ev[2].is_complete()),
+            None => 9,
+        },
+    }
+}
+#[derive(Default)]
+struct ProfSum {
+    n: u32,
+    v: [f64; 16],
+    mx: [f64; 16],
+    before: [u32; 3],
+    after: [u32; 3],
+    gaps: u32,
+    prev_mid: Option<f64>,
+}
+impl ProfSum {
+    fn add(&mut self, i: usize, x: f64) {
+        self.v[i] += x;
+        self.mx[i] = self.mx[i].max(x);
+    }
+}
 
 /// Fills a position's bytes after its last pile.
 pub const SENTINEL: u8 = 0x7F;
@@ -302,13 +349,56 @@ pub struct Pending {
     host_masks: Vec<u64>,
     spare: (Vec<u32>, Vec<u8>, Vec<u64>),
     pool: Option<Pool>,
+    /// The launch's buffers; its results come back into the slot's page-locked buffers on the stream.
+    slot: Box<Slot>,
+    profile: bool,
+    prof: Option<Box<Prof>>,
+}
+
+/// One launch's device buffers and page-locked host buffers, kept from launch to launch by [`Gpu::feed`] (a slot a
+/// stream). Pageable copies took about 43 ms (up) and 39 ms (down) of host time a launch against a 49 ms GPU cycle,
+/// with the upload on the one thread that launches: the CPU's clock set the GPU's pace.
+struct Slot {
+    n: usize,
+    /// Write-combined: the CPU only writes these.
+    up_flat: PinnedHostSlice<u8>,
+    up_masks: PinnedHostSlice<u64>,
+    positions: CudaSlice<u8>,
+    masks: CudaSlice<u64>,
+    next: CudaSlice<u32>,
+    next_line: CudaSlice<u32>,
     won: CudaSlice<u32>,
     lines: CudaSlice<u8>,
     /// Per position: positions generated << 16 | attempts run.
     counts: CudaSlice<u64>,
-    profile: Option<CudaSlice<u64>>,
-    // Kept alive until the kernel is done with them.
-    _inputs: (CudaSlice<u8>, CudaSlice<u64>, CudaSlice<u32>, CudaSlice<u32>),
+    profile: CudaSlice<u64>,
+    down_won: PinnedHostSlice<u32>,
+    down_lines: PinnedHostSlice<u8>,
+    down_counts: PinnedHostSlice<u64>,
+}
+
+impl Slot {
+    fn new(ctx: &Arc<CudaContext>, s: &Arc<CudaStream>, n: usize) -> Result<Slot, DriverError> {
+        // SAFETY: every buffer is written (zeroed or copied into) on the stream before it is read.
+        unsafe {
+            Ok(Slot {
+                n,
+                up_flat: ctx.alloc_pinned(n * 52)?,
+                up_masks: ctx.alloc_pinned(n * 3)?,
+                positions: s.alloc(n * 52)?,
+                masks: s.alloc(n * 3)?,
+                next: s.alloc(1)?,
+                next_line: s.alloc(1)?,
+                won: s.alloc(n)?,
+                lines: s.alloc(n * 51)?,
+                counts: s.alloc(n)?,
+                profile: s.alloc(PROFILE_SLOTS)?,
+                down_won: ctx.alloc_pinned_with_flags(n, 0)?,
+                down_lines: ctx.alloc_pinned_with_flags(n * 51, 0)?,
+                down_counts: ctx.alloc_pinned_with_flags(n, 0)?,
+            })
+        }
+    }
 }
 
 /// What [`Gpu::playouts`] recorded for one playout, step by step (kernel.cu `playouts`).
@@ -659,10 +749,16 @@ impl Gpu {
         positions: &[[u8; 52]],
         a: &Attempts,
     ) -> Result<Pending, String> {
-        self.submit_prepared(stream, Prepared::new(positions, &|p: &[u8; 52]| *p), a)
+        self.submit_prepared(stream, Prepared::new(positions, &|p: &[u8; 52]| *p), a, None)
     }
 
-    fn submit_prepared(&self, stream: &Arc<CudaStream>, prepared: Prepared, a: &Attempts) -> Result<Pending, String> {
+    fn submit_prepared(
+        &self,
+        stream: &Arc<CudaStream>,
+        prepared: Prepared,
+        a: &Attempts,
+        slot: Option<Box<Slot>>,
+    ) -> Result<Pending, String> {
         if a.tries.saturating_add(a.tries2) > MAX_TRIES {
             return Err(format!(
                 "{} tries per position in all; at most {MAX_TRIES}",
@@ -672,19 +768,38 @@ impl Gpu {
         let count = prepared.piles.len();
         let n = count as u32;
         let s = stream;
-        let d_positions = s.clone_htod(&prepared.flat).map_err(err)?;
-        let d_masks = s.clone_htod(&prepared.masks).map_err(err)?;
+        let on = feedprof().is_some();
+        let ev = |s: &Arc<CudaStream>| {
+            if on { s.record_event(Some(cudarc::driver::sys::CUevent_flags::CU_EVENT_DEFAULT)).ok() } else { None }
+        };
+        let ta = Instant::now();
+        let mut slot = match slot {
+            Some(slot) if slot.n == count => slot,
+            _ => Box::new(Slot::new(&self.ctx, s, count).map_err(err)?),
+        };
+        let alloc = ms(ta);
+        let th = Instant::now();
+        let e_h = ev(s);
+        let Slot { up_flat, up_masks, positions, masks, next, next_line, won, lines, counts, profile, .. } =
+            &mut *slot;
+        up_flat.as_mut_slice().map_err(err)?.copy_from_slice(&prepared.flat);
+        up_masks.as_mut_slice().map_err(err)?.copy_from_slice(&prepared.masks);
+        s.memcpy_htod(up_flat, positions).map_err(err)?;
+        s.memcpy_htod(up_masks, masks).map_err(err)?;
+        for z in [s.memset_zeros(next), s.memset_zeros(next_line), s.memset_zeros(won), s.memset_zeros(lines)] {
+            z.map_err(err)?;
+        }
+        s.memset_zeros(counts).map_err(err)?;
+        s.memset_zeros(profile).map_err(err)?;
+        let htod = ms(th);
+        let tl = Instant::now();
+        let e_s = ev(s);
         let inv = reciprocal(count);
-        let mut next = s.alloc_zeros::<u32>(1).map_err(err)?;
-        let mut won = s.alloc_zeros::<u32>(count).map_err(err)?;
-        let mut lines = s.alloc_zeros::<u8>(count * 51).map_err(err)?;
-        let mut counts = s.alloc_zeros::<u64>(count).map_err(err)?;
-        let mut profile = s.alloc_zeros::<u64>(PROFILE_SLOTS).map_err(err)?;
         let leftmost = u32::from(a.leftmost);
         let mut launch = s.launch_builder(&self.attempts);
         launch
-            .arg(&d_positions)
-            .arg(&d_masks)
+            .arg(&*positions)
+            .arg(&*masks)
             .arg(&n)
             .arg(&inv)
             .arg(&a.tries)
@@ -696,11 +811,11 @@ impl Gpu {
             .arg(&leftmost)
             .arg(&a.leap_shift)
             .arg(&a.seed)
-            .arg(&mut next)
-            .arg(&mut won)
-            .arg(&mut lines)
-            .arg(&mut counts)
-            .arg(&mut profile);
+            .arg(&mut *next)
+            .arg(&mut *won)
+            .arg(&mut *lines)
+            .arg(&mut *counts)
+            .arg(&mut *profile);
         let cfg = LaunchConfig {
             grid_dim: (self.blocks(), 1, 1),
             block_dim: (self.settings.block, 1, 1),
@@ -709,12 +824,12 @@ impl Gpu {
         // SAFETY: the argument list matches the kernel's signature in kernel.cu, and every buffer is sized for
         // `n` positions as the kernel indexes them.
         unsafe { launch.launch(cfg) }.map_err(err)?;
-        let mut next_line = s.alloc_zeros::<u32>(1).map_err(err)?;
+        let e_m = ev(s);
         // On the same stream, so after the attempts are done.
         let mut launch = s.launch_builder(&self.write_lines);
         launch
-            .arg(&d_positions)
-            .arg(&d_masks)
+            .arg(&*positions)
+            .arg(&*masks)
             .arg(&n)
             .arg(&a.tries)
             .arg(&a.prefix)
@@ -722,25 +837,39 @@ impl Gpu {
             .arg(&a.prefix2)
             .arg(&a.leap_shift)
             .arg(&a.seed)
-            .arg(&won)
-            .arg(&mut lines)
-            .arg(&mut next_line);
+            .arg(&*won)
+            .arg(&mut *lines)
+            .arg(&mut *next_line);
         let cfg = LaunchConfig { grid_dim: (self.blocks(), 1, 1), block_dim: (32, 1, 1), shared_mem_bytes: 0 };
         // SAFETY: the argument list matches write_lines's signature in kernel.cu, and every buffer is sized for `n`
         // positions as the kernel indexes them.
         unsafe { launch.launch(cfg) }.map_err(err)?;
+        let e_e = ev(s);
+        let launch_ms = ms(tl);
+        let prof = match (e_h, e_s, e_m, e_e) {
+            (Some(h), Some(st), Some(m), Some(e)) => Some(Box::new(Prof {
+                take: 0.0,
+                fill: 0.0,
+                wait: 0.0,
+                htod,
+                alloc,
+                launch: launch_ms,
+                before: 0,
+                after: 0,
+                ev: [h, st, m, e],
+            })),
+            _ => None,
+        };
         Ok(Pending {
+            prof,
             stream: s.clone(),
             piles: prepared.piles,
             codes: prepared.flat,
             host_masks: prepared.masks,
             spare: prepared.spare,
             pool: prepared.pool,
-            won,
-            lines,
-            counts,
-            profile: self.settings.profile.then_some(profile),
-            _inputs: (d_positions, d_masks, next, next_line),
+            slot,
+            profile: self.settings.profile,
         })
     }
 
@@ -774,6 +903,8 @@ impl Gpu {
             preparers: usize,
             failed: Option<String>,
             lost: Vec<T>,
+            /// Each stream's buffers, while no launch holds them.
+            slots: Vec<Option<Box<Slot>>>,
         }
         let mut streams = Vec::with_capacity(IN_FLIGHT);
         for _ in 0..IN_FLIGHT {
@@ -787,27 +918,43 @@ impl Gpu {
             preparers: PREPARERS,
             failed: None,
             lost: Vec::new(),
+            slots: (0..IN_FLIGHT).map(|_| None).collect(),
         });
         let changed = Condvar::new();
         let pool: Pool = Arc::default();
+        let base = if feedprof().is_some() {
+            streams[0].record_event(Some(cudarc::driver::sys::CUevent_flags::CU_EVENT_DEFAULT)).ok()
+        } else {
+            None
+        };
+        let base_t = Instant::now();
+        let mut psum = ProfSum::default();
+        let mut collected_turns = 0usize;
         let (position, streams) = (&position, &streams);
         std::thread::scope(|scope| {
             for _ in 0..PREPARERS {
                 scope.spawn(|| {
                     loop {
+                        let mut take_ms = 0.0;
                         let taken = {
                             let mut t = taking.lock().expect("no panics");
                             if state.lock().expect("no panics").failed.is_some() {
                                 None
                             } else {
-                                (t.take)().map(|items| {
+                                let tt = Instant::now();
+                                let r = (t.take)().map(|items| {
                                     t.turn += 1;
                                     (t.turn - 1, items)
-                                })
+                                });
+                                take_ms = ms(tt);
+                                r
                             }
                         };
                         let Some((turn, items)) = taken else { break };
+                        let tf = Instant::now();
                         let prepared = Prepared::fill(&pool, &items, position);
+                        let fill_ms = ms(tf);
+                        let tw = Instant::now();
                         let mut st = state.lock().expect("no panics");
                         while (st.launch != turn || st.running >= IN_FLIGHT) && st.failed.is_none() {
                             st = changed.wait(st).expect("no panics");
@@ -817,13 +964,22 @@ impl Gpu {
                             break;
                         }
                         st.running += 1;
+                        let before = prev_state(&st.in_flight);
+                        let slot = st.slots[turn as usize % IN_FLIGHT].take();
                         drop(st);
+                        let wait_ms = ms(tw);
                         let a = self.settings.attempts(turn);
-                        let launched = self.submit_prepared(&streams[turn as usize % IN_FLIGHT], prepared, &a);
+                        let launched = self.submit_prepared(&streams[turn as usize % IN_FLIGHT], prepared, &a, slot);
                         let mut st = state.lock().expect("no panics");
+                        let after = prev_state(&st.in_flight);
                         st.launch += 1;
                         match launched {
-                            Ok(pending) => st.in_flight.push_back((items, pending)),
+                            Ok(mut pending) => {
+                                if let Some(p) = pending.prof.as_mut() {
+                                    (p.take, p.fill, p.wait, p.before, p.after) = (take_ms, fill_ms, wait_ms, before, after);
+                                }
+                                st.in_flight.push_back((items, pending))
+                            }
                             Err(e) => {
                                 st.running -= 1;
                                 st.failed.get_or_insert(e);
@@ -849,12 +1005,68 @@ impl Gpu {
                         st = changed.wait(st).expect("no panics");
                     }
                 };
-                let Some((items, pending)) = next else { break };
+                let Some((items, mut pending)) = next else { break };
+                let ts = Instant::now();
                 let waited = pending.stream.synchronize().map_err(err);
-                state.lock().expect("no panics").running -= 1;
+                let sync_ms = ms(ts);
+                let prof = pending.prof.take();
+                let tc = Instant::now();
+                let collected = waited.and_then(|()| pending.collect_slot());
+                let collect_ms = ms(tc);
+                let collected = {
+                    // The slot goes back for the next launch on this stream, which may go once this one is copied out.
+                    let mut st = state.lock().expect("no panics");
+                    st.running -= 1;
+                    collected.map(|(result, slot)| {
+                        st.slots[collected_turns % IN_FLIGHT] = Some(slot);
+                        result
+                    })
+                };
+                collected_turns += 1;
                 changed.notify_all();
-                match waited.and_then(|()| pending.collect()) {
-                    Ok(result) => done(items, result),
+                match collected {
+                    Ok(result) => {
+                        let td = Instant::now();
+                        done(items, result);
+                        if let (Some(p), Some(b), Some(path)) = (prof, base.as_ref(), feedprof()) {
+                            let at = |e: &CudaEvent| f64::from(b.elapsed_ms(e).unwrap_or(f32::NAN));
+                            let (h, s0, m, e) = (at(&p.ev[0]), at(&p.ev[1]), at(&p.ev[2]), at(&p.ev[3]));
+                            let q = &mut psum;
+                            for (i, x) in [p.take, p.fill, p.wait, p.htod, p.alloc, p.launch, sync_ms, collect_ms, ms(td), s0 - h, e - m]
+                                .into_iter()
+                                .enumerate()
+                            {
+                                q.add(i, x);
+                            }
+                            if let Some(pm) = q.prev_mid {
+                                let gap = s0 - pm;
+                                q.add(11, gap.max(0.0));
+                                q.add(12, m - pm);
+                                q.add(13, m - s0.max(pm));
+                                q.v[14] += gap;
+                                q.gaps += u32::from(gap > 0.0);
+                            }
+                            q.prev_mid = Some(m);
+                            q.before[usize::from(p.before.min(2))] += 1;
+                            q.after[usize::from(p.after.min(2))] += 1;
+                            q.n += 1;
+                            if q.n == 50 {
+                                let n = f64::from(q.n);
+                                let names = ["take", "fill", "wait", "htod", "alloc", "launch", "sync", "collect", "done", "gpu_htod", "wl", "gap+", "cycle", "excl"];
+                                let mut line = format!("{:.1}s n={n}", base_t.elapsed().as_secs_f64());
+                                for (i, name) in names.iter().enumerate() {
+                                    line += &format!(" {name}={:.2}/{:.2}", q.v[i] / n, q.mx[i]);
+                                }
+                                line += &format!(" gapmean={:.2} gaps>0={} before={:?} after={:?}\n", q.v[14] / n, q.gaps, q.before, q.after);
+                                if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(path) {
+                                    use std::io::Write;
+                                    let _ = f.write_all(line.as_bytes());
+                                }
+                                let pm = q.prev_mid;
+                                *q = ProfSum { prev_mid: pm, ..Default::default() };
+                            }
+                        }
+                    }
                     Err(e) => {
                         let mut st = state.lock().expect("no panics");
                         st.failed.get_or_insert(e);
@@ -924,20 +1136,29 @@ impl Gpu {
 impl Pending {
     /// Waits for the batch and copies its results back.
     pub fn collect(self) -> Result<BatchResult, String> {
+        self.collect_slot().map(|(result, _)| result)
+    }
+
+    /// [`Pending::collect`], giving back the slot for the next launch on this stream.
+    fn collect_slot(self) -> Result<(BatchResult, Box<Slot>), String> {
         let s = &self.stream;
-        let (mut won, mut lines, mut counts) = self.spare;
-        won.resize(self.won.len(), 0);
-        lines.resize(self.lines.len(), 0);
-        counts.resize(self.counts.len(), 0);
-        s.memcpy_dtoh(&self.won, &mut won).map_err(err)?;
-        s.memcpy_dtoh(&self.lines, &mut lines).map_err(err)?;
-        s.memcpy_dtoh(&self.counts, &mut counts).map_err(err)?;
-        let profile = match &self.profile {
-            Some(p) => s.clone_dtoh(p).map_err(err)?,
-            None => Vec::new(),
-        };
+        let mut slot = self.slot;
+        // Copies run in the order they are queued, whatever their stream: a download queued with its launch held
+        // up the uploads of the next launches until this one's kernels had finished (FEED2: 2.9M deals/s against 5.3M).
+        let Slot { won, lines, counts, down_won, down_lines, down_counts, .. } = &mut *slot;
+        s.memcpy_dtoh(&*won, down_won).map_err(err)?;
+        s.memcpy_dtoh(&*lines, down_lines).map_err(err)?;
+        s.memcpy_dtoh(&*counts, down_counts).map_err(err)?;
+        let profile = if self.profile { s.clone_dtoh(&slot.profile).map_err(err)? } else { Vec::new() };
         s.synchronize().map_err(err)?;
-        Ok(BatchResult {
+        let (mut won, mut lines, mut counts) = self.spare;
+        won.clear();
+        won.extend_from_slice(slot.down_won.as_slice().map_err(err)?);
+        lines.clear();
+        lines.extend_from_slice(slot.down_lines.as_slice().map_err(err)?);
+        counts.clear();
+        counts.extend_from_slice(slot.down_counts.as_slice().map_err(err)?);
+        Ok((BatchResult {
             won,
             lines,
             counts,
@@ -946,7 +1167,7 @@ impl Pending {
             profile,
             masks: self.host_masks,
             pool: self.pool,
-        })
+        }, slot))
     }
 }
 
