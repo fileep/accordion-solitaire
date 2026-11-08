@@ -2221,3 +2221,45 @@ Pair 1 (this build first) x1.022 whole, x1.019 last half; pair 2 (this build sec
 - **Sharing a residual's prefix among its children.** The children share cards 0..y-1, but the states would need about 7.7 KB of shared memory a prefix warp; in registers or lockstep it costs more than it saves (24 card-steps a sweep against 11, worked through).
 
 **What binds.** The GPU, at its power cap: 100% busy, 28.7-29.3 W, 1,421-1,437 MHz, with the feeder now out of the way (host time about 3 ms a launch). Speed follows energy per deal: cycles a deal and idle lanes, not the instruction class.
+
+## After Phase 8, second step — TAKE_MIN 8 and a first rung of 24
+
+6.20M and 5.79M deals/s sustained against 6.06M and 5.65M on b8d71d3, x1.024 over 10-minute runs as a long run (x1.022 on last halves; the two pairs x1.023 and x1.024 whole run). Every line verified. Two defaults changed: kernel.cu `TAKE_MIN` 4 to 8 (the search warps take residuals from the queue once 8 of them need one, not 4) and the settings' first rung `[[40,16],[38,10224]]` to `[[40,24],[38,10224]]` (24 numbered tries of 40 moves, which is 12 played, one each in the solo groups, not 16 numbered and 8 played). TUNE8 retuned the prefix/search balance of b8d71d3 on 30M-deal runs after a 150M warm-up, 3 alternated passes, 1,330-1,415 MHz, 28.7-29.4 W; nothing reached x1.03, and this combination is the one small, real gain, which is not additive: the extra first-rung tries alone gain x1.001, TAKE_MIN 8 alone x1.009, together x1.022 (1.022, 1.021, 1.022; x1.017-1.019 on a second set with other neighbours). A deal now takes 5.08 attempts and 555 positions, against 4.94 and 570.
+
+**The build's own kernel, verified** (new `accgpu`, 8 verifying threads):
+
+| Deals, seeds from | GPU time, deals/s | Won by the GPU | Failed | Misses, all won by the CPU |
+|---|---|---|---|---|
+| 2,000,000, 600,000,000,000 | 4,241,281 | 2,000,000 | 0 | 0 |
+| 6,553,600, 927,000,000,000 | 5,593,948 | 6,553,596 | 0 | 4 |
+
+The kernel compiles to 80 registers and 0 bytes of local memory, as before. The misses are the same count as b8d71d3's check on the same seeds (0 and 4).
+
+**Sustained `acc batch`,** as a long run (`--count 1000000000000`, `--stop-after 0.1667`, `--gpu-config '{}'`), 10 minutes a run, alternated n b | b n, each from its own seeds, Best performance. Power and busy from 20 s samples. Lines verified by the run: no "failed to verify" line, and every deal the GPU did not win was solved or proven lost by the CPU.
+
+| Build | Seeds from | Deals/s, whole run | Last half | GPU busy, last half | CPU package, last half | GPU, last half | Verifying, CPU ns a deal | Not won by the GPU | Failed |
+|---|---|---|---|---|---|---|---|---|---|
+| This build | 1,030,000,000,000 | 6,198,632 | 6,175,239 | 100% | 17.3 W | 29.1 W, 1,427 MHz | 415 | 2,713 | 0 |
+| b8d71d3 | 1,035,000,000,000 | 6,057,605 | 6,057,876 | 100% | 17.3 W | 29.2 W, 1,437 MHz | 411 | 2,615 | 0 |
+| b8d71d3 | 1,040,000,000,000 | 5,654,609 | 5,652,835 | 100% | 19.8 W | 29.0 W, 1,331 MHz | 346 | 2,431 | 0 |
+| This build | 1,045,000,000,000 | 5,791,269 | 5,793,199 | 100% | 19.5 W | 29.3 W, 1,320 MHz | 356 | 2,620 | 0 |
+
+Pair 1 (this build first) x1.023 whole, x1.019 last half; pair 2 (this build second) x1.024 whole, x1.025 last half; both together x1.024 whole, x1.022 last half, in line with TUNE8's x1.022 GPU alone. The two pairs ran in different machine states (the second job at 1,320-1,331 MHz and 19.5-19.8 W on the CPU, against 1,427-1,437 MHz and 17.3 W), so the builds' absolute speeds differ by 7% between the pairs; each ratio is within one state. Misses per 100,000 deals: 0.072-0.075 on both builds.
+
+**Tests.** The four crates pass, with the GPU: every test binary ran and passed (the CLI's `ctrl_break_pauses_and_a_second_one_stops` passed in the full run). Smart App Control blocked the first build of the GPU kernel test binary (os error 4551); a comment in `tests/kernel.rs` changed, the rebuild ran and passed (4 tests). Clippy with `--all-targets`: no warnings. No test needed to change for the rungs (the kernel tests take their try counts from the settings), and no golden value changed.
+
+**Tried, not kept** (TUNE8, HOLD, IDEAS5; GPU alone, 30M-deal runs after a warm-up, 3 alternated passes unless noted; 4M-10M runs are screens):
+- **Shorter or earlier prefixes (TUNE8).** `[[39,16],[38,..]]` x0.958, `[[39,16],[37,..]]` x0.937, `[[40,8],[38,..]]` x0.980: a shorter prefix leaves more search a try (IDEAS5's exact count for 39 moves: 9% fewer attempts, 43% more search a try) and the balance does not pay. First-rung tries at 40 moves: 24 x1.00-1.01, 32 x1.002, 48 x0.998 (attempts 4.94 to 5.36, positions 570 to 537, speed level).
+- **`SOLO_GROUPS` (TUNE8).** 8 / 12 / 20 / 24 / 32 against 16: x0.979 / 0.994 / 0.999 / 1.001 / 0.998. Flat from 20; fewer solo groups lose.
+- **`share_moves` 21 (TUNE8).** x0.981; 19 is below the kernel's minimum of 20 (the masks a group keeps fit 32 bits from 20). Budget 525 / 875 against 700: x0.999 / 0.998. Under TAKE_MIN 8 with the first rung of 24, `TAKE_FLOOR` 12 / 20, budget 600 / 800, `SOLO_GROUPS` 12 / 24 and TAKE_MIN 6 / 10 all read x1.016-1.026: flat among themselves, so the settings sit on a plateau.
+- **Search warps sleeping until enough lanes have work (HOLD).** `__nanosleep` while fewer than H of 32 lanes are searching and the queue cannot fill them: H = 8, 200 ns x0.953 / 0.954 / 0.955 (30M x3, 1,437-1,445 against 1,395-1,449 MHz, 29.4-29.5 W both); H 8 / 16 / 24 with 200 / 1000 ns x0.945-0.957 (10M x2); decided in the take block only x0.968 (H=8) / 0.960 (H=16). The search warps are already full: a turn steps 29.3 of 32 lanes on average, with 0.9% of turns at no lane, 3.1% under 16 and 5.3% under 24, so the hold has 1-2% of turns to save. It costs more: a later search is a later win, so a deal plays +1.7% (H=8) to +4.5% (H=24) more attempts on deals already won, and the prefix warps wait for room in 2.1% of turns, not 1.5%.
+- **Fewer search warps a block (HOLD).** 2 prefix + 1 search warp (96 threads, 8 blocks) x0.930 / 0.939, 3 + 1 (128 threads, 6 blocks) x0.869 / 0.879 (10M x2); with the hold x0.86-0.88 and x0.82-0.83. The clock rises (1,470-1,530 MHz), but one search warp cannot keep up: the prefix threads wait for room in 11.7% (2+1) and 18.3% (3+1) of turns.
+- **Prefix and search warps spread over the schedulers (IDEAS5, `%warpid`).** x0.988 / x0.990 against 5,919k / 5,878k deals/s (30M), control with the prefix warp always warp 1 x0.984; each 8 bytes of spill; 2M lines verified, 0 failed, all won. Roles do not segregate by scheduler, or that is not what binds.
+- **Doubled exhausted-search work (IDEAS5, kSX).** Every lost search run twice (the same verdicts, +57% search positions): 22.10M / 22.75M attempts/s against 23.50M / 21.28M for the base, x1.00 (the base's two runs differ by 10%). Positions cut from the search do not buy speed, which is why every position cut has been flat.
+- **A kernel with no search at all (IDEAS5, kNS) read x2.3** (52.1-52.8M attempts/s, no deal won) and was taken to show that awake search warps cost half the prefix's throughput; HOLD's clock sample of it reads 1,830 MHz at 15.9 W, far under the 30 W cap. Without the search the GPU is not power-bound, so it measured a different machine, not the search warps' cost; the hold above is the test that settled it.
+
+**Considered, not tried:**
+- **Second rung at 37 moves, or one rung only.** x0.937 with a 39-move first rung, and lost in TUNE5 already.
+- **More first-rung tries than 24 with TAKE_MIN 8.** 28 and 32 read x1.019 and x1.016 against x1.022 for 24 (30M x3 on neighbouring bases): on the plateau, within the +-0.5% of the bases.
+
+**What binds.** The GPU, at its power cap: 100% busy, 29.0-29.3 W, 1,320-1,437 MHz. The balance of prefix and search warps is flat around these defaults; the remaining ideas are those of the section above (the search turn's lane-wide work, the 570 positions a deal).

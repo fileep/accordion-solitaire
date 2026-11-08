@@ -227,7 +227,7 @@ fn golden_and_random_deals_are_won_with_lines_that_verify() {
                 "leftmost test {leftmost}: won {won} of {}",
                 deals.len()
             );
-            // Every attempt is accounted for: a deal's tries stop only once it is won.
+            // Every attempt is accounted for: a deal's tries stop only once it is won (the default rungs' 12 + 10,224).
             for i in 0..result.len() {
                 let all = tries_played(gpu.settings.rungs.iter().map(|&[_, t]| t).sum::<u32>(), gpu.settings.share_group);
                 let tries = result.tries(i);

@@ -716,7 +716,7 @@ __device__ __forceinline__ u32* won_bits(u8* lines, u32 w) { return learn_word(l
 // Search threads take residuals once TAKE_MIN of them need one, or fewer than TAKE_FLOOR are searching: taking is dear
 // (a compare-and-swap, and a load of the won flag the whole warp waits for), so not every turn.
 #ifndef TAKE_MIN
-#define TAKE_MIN 4
+#define TAKE_MIN 8
 #endif
 #ifndef TAKE_FLOOR
 #define TAKE_FLOOR 16

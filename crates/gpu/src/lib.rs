@@ -91,7 +91,7 @@ pub struct Settings {
     /// One or two rungs, as [random moves before the search, tries per deal]. Both run in one launch, the second
     /// on the deals the first didn't win. Deals need at least 36 random moves to leave the search ≤16 piles. Tries are
     /// numbered as if every group had `share_group` of them, though a deal's first `SOLO_GROUPS` groups (kernel.cu) have
-    /// one: with groups of 2, the default's first rung is 8 tries of 40 moves, then 38 moves from try 16 on.
+    /// one: with groups of 2, the default's first rung is 12 tries of 40 moves, then 38 moves from try 24 on.
     pub rungs: Vec<[u32; 2]>,
     /// Positions each search may generate.
     pub budget: u32,
@@ -135,7 +135,7 @@ pub struct Settings {
 impl Default for Settings {
     fn default() -> Settings {
         Settings {
-            rungs: vec![[40, 16], [38, 10224]],
+            rungs: vec![[40, 24], [38, 10224]],
             budget: 700,
             batch: 262144,
             block: 64,
