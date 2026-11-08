@@ -700,7 +700,7 @@ __device__ __forceinline__ u64 rrow_places(const u32 (&R)[RW], u32 ranks) {
 }
 // A won deal's bit: 32 deals a word, 4 words in the free bytes (12 to 35) of a low deal's line, zero at the launch, written over by write_lines.
 #ifndef STRETCH_TRIES
-#define STRETCH_TRIES 64
+#define STRETCH_TRIES 16
 #endif
 #define STRETCH_WORDS 32u
 #ifndef BUNDLE_TRIES

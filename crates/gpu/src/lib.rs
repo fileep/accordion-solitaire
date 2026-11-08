@@ -135,7 +135,7 @@ pub struct Settings {
 impl Default for Settings {
     fn default() -> Settings {
         Settings {
-            rungs: vec![[40, 24], [38, 10224]],
+            rungs: vec![[40, 24], [38, 376]],
             budget: 700,
             batch: 262144,
             block: 64,
