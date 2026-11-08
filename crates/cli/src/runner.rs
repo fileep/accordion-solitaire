@@ -1209,8 +1209,8 @@ mod tests {
     fn a_sample_comes_out_in_order_with_the_gpu_too() {
         static PAUSE: AtomicBool = AtomicBool::new(false);
         match open_gpu("auto", Settings::default()).unwrap() {
-            // More than the five batches the feed may hold when the pause comes: it finishes those, so with fewer it never pauses.
-            Some(gpu) => check_sample(Some(gpu), 1_000_000, &PAUSE),
+            // More than the five batches (of 262144 deals) the feed may hold when the pause comes: it finishes those, so with fewer it never pauses.
+            Some(gpu) => check_sample(Some(gpu), 2_000_000, &PAUSE),
             None => eprintln!("skipped: no GPU"),
         }
     }

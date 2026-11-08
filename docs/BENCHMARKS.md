@@ -2122,3 +2122,58 @@ x1.075 and x1.070 on whole runs; x1.059 and x1.048 on last halves. **The GPU sti
 - **The clean scan** (no `BREAK` regime in the scan of won deals), ported with the pattern policy's bundles: x0.971 GPU alone; with step 1, x1.025 against step 1's x1.052. On this kernel it doesn't clear the `BREAK` regime (34 `BREAK`s before and after) and adds a 32 B spill.
 - **Host-side planes for each deal**, so the kernel skips one `win_load` a group: priced, not built. Two extra `win_load` calls a group cost x0.984, so dropping one is worth about 1%, and it needs host changes.
 - **`write_lines` held to 64 registers:** x1.015 against step 2's x1.034; it spills 32 B.
+
+## After Phase 8 — the first groups without a mate, tuned settings, and what did not pay
+
+5.74M deals/s sustained against 5.21M on 490cfde, x1.10, over 10-minute runs as a long run. Every line verified. Three changes, all small; the speed comes from the first two:
+
+1. **`SOLO_GROUPS` 16.** A deal's first 16 groups play without a group mate: one try in each, not a pair. Attempts a deal 6.41 to 4.94, positions 633 to 570 (on the new settings); misses per 100k unchanged at 0.07. Hot, 2 alternated pairs of 800M deals after a warm-up, the same settings on both sides: x1.057 (1.043-1.071). With no mate in any group the attempts fall to 4.79, and the speed is the same (x1.041-1.052 against x1.037-1.051 for 16 groups, GPU alone), but misses rise to 0.13 per 100k, since the try ladder is halved; 16 groups keep both.
+2. **Settings defaults:** rungs `[[40,16],[38,10224]]` (were `[[40,128],[38,10112]]`) and batch 262144 (was 131072). Hot, 3 alternated pairs of 10 minutes on 490cfde: x1.047 and x1.041 under Best performance, x0.989 under Balanced (see the power note); GPU alone on long runs x1.064. A rung's count is in groups, each a pair of tries, and one try in a deal's first 16 groups.
+3. **Rank broadcasts strength-reduced in the own-move scorer** (the useful part of a dead-child experiment, below). Each plane is shifted once, `(int)(BT << k) >> 31` in place of a variable shift a broadcast. The moves are identical; 32 fewer instructions, 80 registers and no spill (before: 79 and 8 B of local memory). x1.030 on 2M-deal runs GPU alone, but x1.011 (0.997-1.027) on long runs against 490cfde: no difference shown. Kept because it changes nothing else.
+
+**The build's own kernel, verified with the host's settings** (new defaults, 8 verifying threads):
+
+| Deals, seeds from | GPU time, deals/s | Won by the GPU | Failed | Misses, all won by the CPU |
+|---|---|---|---|---|
+| 2,000,000, 600,000,000,000 | 4,427,753 | 2,000,000 | 0 | 0 |
+| 4,000,000, 925,000,000,000 | 5,010,390 | 3,999,999 | 0 | 1 |
+| 6,553,600, 927,000,000,000 | 5,215,455 | 6,553,596 | 0 | 4 |
+
+4.95 attempts and 570 positions a deal (24.78M attempts/s and 2,857M positions/s on the second range), 80 registers, 0 bytes of local memory.
+
+**Sustained `acc batch`,** as a long run (`--count 1000000000000`, `--stop-after 0.1667`, `--gpu-config '{}'`, so each build runs its own defaults), 10 minutes a run, alternated n b b n, each from its own seeds, Best performance. Power from 20 s samples; lines verified by the run (a paused run prints no "all won" line, so the check is: no "failed to verify" line and the GPU's own count of lines that failed, 0):
+
+| Build | Seeds from | Deals/s, whole run | Last half | GPU busy, last half | CPU package, last half (whole run) | GPU, last half | Verifying, CPU ns a deal | Misses | Failed |
+|---|---|---|---|---|---|---|---|---|---|
+| This build | 970,000,000,000 | 5,672,145 | 5,678,035 | 100% | 16.3 W (15.9-29.0) | 28.8 W, 1,360 MHz | 525 | 2,560 | 0 |
+| 490cfde | 975,000,000,000 | 5,178,250 | 5,175,529 | 100% | 17.2 W (15.8-18.5) | 28.9 W, 1,377 MHz | 496 | 2,236 | 0 |
+| 490cfde | 980,000,000,000 | 5,236,985 | 5,248,995 | 100% | 18.3 W (17.7-18.6) | 28.9 W, 1,394 MHz | 409 | 2,266 | 0 |
+| This build | 985,000,000,000 | 5,810,917 | 5,852,131 | 100% | 18.0 W (17.5-18.5) | 29.1 W, 1,400 MHz | 416 | 2,597 | 0 |
+
+Pair 1 x1.095 whole, x1.097 last half; pair 2 x1.110 whole, x1.115 last half; both pairs together x1.102 whole, x1.106 last half. The second run of a pair reads a few percent high in these tests, so the order-balanced figure is what to quote. The two hot measurements above (x1.057 and x1.044) multiply to x1.10, as measured. **The GPU still binds:** 100% busy at its 30 W cap, 28.8-29.1 W, the CPU workers waiting for it for about 2.0-2.4 us of every 2.6-2.9 us of thread time a deal. Misses are 0.074 per 100k on this build, 0.072 on 490cfde; each goes to the CPU's exact search, which won it.
+
+**Tests.** Four crates pass, kernel tests with the GPU; clippy: no warnings. No golden value changed. Three tests changed because of the new defaults, none of them in what they check:
+- The two kernel tests "every attempt is accounted for" expected a deal not won to play `tries == all`; with `SOLO_GROUPS` it plays one try in each of its first 16 groups, so a helper (`tries_played`, which reads `SOLO_GROUPS` from `kernel.cu`) gives the expected count. A case (37, 8) was added, so a group that straddles the rungs past the solo groups is still tested.
+- The sample test with the GPU used 1M deals, 7.6 batches of 131072; with 262144 that is 3.8 batches, fewer than the five the feed holds when the pause comes, and "it never paused". It uses 2M now.
+
+**Timing lessons.**
+- **GPU-alone runs of 2M deals overstate gains.** A run lasts under half a second and measures boost above the 30 W cap, not energy per deal. Examples from this stretch: the shared-moves build, x1.148 on 2M runs and x1.058 on 30M runs; bc, x1.030 and x1.011; a branch-free edit in the search, x1.041 in a drifting hold and x0.991 over 4 passes. Decisions here were made on 30M-deal runs after a warm-up, 2 or more alternated pairs, then on hot runs. Short runs are only for screening.
+- **Best performance mode removed the CPU's 12 W state.** In Balanced the CPU package sat at a flat 12 W for stretches of a run; in Best performance it drew 15.6-18.5 W. The same 490cfde build with the default settings ran 4,940k deals/s (last half, Balanced) against 5,275k and 5,291k (Best performance): about 7-8% hot, with no change to the build. Compare hot runs only within one power mode, and note it for any figure on this page from before this section.
+
+**Tried, not kept:**
+- **OWNCUT: cutting the own-move scorer's instructions.** Marginal cost per instruction in long runs, from dummy work added to one part at a time: own move 0.038% of speed an instruction, search turn 0.154%, shared move 0.045%; shares of marginal time about 23%, 38% and 9%. For x1.05 from own moves with the same moves, about 130 of the loop's 763 instructions (501 of them LOP3 in the adder trees) would have to go. The cuts found come to about 50 instructions, about 2% (estimate): phase-specialised sums, PRMT broadcasts, the REC store address hoisted (costs a register at the 80 cap). Nothing built.
+- **SEARCHCUT: cutting the search turn's control path** (a second take-check ballot kept out of line, the check every 6 or 8 turns, frame addresses by byte offset, a branch-free edit and test, the won check's load a take block early, masks only for rows that changed). All exact or timing-only; none reached x1.03 on long runs. A branch around the masks costs more than the lanes it idles (x0.942); a branch-free edit and test looked like x1.041 in a drifting hold and was x0.991 over 4 passes. OWNCUT's 0.154% an instruction came from a dependent chain of ALU dummies and does not carry over to control operations: the search turn does not bind on its control path, branches or load latency.
+- **TUNE5: retune of `--gpu-config` on 490cfde.** Candidates over rungs, conn gate, rank gate, budget, batch and group size, 30M-deal runs after a 150M warm-up, alternated: the best, a second rung of 2048 tries, was x1.003 against a spread of about 1% between runs of the same build. Every compile-time knob lost or was level.
+- **TUNE7, second part: a GPU tuner of the own-move scorer's weights,** on exact attempt and position counts of 4M deals. It converged in 3 rounds to a local minimum: the committed weights are already at the optimum (the pure terms are sharp, within 10-20%; the win and move terms are flat within 0.3%). Predicted x1.006, measured x0.989 and x1.000 on long runs.
+- **POLICY5: dead-child terms in the scorer.** A card whose only partner is the covered one can never be won, and a row with such a card is lost; an exact bit-sliced test costs about 25 instructions. Leaving dead children out entirely is the best any weight could do, and it cut attempts by only 0.6% for x0.981-0.985; the simulator's -10% did not carry over, since the policy rarely plays into one. Choosing another move for a child with none: attempts changed by 0.1% and cost 3.5%, from the loop's shape. An earlier policy's feature drops, transplanted: x0.979-1.009. First look-ahead move at 28, 32 and 34 (30 is the default): x0.960, 1.012, 0.998, noisy.
+- **HARD2: other ways to cut a deal's early tries.** A budget cut and a gate cut were flat. Prefix warps at 36 and 37 piles: x0.88 and x0.97. A second move-quality bit (MQ): x0.89-0.96. Shared moves among 24-38 piles, not 32: worse. One try a group, sliced (`SHARE_G` 1): x1.020. Mate-free groups beyond 16: no gain, and more misses (above).
+
+- **Pinned, reused upload slots (the feeder).** Host time a launch fell from 42.6 ms (pageable copy) to 2.9 ms, and hot on 490cfde was x1.004, flat: the GPU never waited, so the feeder did not bind there. The GPU copies 20 MB up in 31.8 ms (0.63 GB/s, PCIe Gen4 x4), so up and down are about 48 ms of copy in a 47 ms cycle: on this build the copy engine may bind (inferred, not measured).
+
+**Considered, not tried:**
+- **The scorer's three cuts above, about 2% together,** under the 3% bar with no route to 5%.
+- **PRMT sign-replicate broadcasts** (one IMAD puts the bits at byte tops): about 12 instructions an own move, about 1%.
+- **Inline ballots and a doubled search turn.** `ptxas` refuses a ballot without sync; an `__activemask()` ballot in a branch depends on `ptxas` leaving the branch alone. Doubling the turn doubles the hot loop, 7.4 to 15 KB, for a saving the take-check change gave without it and which showed nothing.
+- **Deals made on the GPU from their seeds** (8 bytes a deal up, against 76): written, not built. See the upload bullet above.
+
+**What binds.** The GPU, at its power cap, in either CPU state: 100% busy, 28.8-29.1 W, 1,360-1,400 MHz. Speed follows energy per deal there: memory traffic and total instructions, not issue slots or latency. Next: the search turn's lane-wide work (alive_rest, bp_edit), the 570 positions a deal, and the upload.

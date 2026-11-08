@@ -42,12 +42,15 @@ pub const PROFILE_SLOTS: usize = 18;
 #[serde(default, deny_unknown_fields)]
 pub struct Settings {
     /// One or two rungs, as [random moves before the search, tries per deal]. Both run in one launch, the second
-    /// on the deals the first didn't win. Deals need at least 36 random moves to leave the search ≤16 piles.
+    /// on the deals the first didn't win. Deals need at least 36 random moves to leave the search ≤16 piles. Tries are
+    /// numbered as if every group had `share_group` of them, though a deal's first `SOLO_GROUPS` groups (kernel.cu) have
+    /// one: with groups of 2, the default's first rung is 8 tries of 40 moves, then 38 moves from try 16 on.
     pub rungs: Vec<[u32; 2]>,
     /// Positions each search may generate.
     pub budget: u32,
     /// Deals per launch: keep launches well under Windows' 2 s GPU watchdog (65,536 take about 0.1 s on the T550, and
-    /// fewer leave several attempts at once on each deal, which wastes those still running once it is won).
+    /// fewer leave several attempts at once on each deal, which wastes those still running once it is won). 262,144
+    /// with a first rung of 16 ran hot x1.044 over 131,072 with 128 (docs/BENCHMARKS.md).
     pub batch: usize,
     /// Threads per block (the kernel's shared memory is sized for it: 64 bytes per thread). On the T550, 64 fits
     /// 1,024 attempts per multiprocessor, its maximum (32 fits 512, the most blocks it takes); the queue takes
@@ -85,9 +88,9 @@ pub struct Settings {
 impl Default for Settings {
     fn default() -> Settings {
         Settings {
-            rungs: vec![[40, 128], [38, 10112]],
+            rungs: vec![[40, 16], [38, 10224]],
             budget: 700,
-            batch: 131072,
+            batch: 262144,
             block: 64,
             blocks_per_sm: 8,
             conn_gate: 19,

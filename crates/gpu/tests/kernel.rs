@@ -229,7 +229,7 @@ fn golden_and_random_deals_are_won_with_lines_that_verify() {
             );
             // Every attempt is accounted for: a deal's tries stop only once it is won.
             for i in 0..result.len() {
-                let all = gpu.settings.rungs.iter().map(|&[_, t]| t).sum::<u32>();
+                let all = tries_played(gpu.settings.rungs.iter().map(|&[_, t]| t).sum::<u32>(), gpu.settings.share_group);
                 let tries = result.tries(i);
                 assert!(result.is_won(i) || tries == all, "deal {i}: {tries} of {all} tries ran, not won");
             }
@@ -240,22 +240,36 @@ fn golden_and_random_deals_are_won_with_lines_that_verify() {
 #[test]
 fn every_try_runs_when_a_group_of_tries_straddles_the_rungs() {
     // 5 + 8 tries a deal: in groups of 2 sharing their first moves (the default), the third group spans both rungs and the
-    // last is short. 64 + 200: past where a warp takes whole words of groups at a time and a pass gives a deal bundles of
-    // groups. A deal not won still gets them all, and every line replays.
+    // last is short. 37 + 8: the same past the deal's first SOLO_GROUPS groups (kernel.cu), which have one try each.
+    // 64 + 200: past where a warp takes whole words of groups at a time and a pass gives a deal bundles of groups. A deal
+    // not won still gets them all, and every line replays.
     let deals: Vec<(String, Deal, Option<Outcome>)> =
         (0..2048u64).map(|s| (format!("seed {s}"), Deal::from_seed(s), None)).collect();
     let positions: Vec<[u8; 52]> = deals.iter().map(|(_, deal, _)| deal_codes(deal)).collect();
     let Some(gpu) = gpu() else { return };
     assert!(gpu.settings.share_group == 2, "the test expects groups of 2");
-    for (tries, tries2) in [(5, 8), (64, 200)] {
+    for (tries, tries2) in [(5, 8), (37, 8), (64, 200)] {
         let result = gpu.run(&positions, &Attempts { tries, tries2, ..gpu.settings.attempts(0) }).unwrap();
         let won = check_deals(&deals, &result);
         assert!(won > 0, "won none of {}", deals.len());
+        let all = tries_played(tries + tries2, 2);
         for i in 0..result.len() {
             let ran = result.tries(i);
-            assert!(result.is_won(i) || ran == tries + tries2, "deal {i}: {ran} of {} tries ran, not won", tries + tries2);
+            assert!(result.is_won(i) || ran == all, "deal {i}: {ran} of {all} tries ran, not won");
         }
     }
+}
+
+/// The tries a deal not won plays, of `all` in groups of `group`: a deal's first SOLO_GROUPS groups (kernel.cu) play
+/// only their first try.
+fn tries_played(all: u32, group: u32) -> u32 {
+    let solo: u32 = include_str!("../src/kernel.cu")
+        .split("#define SOLO_GROUPS ")
+        .nth(1)
+        .and_then(|rest| rest.split_whitespace().next())
+        .and_then(|n| n.parse().ok())
+        .expect("kernel.cu defines SOLO_GROUPS");
+    (0..all.div_ceil(group)).map(|j| if j < solo { 1 } else { group.min(all - j * group) }).sum()
 }
 
 /// Every recorded win is won, no recorded loss is, and every line verifies; returns the wins.

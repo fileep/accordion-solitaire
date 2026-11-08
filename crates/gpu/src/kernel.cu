@@ -644,6 +644,11 @@ __device__ __forceinline__ u64 now_ns() { u64 t; asm volatile("mov.u64 %0, %%glo
 #ifndef SHARE_K
 #define SHARE_K 0
 #endif
+// A deal's first SOLO_GROUPS groups have one try each, with no group mate (tries 2j + 1 for j < SOLO_GROUPS are not
+// played): a mate early on is mostly wasted work, played beside a try that wins. 6.41 attempts a deal to 4.94.
+#ifndef SOLO_GROUPS
+#define SOLO_GROUPS 16
+#endif
 // The random numbers of attempt a, and of the group whose first try is attempt a0.
 __device__ __forceinline__ u32 own_rng(u64 seed, u32 a) { return seed_u32(seed ^ (0x9E3779B97F4A7C15ull * (a + 1))); }
 __device__ __forceinline__ u32 group_rng(u64 seed, u32 a0) { return seed_u32(seed ^ (0xD1B54A32D192ED03ull * (a0 + 1))); }
@@ -869,13 +874,43 @@ __device__ __forceinline__ int pat_move(u32 (&B)[6], int& len, u32& l1, u32& l3,
     const u32 D6 = ~(((B[0] ^ (B[0] << 6)) | (B[1] ^ (B[1] << 6)) | (B[2] ^ (B[2] << 6)) | (B[3] ^ (B[3] << 6))) & ((B[4] ^ (B[4] << 6)) | (B[5] ^ (B[5] << 6)))) & PV & ~63u;
     const u32 O0 = w0 & w1, O1 = ~w0 & w1, O2 = w0 & ~w1, O3 = ~(w0 | w1);
     const u32 G3 = last ? ~0u : 0u;
+    // Bit len-1-k of a rank plane, as a whole word: the planes shifted once, so each broadcast is one or two shifts.
+    const u32 TOPB = 1u << (len - 1);
+    const u32 BT0 = B[0] << (32 - len);
+    const u32 BT1 = B[1] << (32 - len);
+    const u32 BT2 = B[2] << (32 - len);
+    const u32 BT3 = B[3] << (32 - len);
+    const u32 BC0_0 = (u32)((int)BT0 >> 31);
+    const u32 BC0_1 = (u32)((int)(BT0 << 1) >> 31);
+    const u32 BC0_2 = (u32)((int)(BT0 << 2) >> 31);
+    const u32 BC0_3 = (u32)((int)(BT0 << 3) >> 31);
+    const u32 BC0_4 = (u32)((int)(BT0 << 4) >> 31);
+    const u32 BC0_5 = (u32)((int)(BT0 << 5) >> 31);
+    const u32 BC1_0 = (u32)((int)BT1 >> 31);
+    const u32 BC1_1 = (u32)((int)(BT1 << 1) >> 31);
+    const u32 BC1_2 = (u32)((int)(BT1 << 2) >> 31);
+    const u32 BC1_3 = (u32)((int)(BT1 << 3) >> 31);
+    const u32 BC1_4 = (u32)((int)(BT1 << 4) >> 31);
+    const u32 BC1_5 = (u32)((int)(BT1 << 5) >> 31);
+    const u32 BC2_0 = (u32)((int)BT2 >> 31);
+    const u32 BC2_1 = (u32)((int)(BT2 << 1) >> 31);
+    const u32 BC2_2 = (u32)((int)(BT2 << 2) >> 31);
+    const u32 BC2_3 = (u32)((int)(BT2 << 3) >> 31);
+    const u32 BC2_4 = (u32)((int)(BT2 << 4) >> 31);
+    const u32 BC2_5 = (u32)((int)(BT2 << 5) >> 31);
+    const u32 BC3_0 = (u32)((int)BT3 >> 31);
+    const u32 BC3_1 = (u32)((int)(BT3 << 1) >> 31);
+    const u32 BC3_2 = (u32)((int)(BT3 << 2) >> 31);
+    const u32 BC3_3 = (u32)((int)(BT3 << 3) >> 31);
+    const u32 BC3_4 = (u32)((int)(BT3 << 4) >> 31);
+    const u32 BC3_5 = (u32)((int)(BT3 << 5) >> 31);
     u32 Y0 = 0, Y1 = 0, Y2 = 0, Y3 = 0, Y4 = 0, Y5 = 0, AS0 = 0, AL0 = 0, AS1 = 0, AL1 = 0, AS2 = 0, AL2 = 0, AS3 = 0, AL3 = 0, AS4 = 0, AL4 = 0, AS5 = 0, AL5 = 0, AS6 = 0, AL6 = 0;
     if (last) {
-        const u32 E0 = ~((B[0] ^ (0u - ((B[0] >> (len - 1 - 0)) & 1u))) | (B[1] ^ (0u - ((B[1] >> (len - 1 - 0)) & 1u))) | (B[2] ^ (0u - ((B[2] >> (len - 1 - 0)) & 1u))) | (B[3] ^ (0u - ((B[3] >> (len - 1 - 0)) & 1u)))) & ~(1u << (len - 1 - 0));
-        const u32 E1 = ~((B[0] ^ (0u - ((B[0] >> (len - 1 - 1)) & 1u))) | (B[1] ^ (0u - ((B[1] >> (len - 1 - 1)) & 1u))) | (B[2] ^ (0u - ((B[2] >> (len - 1 - 1)) & 1u))) | (B[3] ^ (0u - ((B[3] >> (len - 1 - 1)) & 1u)))) & ~(1u << (len - 1 - 1));
-        const u32 E2 = ~((B[0] ^ (0u - ((B[0] >> (len - 1 - 2)) & 1u))) | (B[1] ^ (0u - ((B[1] >> (len - 1 - 2)) & 1u))) | (B[2] ^ (0u - ((B[2] >> (len - 1 - 2)) & 1u))) | (B[3] ^ (0u - ((B[3] >> (len - 1 - 2)) & 1u)))) & ~(1u << (len - 1 - 2));
-        const u32 E3 = ~((B[0] ^ (0u - ((B[0] >> (len - 1 - 3)) & 1u))) | (B[1] ^ (0u - ((B[1] >> (len - 1 - 3)) & 1u))) | (B[2] ^ (0u - ((B[2] >> (len - 1 - 3)) & 1u))) | (B[3] ^ (0u - ((B[3] >> (len - 1 - 3)) & 1u)))) & ~(1u << (len - 1 - 3));
-        const u32 E4 = ~((B[0] ^ (0u - ((B[0] >> (len - 1 - 4)) & 1u))) | (B[1] ^ (0u - ((B[1] >> (len - 1 - 4)) & 1u))) | (B[2] ^ (0u - ((B[2] >> (len - 1 - 4)) & 1u))) | (B[3] ^ (0u - ((B[3] >> (len - 1 - 4)) & 1u)))) & ~(1u << (len - 1 - 4));
+        const u32 E0 = ~((B[0] ^ BC0_0) | (B[1] ^ BC1_0) | (B[2] ^ BC2_0) | (B[3] ^ BC3_0)) & ~(TOPB >> 0);
+        const u32 E1 = ~((B[0] ^ BC0_1) | (B[1] ^ BC1_1) | (B[2] ^ BC2_1) | (B[3] ^ BC3_1)) & ~(TOPB >> 1);
+        const u32 E2 = ~((B[0] ^ BC0_2) | (B[1] ^ BC1_2) | (B[2] ^ BC2_2) | (B[3] ^ BC3_2)) & ~(TOPB >> 2);
+        const u32 E3 = ~((B[0] ^ BC0_3) | (B[1] ^ BC1_3) | (B[2] ^ BC2_3) | (B[3] ^ BC3_3)) & ~(TOPB >> 3);
+        const u32 E4 = ~((B[0] ^ BC0_4) | (B[1] ^ BC1_4) | (B[2] ^ BC2_4) | (B[3] ^ BC3_4)) & ~(TOPB >> 4);
         const u32 gs1 = E0 ^ E1 ^ E2;
         const u32 gc1 = (E0 & E1) | (E2 & (E0 ^ E1));
         const u32 gs2 = E3 ^ E4 ^ gs1;
@@ -894,8 +929,8 @@ __device__ __forceinline__ int pat_move(u32 (&B)[6], int& len, u32& l1, u32& l3,
         const u32 gc8 = (E3 & E4) | (gs7 & (E3 ^ E4));
         const u32 Yt1 = (gs2) & (w0 & w1);
         const u32 Yt2 = ~((gs6) & (~w0 & w1));
-        const u32 Yt3 = O0 & ((1u << (len - 1 - 2)) | (1u << (len - 1 - 3)) | (1u << (len - 1 - 4)));
-        const u32 Yt4 = O0 & ((1u << (len - 1 - 0)) | (1u << (len - 1 - 1)));
+        const u32 Yt3 = O0 & ((TOPB >> 2) | (TOPB >> 3) | (TOPB >> 4));
+        const u32 Yt4 = O0 & ((TOPB >> 0) | (TOPB >> 1));
         const u32 Yt5 = (w1 & PV);
         const u32 Yt6 = ~0u;
         const u32 Yt7 = Yt1 ^ Yt2 ^ Yt3;
@@ -922,8 +957,8 @@ __device__ __forceinline__ int pat_move(u32 (&B)[6], int& len, u32& l1, u32& l3,
         const u32 Yt28 = Yt23 & Yt25;
         const u32 Yt29 = (gs4) & (w0 & w1);
         const u32 Yt30 = ~((gs8) & (~w0 & w1));
-        const u32 Yt31 = O0 & ((1u << (len - 1 - 2)) | (1u << (len - 1 - 3)) | (1u << (len - 1 - 4)));
-        const u32 Yt32 = O0 & ((1u << (len - 1 - 0)) | (1u << (len - 1 - 1)));
+        const u32 Yt31 = O0 & ((TOPB >> 2) | (TOPB >> 3) | (TOPB >> 4));
+        const u32 Yt32 = O0 & ((TOPB >> 0) | (TOPB >> 1));
         const u32 Yt33 = (w1 & PV);
         const u32 Yt34 = Yt22;
         const u32 Yt35 = Yt24;
@@ -1172,12 +1207,12 @@ __device__ __forceinline__ int pat_move(u32 (&B)[6], int& len, u32& l1, u32& l3,
         AS5 = ASt73; AL5 = ALt114;
         AS6 = ASt75; AL6 = ALt116;
     } else {
-        const u32 E0 = ~((B[0] ^ (0u - ((B[0] >> (len - 1 - 0)) & 1u))) | (B[1] ^ (0u - ((B[1] >> (len - 1 - 0)) & 1u))) | (B[2] ^ (0u - ((B[2] >> (len - 1 - 0)) & 1u))) | (B[3] ^ (0u - ((B[3] >> (len - 1 - 0)) & 1u)))) & ~(1u << (len - 1 - 0));
-        const u32 E1 = ~((B[0] ^ (0u - ((B[0] >> (len - 1 - 1)) & 1u))) | (B[1] ^ (0u - ((B[1] >> (len - 1 - 1)) & 1u))) | (B[2] ^ (0u - ((B[2] >> (len - 1 - 1)) & 1u))) | (B[3] ^ (0u - ((B[3] >> (len - 1 - 1)) & 1u)))) & ~(1u << (len - 1 - 1));
-        const u32 E2 = ~((B[0] ^ (0u - ((B[0] >> (len - 1 - 2)) & 1u))) | (B[1] ^ (0u - ((B[1] >> (len - 1 - 2)) & 1u))) | (B[2] ^ (0u - ((B[2] >> (len - 1 - 2)) & 1u))) | (B[3] ^ (0u - ((B[3] >> (len - 1 - 2)) & 1u)))) & ~(1u << (len - 1 - 2));
-        const u32 E3 = ~((B[0] ^ (0u - ((B[0] >> (len - 1 - 3)) & 1u))) | (B[1] ^ (0u - ((B[1] >> (len - 1 - 3)) & 1u))) | (B[2] ^ (0u - ((B[2] >> (len - 1 - 3)) & 1u))) | (B[3] ^ (0u - ((B[3] >> (len - 1 - 3)) & 1u)))) & ~(1u << (len - 1 - 3));
-        const u32 E4 = ~((B[0] ^ (0u - ((B[0] >> (len - 1 - 4)) & 1u))) | (B[1] ^ (0u - ((B[1] >> (len - 1 - 4)) & 1u))) | (B[2] ^ (0u - ((B[2] >> (len - 1 - 4)) & 1u))) | (B[3] ^ (0u - ((B[3] >> (len - 1 - 4)) & 1u)))) & ~(1u << (len - 1 - 4));
-        const u32 E5 = ~((B[0] ^ (0u - ((B[0] >> (len - 1 - 5)) & 1u))) | (B[1] ^ (0u - ((B[1] >> (len - 1 - 5)) & 1u))) | (B[2] ^ (0u - ((B[2] >> (len - 1 - 5)) & 1u))) | (B[3] ^ (0u - ((B[3] >> (len - 1 - 5)) & 1u)))) & ~(1u << (len - 1 - 5));
+        const u32 E0 = ~((B[0] ^ BC0_0) | (B[1] ^ BC1_0) | (B[2] ^ BC2_0) | (B[3] ^ BC3_0)) & ~(TOPB >> 0);
+        const u32 E1 = ~((B[0] ^ BC0_1) | (B[1] ^ BC1_1) | (B[2] ^ BC2_1) | (B[3] ^ BC3_1)) & ~(TOPB >> 1);
+        const u32 E2 = ~((B[0] ^ BC0_2) | (B[1] ^ BC1_2) | (B[2] ^ BC2_2) | (B[3] ^ BC3_2)) & ~(TOPB >> 2);
+        const u32 E3 = ~((B[0] ^ BC0_3) | (B[1] ^ BC1_3) | (B[2] ^ BC2_3) | (B[3] ^ BC3_3)) & ~(TOPB >> 3);
+        const u32 E4 = ~((B[0] ^ BC0_4) | (B[1] ^ BC1_4) | (B[2] ^ BC2_4) | (B[3] ^ BC3_4)) & ~(TOPB >> 4);
+        const u32 E5 = ~((B[0] ^ BC0_5) | (B[1] ^ BC1_5) | (B[2] ^ BC2_5) | (B[3] ^ BC3_5)) & ~(TOPB >> 5);
         const u32 gs1 = E0 ^ E1 ^ E2;
         const u32 gc1 = (E0 & E1) | (E2 & (E0 ^ E1));
         const u32 gs2 = E3 ^ E4 ^ gs1;
@@ -1203,10 +1238,10 @@ __device__ __forceinline__ int pat_move(u32 (&B)[6], int& len, u32& l1, u32& l3,
         const u32 Yt3 = ~((E2) & (~w0 & w1));
         const u32 Yt4 = ~((E5) & (~w0 & ~w1));
         const u32 Yt5 = ~((gs9) & ~w0);
-        const u32 Yt6 = O0 & ((1u << (len - 1 - 2)) | (1u << (len - 1 - 3)) | (1u << (len - 1 - 4)));
-        const u32 Yt7 = O0 & ((1u << (len - 1 - 0)) | (1u << (len - 1 - 1)));
-        const u32 Yt8 = O1 & ((1u << (len - 1 - 0)) | (1u << (len - 1 - 1)));
-        const u32 Yt9 = ~(O3 & ((1u << (len - 1 - 3)) | (1u << (len - 1 - 4)) | (1u << (len - 1 - 5))));
+        const u32 Yt6 = O0 & ((TOPB >> 2) | (TOPB >> 3) | (TOPB >> 4));
+        const u32 Yt7 = O0 & ((TOPB >> 0) | (TOPB >> 1));
+        const u32 Yt8 = O1 & ((TOPB >> 0) | (TOPB >> 1));
+        const u32 Yt9 = ~(O3 & ((TOPB >> 3) | (TOPB >> 4) | (TOPB >> 5)));
         const u32 Yt10 = ~0u;
         const u32 Yt11 = Yt1 ^ Yt2 ^ Yt3;
         const u32 Yt12 = (Yt1 & Yt2) | (Yt3 & (Yt1 ^ Yt2));
@@ -1226,10 +1261,10 @@ __device__ __forceinline__ int pat_move(u32 (&B)[6], int& len, u32& l1, u32& l3,
         const u32 Yt26 = ~((E2) & ~(w0 & w1));
         const u32 Yt27 = ~((gc9) & ~w0);
         const u32 Yt28 = ~((gs10) & ~w1);
-        const u32 Yt29 = ~(O3 & ((1u << (len - 1 - 0)) | (1u << (len - 1 - 1)) | (1u << (len - 1 - 2))));
-        const u32 Yt30 = O1 & ((1u << (len - 1 - 2)) | (1u << (len - 1 - 3)) | (1u << (len - 1 - 4)));
-        const u32 Yt31 = O0 & ((1u << (len - 1 - 0)) | (1u << (len - 1 - 1)));
-        const u32 Yt32 = O1 & ((1u << (len - 1 - 0)) | (1u << (len - 1 - 1)));
+        const u32 Yt29 = ~(O3 & ((TOPB >> 0) | (TOPB >> 1) | (TOPB >> 2)));
+        const u32 Yt30 = O1 & ((TOPB >> 2) | (TOPB >> 3) | (TOPB >> 4));
+        const u32 Yt31 = O0 & ((TOPB >> 0) | (TOPB >> 1));
+        const u32 Yt32 = O1 & ((TOPB >> 0) | (TOPB >> 1));
         const u32 Yt33 = ~0u;
         const u32 Yt34 = Yt12;
         const u32 Yt35 = Yt14;
@@ -1259,8 +1294,8 @@ __device__ __forceinline__ int pat_move(u32 (&B)[6], int& len, u32& l1, u32& l3,
         const u32 Yt59 = ~((gc7) & (w0 ^ w1));
         const u32 Yt60 = ~((gs8) & (~w0 & w1));
         const u32 Yt61 = ~((gc10) & ~w1);
-        const u32 Yt62 = O0 & ((1u << (len - 1 - 2)) | (1u << (len - 1 - 3)) | (1u << (len - 1 - 4)));
-        const u32 Yt63 = O0 & ((1u << (len - 1 - 0)) | (1u << (len - 1 - 1)));
+        const u32 Yt62 = O0 & ((TOPB >> 2) | (TOPB >> 3) | (TOPB >> 4));
+        const u32 Yt63 = O0 & ((TOPB >> 0) | (TOPB >> 1));
         const u32 Yt64 = Yt40;
         const u32 Yt65 = Yt42;
         const u32 Yt66 = Yt44;
@@ -1746,6 +1781,7 @@ extern "C" __global__ void __launch_bounds__(BLOCK, 768 / BLOCK) attempts_split(
                 deal_and_try(a, n_deals, inv_deals, deal, j);    // a is the group's number here
                 left = min((u32)SHARE_G, all_tries - j * SHARE_G) - 1;
                 a = j * SHARE_G * n_deals + deal;               // its first try
+                if (j < (u32)SOLO_GROUPS) left = 0;
             }
             for (int g = share ? -1 : 0; g < SHARE_G; g++) {
                 // The group's next try, unless it has no more or the deal was won meanwhile.
