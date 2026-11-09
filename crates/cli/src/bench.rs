@@ -22,7 +22,7 @@ pub struct BenchArgs {
     #[arg(long, value_delimiter = ',', default_value = "26,30,34")]
     depths: Vec<usize>,
     /// Positions a single search may generate before giving up.
-    #[arg(long, default_value_t = 2_000_000)]
+    #[arg(long, default_value_t = 2_000_000, value_parser = crate::numbers::parse_count)]
     budget: u64,
     /// Dead-position table size, as log2 of 64-byte buckets (16 = 4 MB).
     #[arg(long, default_value_t = 16)]

@@ -17,6 +17,8 @@ use std::time::Instant;
 /// Seeds for the soundness samples start here, so they don't reuse the playout deals.
 const SOUNDNESS_SEED_BASE: u64 = 1 << 40;
 const REFERENCE_BUDGET: usize = 200_000;
+/// What a check that fails has to say besides what failed.
+const A_BUG: &str = "this is a bug, please report it with this output";
 
 pub fn run(
     playouts: u64,
@@ -37,7 +39,7 @@ pub fn run(
     let moves = match moves {
         Ok(m) => m,
         Err(e) => {
-            println!("FAILED differential playouts: {e}");
+            println!("FAILED differential playouts: {e}\n{A_BUG}");
             return Ok(false);
         }
     };
@@ -62,7 +64,7 @@ pub fn run(
     let [not_fired, confirmed, inconclusive] = match counts {
         Ok(c) => c,
         Err(e) => {
-            println!("FAILED dead-end soundness: {e}");
+            println!("FAILED dead-end soundness: {e}\n{A_BUG}");
             return Ok(false);
         }
     };
@@ -161,7 +163,7 @@ fn pruning(residuals: u64, tables: &Arc<Endgame>) -> Result<bool, String> {
             Ok(true)
         }
         Err(e) => {
-            println!("FAILED pruning check: {e}");
+            println!("FAILED pruning check: {e}\n{A_BUG}");
             Ok(false)
         }
     }
@@ -264,7 +266,7 @@ fn proof_check(n: u64, tables: &Endgame) -> Result<bool, String> {
             Ok(true)
         }
         Err(e) => {
-            println!("FAILED proof check: {e}");
+            println!("FAILED proof check: {e}\n{A_BUG}");
             Ok(false)
         }
     }

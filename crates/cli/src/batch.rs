@@ -14,6 +14,7 @@
 
 use crate::dossier;
 use crate::games::{self, Found, Sieve};
+use crate::numbers::{self, parse_count};
 use crate::pause;
 use crate::progress::{Meter, Trouble};
 use crate::prove::{self, Finding, Limits};
@@ -27,123 +28,141 @@ use serde::{Deserialize, Serialize};
 use std::cell::Cell;
 use std::cmp::Reverse;
 use std::collections::{BTreeMap, BTreeSet, BinaryHeap};
-use std::fs::{File, OpenOptions};
-use std::io::{BufWriter, Read, Seek, SeekFrom, Write};
+use std::fs::{File, OpenOptions, TryLockError};
+use std::io::{BufReader, BufWriter, Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, mpsc};
 use std::time::{Duration, Instant};
 
+// The groups of `acc batch --help`, which come in the order of the first flag in each.
+const WHICH_DEALS: &str = "Which deals";
+const SPEED: &str = "Speed and machine";
+const STOPPING: &str = "Stopping and carrying on";
+const OUTPUT: &str = "Output";
+const PROVING: &str = "Proving losses";
+const GAMES: &str = "Repeated-game check";
+const RESEARCH: &str = "Research";
+
+const EXAMPLES: &str = "\
+Examples:
+  acc batch --count 1m                         the first million deals
+  acc batch --from 5b --count 100k --gpu off   100,000 deals from seed 5,000,000,000, on the CPU alone
+  acc batch --count 2t --stop-after 8          two trillion deals, pausing after 8 hours
+  acc batch --resume checkpoints/batch-0-2000000000000.json
+                                               carry on with that run";
+
 #[derive(Args, Clone, Serialize, Deserialize)]
+#[command(after_help = EXAMPLES)]
 pub struct BatchArgs {
     /// First seed.
-    #[arg(long, default_value_t = 0)]
+    #[arg(long, default_value_t = 0, value_parser = parse_count, help_heading = WHICH_DEALS)]
     from: u64,
-    /// Number of consecutive seeds.
-    #[arg(long, default_value_t = 1000)]
+    /// Number of consecutive seeds. Here and in other counts, 5000, 2m, 1.5b, 100t and 1e12 all work.
+    #[arg(long, default_value_t = 1000, value_parser = parse_count, help_heading = WHICH_DEALS)]
     count: u64,
-    /// Positions one deal may search (on one thread) before it counts as not won.
-    #[arg(long, default_value_t = 50_000_000)]
-    max_nodes: u64,
-    /// Solver settings as JSON (see `accordion_solver::Config`), e.g. '{"ladder": {"start": 36}}'. Fields left out
-    /// keep their defaults; --max-nodes overrides `max_nodes`.
-    #[arg(long)]
-    config: Option<String>,
-    /// Write one verified solve record per deal here (JSON Lines, compact moves), in seed order.
-    #[arg(long)]
-    out: Option<PathBuf>,
-    /// Where deals that aren't won get their dossiers.
-    #[arg(long, default_value = "hard-deals")]
-    dossiers: PathBuf,
-    /// Don't write dossiers.
-    #[arg(long)]
-    no_dossiers: bool,
-    /// Dead-position table per thread, as log2 of 64-byte buckets (14 = 1 MB; small tables that stay in the core's
-    /// own cache were fastest, see docs/BENCHMARKS.md).
-    #[arg(long, default_value_t = 14)]
-    table: u32,
     /// Threads (0 = every core); with the GPU, one of them feeds it.
-    #[arg(long, default_value_t = 0)]
+    #[arg(long, default_value_t = 0, help_heading = SPEED)]
     threads: usize,
     /// GPU ladder attempts in front of the CPU solver: `auto` (use an NVIDIA GPU if there is one), `on` or `off`.
     /// Which deals the GPU wins, and its lines, depend on timing; every line is still verified.
-    #[arg(long, default_value = "auto")]
+    #[arg(long, default_value = "auto", value_parser = ["auto", "on", "off"], help_heading = SPEED)]
     gpu: String,
-    /// GPU settings as JSON (see `accordion_gpu::Settings`), e.g. '{"budget": 4000}'.
-    #[arg(long)]
-    gpu_config: Option<String>,
-    /// Compile this kernel source instead of the built-in one (to time a variant without a rebuild).
-    #[arg(long)]
-    #[serde(default)]
-    gpu_kernel: Option<PathBuf>,
-    /// A define for the kernel's compile, NAME=VALUE; may be repeated.
-    #[arg(long, value_name = "NAME=VALUE")]
-    #[serde(default)]
-    gpu_define: Vec<String>,
-    /// Directory holding endgame tables (`acc endgame build`).
-    #[arg(long, default_value = "endgame")]
-    endgame_dir: PathBuf,
     /// Endgame tables to use: a pile count, `off`, or `auto` (the largest found in --endgame-dir).
-    #[arg(long, default_value = "auto")]
+    #[arg(long, default_value = "auto", hide_short_help = true, help_heading = SPEED)]
     endgame: String,
-    /// Keep this run's N hardest deals (most positions) as verified solve files in <dossiers>/gallery/, replacing
-    /// the gallery there, and list them in its INDEX.md. With the GPU, only deals solved on the CPU are ranked.
-    #[arg(long, default_value_t = 0)]
-    gallery: usize,
-    /// Where the speed log goes: a CSV row a second of how fast the run is going, in batch-<UTC time>Z.csv.
-    #[arg(long, default_value = "logs")]
-    log_dir: PathBuf,
-    /// Don't write the speed log.
-    #[arg(long)]
-    no_log: bool,
-    /// Positions each of the two exhaustive runs may generate when proving a deal the solver didn't win (0: don't
-    /// prove). Proofs run one at a time on a thread of their own while the run goes on, and the run waits for the
-    /// last; one can take an hour.
-    #[arg(long, default_value_t = prove::DEFAULT_POSITIONS)]
-    prove: u64,
-    /// Memory each proof run's set of dead positions may take, in GB.
-    #[arg(long, default_value_t = 8)]
-    prove_memory: usize,
-    /// Where to keep the state that lets this run pause and carry on, with the run's other files beside it. Default
-    /// checkpoints/batch-<from>-<count>.json. Ctrl+C pauses the run (a second one stops it at once), and so does a file
-    /// named like the checkpoint but ending .pause.
-    #[arg(long)]
-    checkpoint: Option<PathBuf>,
-    /// Keep no checkpoint: the run can't pause, and if the GPU fails the CPU solves the rest.
-    #[arg(long, conflicts_with_all = ["checkpoint", "resume", "until", "stop_after"])]
-    no_checkpoint: bool,
-    /// How often to save the checkpoint, in seconds.
-    #[arg(long, default_value_t = 60)]
-    checkpoint_every: u64,
+    /// Directory holding endgame tables (`acc endgame build`).
+    #[arg(long, default_value = "endgame", hide_short_help = true, help_heading = SPEED)]
+    endgame_dir: PathBuf,
     /// Carry on with the paused or crashed run in this checkpoint, from the directory it started in, with the settings
     /// it started with: only --threads, --checkpoint-every, --log-dir, --no-log, --games-memory, --no-games-check,
     /// --keep-free, --until and --stop-after may be given.
-    #[arg(long, conflicts_with_all = [
+    #[arg(long, help_heading = STOPPING, conflicts_with_all = [
         "from", "count", "max_nodes", "config", "out", "dossiers", "no_dossiers", "table", "gpu", "gpu_config",
         "gpu_kernel", "gpu_define",
         "endgame_dir", "endgame", "gallery", "prove", "prove_memory", "checkpoint", "games_disk", "plant_repeats",
     ])]
     resume: Option<PathBuf>,
+    /// Pause once this many of the run's deals are done: a way to run in legs.
+    #[arg(long, value_parser = parse_count, help_heading = STOPPING)]
+    until: Option<u64>,
+    /// Pause after this many hours of this session: a way to run in legs.
+    #[arg(long, help_heading = STOPPING)]
+    stop_after: Option<f64>,
+    /// Where to keep the state that lets this run pause and carry on, with the run's other files beside it. Default
+    /// checkpoints/batch-<from>-<count>.json. Ctrl+C pauses the run (a second one stops it at once), and so does a file
+    /// named like the checkpoint but ending .pause.
+    #[arg(long, hide_short_help = true, help_heading = STOPPING)]
+    checkpoint: Option<PathBuf>,
+    /// Keep no checkpoint: the run can't pause, and if the GPU fails the CPU solves the rest.
+    #[arg(long, hide_short_help = true, help_heading = STOPPING, conflicts_with_all = ["checkpoint", "resume", "until", "stop_after"])]
+    no_checkpoint: bool,
+    /// How often to save the checkpoint, in seconds.
+    #[arg(long, default_value_t = 60, hide_short_help = true, help_heading = STOPPING)]
+    checkpoint_every: u64,
+    /// Pause, with exit code 74, when less than this is free on the checkpoint's disk, in GB.
+    #[arg(long, default_value_t = 5.0, hide_short_help = true, help_heading = STOPPING)]
+    keep_free: f64,
+    /// Write one verified solve record per deal here (JSON Lines, compact moves), in seed order.
+    #[arg(long, help_heading = OUTPUT)]
+    out: Option<PathBuf>,
+    /// Where deals that aren't won get their dossiers.
+    #[arg(long, default_value = "output/hard-deals", hide_short_help = true, help_heading = OUTPUT)]
+    dossiers: PathBuf,
+    /// Don't write dossiers.
+    #[arg(long, hide_short_help = true, help_heading = OUTPUT)]
+    no_dossiers: bool,
+    /// Keep this run's N hardest deals (most positions) as verified solve files in <dossiers>/gallery/, replacing
+    /// the gallery there, and list them in its INDEX.md. With the GPU, only deals solved on the CPU are ranked.
+    #[arg(long, default_value_t = 0, hide_short_help = true, help_heading = OUTPUT)]
+    gallery: usize,
+    /// Where the speed log goes: a CSV row a second of how fast the run is going, in batch-<UTC time>Z.csv.
+    #[arg(long, default_value = "logs", hide_short_help = true, help_heading = OUTPUT)]
+    log_dir: PathBuf,
+    /// Don't write the speed log.
+    #[arg(long, hide_short_help = true, help_heading = OUTPUT)]
+    no_log: bool,
+    /// Positions each of the two exhaustive runs may generate when proving a deal the solver didn't win (0: don't
+    /// prove). Proofs run one at a time on a thread of their own while the run goes on, and the run waits for the
+    /// last; one can take an hour.
+    #[arg(long, default_value_t = prove::DEFAULT_POSITIONS, value_parser = parse_count, hide_short_help = true, help_heading = PROVING)]
+    prove: u64,
+    /// Memory each proof run's set of dead positions may take, in GB.
+    #[arg(long, default_value_t = 8, hide_short_help = true, help_heading = PROVING)]
+    prove_memory: usize,
     /// Memory the check that the deals are all different games may take, in GB. A run that fits has them all checked at
     /// the end. Past that, it checks a sample of them as it goes.
-    #[arg(long, default_value_t = 16)]
+    #[arg(long, default_value_t = 16, hide_short_help = true, help_heading = GAMES)]
     games_memory: u64,
     /// Room the sample may take on disk, in GB, at 11 bytes a deal (in the checkpoint's directory, or the system's temporary
     /// one without a checkpoint): by default 50, or half of what is free if that's less. Room for 5 bytes for every deal asks
     /// for the full check on disk instead, which takes two more passes over the deals at the end.
-    #[arg(long)]
+    #[arg(long, hide_short_help = true, help_heading = GAMES)]
     games_disk: Option<f64>,
     /// Skip the check that the deals are all different games.
-    #[arg(long)]
+    #[arg(long, hide_short_help = true, help_heading = GAMES)]
     no_games_check: bool,
-    /// Pause, with exit code 74, when less than this is free on the checkpoint's disk, in GB.
-    #[arg(long, default_value_t = 5.0)]
-    keep_free: f64,
-    /// Pause once this many of the run's deals are done: a way to run in legs.
-    #[arg(long)]
-    until: Option<u64>,
-    /// Pause after this many hours of this session: a way to run in legs.
-    #[arg(long)]
-    stop_after: Option<f64>,
+    /// Positions one deal may search (on one thread) before it counts as not won.
+    #[arg(long, default_value_t = 50_000_000, value_parser = parse_count, hide_short_help = true, help_heading = RESEARCH)]
+    max_nodes: u64,
+    /// Solver settings: the name of a JSON file, or the JSON itself, e.g. '{"ladder": {"start": 36}}'. Fields left out
+    /// keep their defaults; --max-nodes overrides `max_nodes`.
+    #[arg(long, hide_short_help = true, help_heading = RESEARCH)]
+    config: Option<String>,
+    /// GPU settings: the name of a JSON file, or the JSON itself, e.g. '{"budget": 4000}'.
+    #[arg(long, hide_short_help = true, help_heading = RESEARCH)]
+    gpu_config: Option<String>,
+    /// Dead-position table per thread, as log2 of 64-byte buckets (14 = 1 MB; small tables that stay in the core's
+    /// own cache were fastest, see docs/BENCHMARKS.md).
+    #[arg(long, default_value_t = 14, hide_short_help = true, help_heading = RESEARCH)]
+    table: u32,
+    /// Compile this kernel source instead of the built-in one (to time a variant without a rebuild).
+    #[arg(long, hide = true)]
+    #[serde(default)]
+    gpu_kernel: Option<PathBuf>,
+    /// A define for the kernel's compile, NAME=VALUE; may be repeated.
+    #[arg(long, value_name = "NAME=VALUE", hide = true)]
+    #[serde(default)]
+    gpu_define: Vec<String>,
     /// For testing the check for repeated games: every Nth deal is the deal before it.
     #[arg(long, hide = true)]
     plant_repeats: Option<usize>,
@@ -211,7 +230,13 @@ fn prover(
     }
 }
 
-fn prove_one(seed: u64, limits: &Limits, tables: Option<&Endgame>, dossiers: Option<&Path>, tally: &mut Proofs) {
+fn prove_one(
+    seed: u64,
+    limits: &Limits,
+    tables: Option<&Endgame>,
+    dossiers: Option<&Path>,
+    tally: &mut Proofs,
+) {
     let deal = Deal::from_seed(seed);
     eprintln!("\nseed {seed}: not won; proving it lost, up to {} positions a run", limits.positions);
     let say = |line: String| eprintln!("seed {seed}: {line}");
@@ -249,8 +274,7 @@ fn prove_one(seed: u64, limits: &Limits, tables: Option<&Endgame>, dossiers: Opt
                 return Ok(());
             }
             let proofs = dir.join("proofs");
-            std::fs::create_dir_all(&proofs)
-                .map_err(|e| format!("creating {}: {e}", proofs.display()))?;
+            std::fs::create_dir_all(&proofs).map_err(|e| format!("creating {}: {e}", proofs.display()))?;
             let path = proofs.join(format!("seed-{seed}-loss.json"));
             std::fs::write(&path, record.to_json() + "\n")
                 .map_err(|e| format!("writing {}: {e}", path.display()))
@@ -271,11 +295,74 @@ struct Tally {
     gpu_stage: u64,
     stages: BTreeMap<String, u64>,
     total_nodes: u64,
-    /// Deals solved on the CPU, whose positions and times are in the file of costs.
+    /// Deals solved on the CPU whose positions and times are in the file of costs: the first [`COST_SAMPLE_MOST`].
     cpu_deals: u64,
+    /// All the deals solved on the CPU, however many are in the file, and what they cost. A checkpoint from before there was
+    /// a limit has none of these, and every deal in the file ([`Tally::load_costs`]).
+    #[serde(default)]
+    all_cpu_deals: u64,
+    #[serde(default)]
+    total_micros: u64,
+    #[serde(default)]
+    most_nodes: u64,
+    #[serde(default)]
+    most_micros: u64,
     /// Whether any dossier was written.
     any_dossier: bool,
     hardest: BinaryHeap<Reverse<(u64, u64)>>,
+}
+
+impl Tally {
+    /// Counts one more deal solved on the CPU in the totals over all of them.
+    fn add_cost(&mut self, nodes: u64, micros: u64) {
+        self.all_cpu_deals += 1;
+        self.total_micros += micros;
+        self.most_nodes = self.most_nodes.max(nodes);
+        self.most_micros = self.most_micros.max(micros);
+    }
+
+    /// The positions and times in the file of costs, up to the first `most` deals. A checkpoint from before there was a limit
+    /// has no totals and every deal in the file, so they are worked out from all of it; what is over the limit is then left
+    /// out, and the next save cuts it from the file.
+    fn load_costs(&mut self, file: &Path, most: usize) -> Result<(Vec<u64>, Vec<u64>), String> {
+        let reading = |e: std::io::Error| {
+            format!(
+                "reading {}: {e}; it goes with the checkpoint, so put it back, or delete {} to start again",
+                file.display(),
+                family(file)
+            )
+        };
+        let deals = self.cpu_deals as usize;
+        let no_totals = self.all_cpu_deals < self.cpu_deals;
+        let keep = deals.min(most);
+        // On the powers of two a first run's vectors go through, or a resume could double them to twice the limit.
+        let room = (keep + 1).next_power_of_two().min(most);
+        let (mut nodes, mut micros) = (Vec::with_capacity(room), Vec::with_capacity(room));
+        if deals > 0 {
+            let mut costs = BufReader::with_capacity(1 << 20, File::open(file).map_err(reading)?);
+            let mut entry = [0; COST_BYTES];
+            for i in 0..if no_totals { deals } else { keep } {
+                costs.read_exact(&mut entry).map_err(reading)?;
+                let (n, us) = entry.split_at(8);
+                let word = |c: &[u8]| u64::from_le_bytes(c.try_into().expect("8 bytes"));
+                let (n, us) = (word(n), word(us));
+                if no_totals {
+                    self.add_cost(n, us);
+                }
+                if i < keep {
+                    nodes.push(n);
+                    micros.push(us);
+                }
+            }
+        }
+        self.cpu_deals = keep as u64;
+        Ok((nodes, micros))
+    }
+}
+
+/// The files of the run with this checkpoint, for telling someone what to delete: `checkpoints/batch-0-1000.*`.
+fn family(checkpoint: &Path) -> String {
+    checkpoint.with_extension("*").display().to_string()
 }
 
 /// A checkpoint's format. 3: the games log's records are 11 bytes (a 5-byte key and a 6-byte position), not 10.
@@ -284,6 +371,12 @@ const VERSION: u32 = 3;
 const VERSION_WITH_SHORT_RECORDS: u32 = 2;
 /// The bytes of a deal in the file of costs: its positions, and its microseconds.
 const COST_BYTES: usize = 16;
+/// The most deals whose positions and times are kept, in memory and in the file of costs: 2 GB. They are there for the
+/// percentiles in the report, and since deals are random the first ones are as fair a sample as any. Everything else in
+/// the report is exact over all the deals, from the totals in [`Tally`].
+const COST_SAMPLE_MOST: usize = 125_000_000;
+/// From this many deals the win rate has two more decimals, as the interval has narrowed to the last ones it had.
+const LONGER_WIN_RATE_FROM: u64 = 10_000_000_000_000;
 /// The exit code of a run that paused because the GPU failed: try again, as a new process may well get the GPU back.
 const EXIT_GPU_FAILED: i32 = 75;
 /// The exit code of a run that paused or stopped because it can't save: make room on the disk, and carry on.
@@ -293,7 +386,8 @@ const SAVES_FAILED_AT_MOST: u32 = 5;
 /// With no deal finished for this long, the GPU must have stuck where its watchdog didn't catch it.
 const STUCK_AFTER: Duration = Duration::from_secs(15 * 60);
 /// The most room the sample takes unless asked for more. It has only to back the assumption that the generator behaves like
-/// a random one: 4.5 billion records, enough to show a flaw that made more than a few hundred repeats in a trillion deals.
+/// a random one: 4.5 billion records, enough in a trillion deals to show a flaw that made more than a few hundred repeats
+/// (and in 100 trillion, more than some 65,000).
 const GAMES_DISK_MOST: u64 = 50_000_000_000;
 /// The number of deals, and of games: deals with suits and ranks renamed, each game being 4!·13! different deals, since no
 /// renaming leaves a deal of 52 different cards as it was.
@@ -302,8 +396,8 @@ const RENAMINGS: f64 = 149_448_499_200.0;
 /// How large a solve record is, about, to warn when --out won't fit.
 const RECORD_BYTES: u64 = 350;
 
-/// All that a run needs to carry on. The positions and times of the deals solved on the CPU, two million or so, are in
-/// the file of costs beside it, and the records of `--out` in that file: each is cut back to what this counts.
+/// All that a run needs to carry on. The positions and times of the first deals solved on the CPU are in the file of
+/// costs beside it, and the records of `--out` in that file: each is cut back to what this counts.
 #[derive(Serialize, Deserialize)]
 struct Checkpoint {
     version: u32,
@@ -332,6 +426,96 @@ struct Checkpoint {
     games_found: Found,
     /// The check for repeated games, once it is made.
     same: Option<Vec<(u64, u64)>>,
+}
+
+/// Held for as long as a run has its checkpoint, so that a second process can't take up the same one: it would cut the run's
+/// files back to its own idea of them. The system lets go of it however the process ends, so a crash can't leave it stuck;
+/// a file left behind by one means nothing until someone holds a lock on it.
+struct RunLock {
+    file: Option<File>,
+    path: PathBuf,
+    /// The folders made for it, deepest first, which go with it if nothing else has been put in them.
+    made: Vec<PathBuf>,
+}
+
+impl RunLock {
+    fn take(checkpoint: &Path) -> Result<RunLock, String> {
+        let parent = checkpoint.parent().filter(|p| !p.as_os_str().is_empty());
+        let made: Vec<PathBuf> = parent
+            .into_iter()
+            .flat_map(Path::ancestors)
+            .take_while(|p| !p.as_os_str().is_empty() && !p.exists())
+            .map(Path::to_path_buf)
+            .collect();
+        if let Some(parent) = parent {
+            std::fs::create_dir_all(parent).map_err(|e| format!("creating {}: {e}", parent.display()))?;
+        }
+        let path = checkpoint.with_extension("lock");
+        let file = OpenOptions::new()
+            .write(true)
+            .create(true)
+            .truncate(false)
+            .open(&path)
+            .map_err(|e| format!("creating {}: {e}", path.display()))?;
+        match file.try_lock() {
+            Ok(()) => {}
+            Err(TryLockError::WouldBlock) => return Err("this run is already going in another window".into()),
+            // A file system that can't lock is no worse off than before there were locks.
+            Err(TryLockError::Error(e)) => {
+                eprintln!("note: can't lock {}: {e}; don't start this run twice", path.display());
+            }
+        }
+        Ok(RunLock { file: Some(file), path, made })
+    }
+}
+
+impl Drop for RunLock {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_file(&self.path);
+        drop(self.file.take());
+        for dir in &self.made {
+            if std::fs::remove_dir(dir).is_err() {
+                break;
+            }
+        }
+    }
+}
+
+/// Refuses what could only go wrong later, or silently: seeds past the last one wrapping round to the first, say.
+fn check_args(args: &BatchArgs) -> Result<(), String> {
+    if args.count == 0 {
+        return Err("--count must be at least 1".into());
+    }
+    if args.from.checked_add(args.count - 1).is_none() {
+        return Err(format!(
+            "--from {} with --count {} goes past the last seed there is, {}",
+            args.from,
+            args.count,
+            u64::MAX
+        ));
+    }
+    if let Some(hours) = args.stop_after
+        && Duration::try_from_secs_f64(hours * 3600.0).is_err()
+    {
+        return Err(format!("--stop-after must be a number of hours, 0 or more, not {hours}"));
+    }
+    numbers::check_gigabytes("--games-memory", args.games_memory)?;
+    numbers::check_gigabytes("--prove-memory", args.prove_memory as u64)
+}
+
+/// [`COST_SAMPLE_MOST`], or for testing what the environment says instead.
+fn cost_sample_most() -> usize {
+    std::env::var("ACC_COST_SAMPLE_MOST").ok().and_then(|v| v.parse().ok()).unwrap_or(COST_SAMPLE_MOST)
+}
+
+/// A percentage to `places` decimals, or to two figures when it is so small that those would hardly show it.
+fn percent(value: f64, places: usize) -> String {
+    let smallest_as_before = 10f64.powi(1 - places as i32);
+    if value <= 0.0 || value >= smallest_as_before {
+        return format!("{value:.places$}");
+    }
+    let places = (1 - value.log10().floor() as i32) as usize;
+    format!("{value:.places$}")
 }
 
 /// What has happened to a long run, a line each, with the time: `.events.log` beside the checkpoint, for reading after
@@ -372,17 +556,28 @@ impl Stuck {
 impl Checkpoint {
     fn load(path: &Path) -> Result<Checkpoint, String> {
         let text = std::fs::read_to_string(path).map_err(|e| format!("reading {}: {e}", path.display()))?;
-        let mut checkpoint: Checkpoint =
-            serde_json::from_str(&text).map_err(|e| format!("reading {}: {e}", path.display()))?;
+        let mut checkpoint: Checkpoint = serde_json::from_str(&text).map_err(|e| {
+            format!(
+                "{} can't be read ({e}): it is damaged, or this checkpoint was made by a different version of acc: finish it with that version, or delete {} to start again",
+                path.display(),
+                family(path)
+            )
+        })?;
         let short_records = checkpoint.version == VERSION_WITH_SHORT_RECORDS;
         if checkpoint.version != VERSION && !short_records {
-            return Err(format!("{}: format {}, not {VERSION}", path.display(), checkpoint.version));
+            return Err(format!(
+                "{}: this checkpoint was made by a different version of acc (its format is {}, this one's {VERSION}): finish it with that version, or delete {} to start again",
+                path.display(),
+                checkpoint.version,
+                family(path)
+            ));
         }
         // Its log would be read 11 bytes to a record, and every one after the first misread.
         if short_records && matches!(checkpoint.games, GamesPlan::Sampled(_)) {
             return Err(format!(
-                "{}: made by an older acc, whose log of a sample of the games has 10 bytes a deal; this one writes 11, so it can't carry on with that log: finish the run with the acc that started it",
-                path.display()
+                "{}: made by an older acc, whose log of a sample of the games has 10 bytes a deal; this one writes 11, so it can't carry on with that log: finish the run with the acc that started it, or delete {} to start again",
+                path.display(),
+                family(path)
             ));
         }
         checkpoint.version = VERSION;
@@ -434,9 +629,14 @@ impl Checkpoint {
                         "failed": self.proofs.failed, "in_hand": self.proofs_pending.len() },
             "gpu": { "won": self.standing.gpu.won, "launches": self.standing.gpu.launches,
                      "attempts": self.standing.gpu.attempts },
-            "deals_on_cpu": self.tally.cpu_deals,
+            "deals_on_cpu": self.tally.all_cpu_deals,
             "games_log_gb": self.games_bytes as f64 / 1e9,
             "disk_free_gb": free.map(|f| f as f64 / 1e9),
+            // As in the report: the solver's wins, and those of the proofs.
+            "won": self.tally.won + self.proofs.won,
+            "dossiers": (!self.args.no_dossiers).then(|| self.args.dossiers.display().to_string()),
+            "save_every_s": self.args.checkpoint_every,
+            "checkpoint": path.display().to_string(),
         });
         let text = serde_json::to_string_pretty(&status).expect("serializable") + "\n";
         let (new, file) = (path.with_extension("status.tmp"), path.with_extension("status.json"));
@@ -457,16 +657,19 @@ impl Checkpoint {
             std::fs::create_dir_all(parent).map_err(|e| format!("creating {}: {e}", parent.display()))?;
         }
         if let Some(w) = out {
-            let synced = w.flush().and_then(|()| w.get_ref().sync_data()).and_then(|()| w.get_ref().metadata());
+            let synced =
+                w.flush().and_then(|()| w.get_ref().sync_data()).and_then(|()| w.get_ref().metadata());
             self.out_bytes = synced.map_err(|e| format!("writing --out: {e}"))?.len();
         }
         if let Some(w) = games {
-            let synced = w.flush().and_then(|()| w.get_ref().sync_data()).and_then(|()| w.get_ref().metadata());
+            let synced =
+                w.flush().and_then(|()| w.get_ref().sync_data()).and_then(|()| w.get_ref().metadata());
             self.games_bytes = synced.map_err(|e| format!("writing the log of the sample: {e}"))?.len();
         }
         let costs = path.with_extension("costs");
         let writing = |e: std::io::Error| format!("writing {}: {e}", costs.display());
-        let file = OpenOptions::new().write(true).create(true).truncate(false).open(&costs).map_err(writing)?;
+        let file =
+            OpenOptions::new().write(true).create(true).truncate(false).open(&costs).map_err(writing)?;
         let saved = self.tally.cpu_deals as usize;
         file.set_len((saved * COST_BYTES) as u64).map_err(writing)?;
         let mut w = BufWriter::new(file);
@@ -483,26 +686,20 @@ impl Checkpoint {
             .and_then(|()| std::fs::rename(&new, path))
             .map_err(|e| format!("writing {}: {e}", path.display()))
     }
-
-    /// The positions and times of the deals solved on the CPU.
-    fn load_costs(&self, path: &Path) -> Result<(Vec<u64>, Vec<u64>), String> {
-        let costs = path.with_extension("costs");
-        let reading = |e: std::io::Error| format!("reading {}: {e}", costs.display());
-        let deals = self.tally.cpu_deals as usize;
-        let mut bytes = vec![0u8; deals * COST_BYTES];
-        if deals > 0 {
-            File::open(&costs).and_then(|mut f| f.read_exact(&mut bytes)).map_err(reading)?;
-        }
-        let word = |c: &[u8]| u64::from_le_bytes(c.try_into().expect("8 bytes"));
-        let (entries, _) = bytes.as_chunks::<COST_BYTES>();
-        let nodes = entries.iter().map(|c| word(&c[..8])).collect();
-        let micros = entries.iter().map(|c| word(&c[8..])).collect();
-        Ok((nodes, micros))
-    }
 }
 
 pub fn run(given: &BatchArgs) -> Result<bool, String> {
     let began = Instant::now();
+    check_args(given)?;
+    let path = match (&given.resume, &given.checkpoint) {
+        (Some(path), _) => Some(path.clone()),
+        (None, _) if given.no_checkpoint => None,
+        (None, Some(path)) => Some(path.clone()),
+        (None, None) => Some(PathBuf::from(format!("checkpoints/batch-{}-{}.json", given.from, given.count))),
+    };
+    // Before any of the run's files is touched. With no checkpoint to resume, loading it is what says so.
+    let _lock =
+        path.as_deref().filter(|p| given.resume.is_none() || p.exists()).map(RunLock::take).transpose()?;
     let resumed = given.resume.as_deref().map(Checkpoint::load).transpose()?;
     let is_resumed = resumed.is_some();
     // Only what says nothing about the results may change when a run carries on.
@@ -522,17 +719,14 @@ pub fn run(given: &BatchArgs) -> Result<bool, String> {
         None => given.clone(),
     };
     let args = &args;
-    let path = match (&given.resume, &args.checkpoint) {
-        (Some(path), _) => Some(path.clone()),
-        (None, _) if args.no_checkpoint => None,
-        (None, Some(path)) => Some(path.clone()),
-        (None, None) => Some(PathBuf::from(format!("checkpoints/batch-{}-{}.json", args.from, args.count))),
-    };
+    if is_resumed {
+        check_args(args)?;
+    }
     if let Some(path) = path.as_ref().filter(|p| !is_resumed && p.exists()) {
         return Err(format!(
-            "a run stopped here is waiting at {0}: carry on with `acc batch --resume {0}`, or delete it (and the files \
-             beside it) to start again",
-            path.display()
+            "a run stopped here is waiting at {0}: carry on with `acc batch --resume {0}`, or delete {1} to start again",
+            path.display(),
+            family(path)
         ));
     }
     let threads = if args.threads == 0 { runner::all_threads() } else { args.threads };
@@ -540,13 +734,13 @@ pub fn run(given: &BatchArgs) -> Result<bool, String> {
         Some(c) => (c.config, c.settings.clone()),
         None => {
             let mut config: Config = match &args.config {
-                Some(text) => serde_json::from_str(text).map_err(|e| format!("--config: {e}"))?,
+                Some(text) => crate::json_setting("--config", text)?,
                 None => Config::default(),
             };
             config.max_nodes = args.max_nodes;
             runner::choose_endgame(&mut config, &args.endgame, &args.endgame_dir, usize::MAX)?;
             let settings: Settings = match &args.gpu_config {
-                Some(text) => serde_json::from_str(text).map_err(|e| format!("--gpu-config: {e}"))?,
+                Some(text) => crate::json_setting("--gpu-config", text)?,
                 None => Settings::default(),
             };
             (config, settings)
@@ -578,6 +772,8 @@ pub fn run(given: &BatchArgs) -> Result<bool, String> {
         },
     };
     let events = Events(path.clone());
+    // Only for the status file: a resume takes this from its own command line.
+    state.args.checkpoint_every = args.checkpoint_every;
     state.sessions += 1;
     let commit = crate::experiment::commit();
     if state.commits.last() != Some(&commit) {
@@ -590,17 +786,21 @@ pub fn run(given: &BatchArgs) -> Result<bool, String> {
     let some_left = state.standing.done < count;
     let gpu = match (is_resumed, some_left) {
         (_, false) => None,
-        (true, true) if state.gpu_name.is_some() => match runner::open_gpu_kernel("on", settings, args.gpu_kernel.as_deref(), &args.gpu_define) {
-            Ok(gpu) => gpu,
-            Err(e) => {
-                // Not there for now, after a driver reset, say: this is as good as its failing during the run.
-                eprintln!("{e}");
-                events.note(&format!("session {} could not open the GPU: {e}", state.sessions));
-                std::process::exit(EXIT_GPU_FAILED);
+        (true, true) if state.gpu_name.is_some() => {
+            match runner::open_gpu_kernel("on", settings, args.gpu_kernel.as_deref(), &args.gpu_define) {
+                Ok(gpu) => gpu,
+                Err(e) => {
+                    // Not there for now, after a driver reset, say: this is as good as its failing during the run.
+                    eprintln!("{e}");
+                    events.note(&format!("session {} could not open the GPU: {e}", state.sessions));
+                    std::process::exit(EXIT_GPU_FAILED);
+                }
             }
-        },
+        }
         (true, true) => None,
-        (false, true) => runner::open_gpu_kernel(&args.gpu, settings, args.gpu_kernel.as_deref(), &args.gpu_define)?,
+        (false, true) => {
+            runner::open_gpu_kernel(&args.gpu, settings, args.gpu_kernel.as_deref(), &args.gpu_define)?
+        }
     };
     // The GPU's feeder needs a thread of its own, or the GPU waits on it (docs/BENCHMARKS.md, Phase 5 track F).
     let workers = if gpu.is_some() { threads.saturating_sub(1).max(1) } else { threads };
@@ -610,9 +810,10 @@ pub fn run(given: &BatchArgs) -> Result<bool, String> {
         state.gpu_name = gpu.as_ref().map(|g| g.name.clone());
     }
     let hardware = state.hardware.clone();
+    let cost_most = cost_sample_most();
     let (mut nodes, mut micros) = match (&path, is_resumed) {
-        // Grown as needed: only the CPU's deals have them, and a billion deals' worth is 16 GB.
-        (Some(path), true) => state.load_costs(path)?,
+        // Grown as needed: only the CPU's deals have them, and they stop at the limit.
+        (Some(path), true) => state.tally.load_costs(&path.with_extension("costs"), cost_most)?,
         _ => (Vec::new(), Vec::new()),
     };
     let mut out = match &args.out {
@@ -620,15 +821,18 @@ pub fn run(given: &BatchArgs) -> Result<bool, String> {
             let writing = |e: std::io::Error| format!("opening {}: {e}", p.display());
             let mut file = OpenOptions::new().write(true).open(p).map_err(writing)?;
             if file.metadata().map_err(writing)?.len() < state.out_bytes {
-                return Err(format!("{} is shorter than the checkpoint says", p.display()));
+                let (name, run) = (p.display(), path.as_deref().map_or(String::new(), family));
+                return Err(format!(
+                    "{name} is shorter than the checkpoint says: put it back, or delete {run} to start again"
+                ));
             }
             file.set_len(state.out_bytes).map_err(writing)?;
             file.seek(SeekFrom::End(0)).map_err(writing)?;
             Some(BufWriter::new(file))
         }
-        Some(p) => Some(BufWriter::new(
-            File::create(p).map_err(|e| format!("creating {}: {e}", p.display()))?,
-        )),
+        Some(p) => {
+            Some(BufWriter::new(File::create(p).map_err(|e| format!("creating {}: {e}", p.display()))?))
+        }
         None => None,
     };
     let done_before = state.standing.done;
@@ -653,7 +857,8 @@ pub fn run(given: &BatchArgs) -> Result<bool, String> {
         backlog: 0,
         gpu_failed: state.standing.gpu.failed,
     };
-    let mut meter = Meter::new(seeds.count(), first, (!args.no_log).then_some(args.log_dir.as_path()), &about)?;
+    let mut meter =
+        Meter::new(seeds.count(), first, (!args.no_log).then_some(args.log_dir.as_path()), &about)?;
     stay_awake();
     let every = Duration::from_secs(args.checkpoint_every.max(1));
     if let Some(path) = &path {
@@ -673,11 +878,10 @@ pub fn run(given: &BatchArgs) -> Result<bool, String> {
     // The check for repeated games: at the end, in memory if it fits, and on disk if it doesn't; of a sample if that won't
     // fit either.
     let on_disk = args.count.saturating_mul(8) > args.games_memory.saturating_mul(1 << 30);
-    let work_dir = path
-        .as_deref()
-        .and_then(Path::parent)
-        .filter(|p| !p.as_os_str().is_empty())
-        .map_or_else(|| if path.is_some() { PathBuf::from(".") } else { std::env::temp_dir() }, Path::to_path_buf);
+    let work_dir = path.as_deref().and_then(Path::parent).filter(|p| !p.as_os_str().is_empty()).map_or_else(
+        || if path.is_some() { PathBuf::from(".") } else { std::env::temp_dir() },
+        Path::to_path_buf,
+    );
     let games_dir = work_dir.join(format!("games-{}-{}", args.from, args.count));
     let games_log = match &path {
         Some(path) => path.with_extension("games"),
@@ -689,12 +893,18 @@ pub fn run(given: &BatchArgs) -> Result<bool, String> {
         } else if !on_disk {
             GamesPlan::Whole
         } else {
-            std::fs::create_dir_all(&work_dir).map_err(|e| format!("creating {}: {e}", work_dir.display()))?;
+            std::fs::create_dir_all(&work_dir)
+                .map_err(|e| format!("creating {}: {e}", work_dir.display()))?;
             let asked = args.games_disk.map(|gb| (gb * 1e9) as u64);
             let room = asked.unwrap_or_else(|| {
                 free_bytes(&work_dir).map_or(GAMES_DISK_MOST, |free| (free / 2).min(GAMES_DISK_MOST))
             });
-            if asked.is_some_and(|room| runner::same_games_disk_bytes(args.count) <= room) {
+            let has_room = asked.is_some_and(|room| runner::same_games_disk_bytes(args.count) <= room);
+            // Its threads are all the cores', whatever --threads says. However little is allowed, a gigabyte is taken as
+            // fitting: the check needs some memory to work in, and small runs nothing like that.
+            let memory = runner::same_games_disk_memory(args.count, rayon::current_num_threads());
+            let fits = memory <= (args.games_memory << 30).max(1 << 30);
+            if has_room && fits {
                 GamesPlan::Whole
             } else if args.count > games::MAX_DEALS {
                 return Err(format!(
@@ -702,6 +912,13 @@ pub fn run(given: &BatchArgs) -> Result<bool, String> {
                     games::MAX_DEALS
                 ));
             } else {
+                if has_room {
+                    eprintln!(
+                        "check for repeated games: the full check on disk would want about {:.0} GB of memory at once, more than --games-memory {}, so it will be of a sample",
+                        memory as f64 / 1e9,
+                        args.games_memory
+                    );
+                }
                 GamesPlan::Sampled(Sieve::for_bytes(room, args.count))
             }
         };
@@ -713,14 +930,19 @@ pub fn run(given: &BatchArgs) -> Result<bool, String> {
     let check_games = state.games != GamesPlan::Off && state.same.is_none();
     match state.games {
         GamesPlan::Whole if check_games && on_disk => {
-            std::fs::create_dir_all(&work_dir).map_err(|e| format!("creating {}: {e}", work_dir.display()))?;
-            warn_of_space(&work_dir, runner::same_games_disk_bytes(args.count), "the check for repeated games at the end");
+            std::fs::create_dir_all(&work_dir)
+                .map_err(|e| format!("creating {}: {e}", work_dir.display()))?;
+            warn_of_space(
+                &work_dir,
+                runner::same_games_disk_bytes(args.count),
+                "the check for repeated games at the end",
+            );
         }
         GamesPlan::Sampled(sieve) => {
             let room = (sieve.fraction() * args.count as f64) as u64 * games::RECORD as u64;
             eprintln!(
-                "check for repeated games: a sample of {:.2}% of the deals, up to {:.0} GB in {}",
-                100.0 * sieve.fraction(),
+                "check for repeated games: a sample of {}% of the deals, up to {:.0} GB in {}",
+                percent(100.0 * sieve.fraction(), 2),
                 room as f64 / 1e9,
                 games_log.display()
             );
@@ -736,16 +958,25 @@ pub fn run(given: &BatchArgs) -> Result<bool, String> {
         None => None,
         Some(_) if is_resumed => {
             let writing = |e: std::io::Error| format!("opening {}: {e}", games_log.display());
-            let mut file = OpenOptions::new().write(true).create(true).truncate(false).open(&games_log).map_err(writing)?;
+            let mut file = OpenOptions::new()
+                .write(true)
+                .create(true)
+                .truncate(false)
+                .open(&games_log)
+                .map_err(writing)?;
             if file.metadata().map_err(writing)?.len() < state.games_bytes {
-                return Err(format!("{} is shorter than the checkpoint says", games_log.display()));
+                return Err(format!(
+                    "{} is shorter than the checkpoint says: put it back, or carry on without the check by adding --no-games-check",
+                    games_log.display()
+                ));
             }
             file.set_len(state.games_bytes).map_err(writing)?;
             file.seek(SeekFrom::End(0)).map_err(writing)?;
             Some(BufWriter::new(file))
         }
         Some(_) => {
-            std::fs::create_dir_all(&work_dir).map_err(|e| format!("creating {}: {e}", work_dir.display()))?;
+            std::fs::create_dir_all(&work_dir)
+                .map_err(|e| format!("creating {}: {e}", work_dir.display()))?;
             Some(BufWriter::new(
                 File::create(&games_log).map_err(|e| format!("creating {}: {e}", games_log.display()))?,
             ))
@@ -753,7 +984,11 @@ pub fn run(given: &BatchArgs) -> Result<bool, String> {
     };
     if let Some(p) = &args.out {
         let dir = p.parent().filter(|p| !p.as_os_str().is_empty()).unwrap_or(Path::new("."));
-        warn_of_space(dir, (args.count - done_before as u64) * RECORD_BYTES, "the solve records of --out");
+        warn_of_space(
+            dir,
+            (args.count - done_before as u64).saturating_mul(RECORD_BYTES),
+            "the solve records of --out",
+        );
     }
     let proofs_state = Arc::new(Mutex::new(ProofState {
         tally: state.proofs,
@@ -779,7 +1014,8 @@ pub fn run(given: &BatchArgs) -> Result<bool, String> {
     let session = (start, done_before);
     let mut no_room = false;
     let mut saves_failed = 0;
-    let mut starting = Some(format!("session {} started at {done_before} deals, on commit {commit}", state.sessions));
+    let mut starting =
+        Some(format!("session {} started at {done_before} deals, on commit {commit}", state.sessions));
     if is_resumed {
         events.note(starting.take().as_deref().unwrap_or_default());
     }
@@ -819,7 +1055,8 @@ pub fn run(given: &BatchArgs) -> Result<bool, String> {
                         let log = games_out.as_mut().expect("a sample is only asked for with a log");
                         if let Err(e) = log.write_all(&records) {
                             // The last checkpoint stands, and what it counts of the log.
-                            let what = format!("writing {}: {e}: make room and carry on", games_log.display());
+                            let what =
+                                format!("writing {}: {e}: make room and carry on", games_log.display());
                             eprintln!("\n{what}");
                             events.note(&what);
                             std::process::exit(EXIT_NO_ROOM);
@@ -868,8 +1105,12 @@ pub fn run(given: &BatchArgs) -> Result<bool, String> {
                 let tally = &mut state.tally;
                 // Per-deal costs are the CPU solver's; the GPU works in batches and counts its own positions.
                 if s.report.stage != Stage::Gpu {
-                    nodes.push(s.report.nodes);
-                    micros.push(s.us);
+                    // Only while those kept are all there have been, so that they stay the first ones.
+                    if nodes.len() < cost_most && nodes.len() as u64 == tally.all_cpu_deals {
+                        nodes.push(s.report.nodes);
+                        micros.push(s.us);
+                    }
+                    tally.add_cost(s.report.nodes, s.us);
                     tally.total_nodes += s.report.nodes;
                     if args.gallery > 0 {
                         tally.hardest.push(Reverse((s.report.nodes, s.seed)));
@@ -941,7 +1182,8 @@ pub fn run(given: &BatchArgs) -> Result<bool, String> {
                 }
                 // Nothing else would notice a GPU that never answers, and it would hold the run up for good.
                 if on_the_gpu && events.0.is_some() && stuck.after(p.done, Instant::now()) {
-                    let what = format!("no deal finished in {} minutes: stopping", STUCK_AFTER.as_secs() / 60);
+                    let what =
+                        format!("no deal finished in {} minutes: stopping", STUCK_AFTER.as_secs() / 60);
                     eprintln!("\n{what}; the last checkpoint stands");
                     events.note(&what);
                     std::process::exit(if pause::requested() { 0 } else { EXIT_GPU_FAILED });
@@ -1099,8 +1341,22 @@ pub fn run(given: &BatchArgs) -> Result<bool, String> {
         h.join().expect("the prover does not panic");
     }
     let proofs = state.proofs;
-    let Tally { won, exhausted, unknown, failed, gpu_stage, mut stages, total_nodes, any_dossier, hardest, .. } =
-        state.tally.clone();
+    let Tally {
+        won,
+        exhausted,
+        unknown,
+        failed,
+        gpu_stage,
+        mut stages,
+        total_nodes,
+        all_cpu_deals,
+        total_micros,
+        most_nodes,
+        most_micros,
+        any_dossier,
+        hardest,
+        ..
+    } = state.tally.clone();
     let elapsed = state.elapsed_s;
     let gpu_totals = state.gpu_name.is_some().then_some(state.standing.gpu.clone());
     let same = state.same.clone();
@@ -1138,7 +1394,7 @@ pub fn run(given: &BatchArgs) -> Result<bool, String> {
             .map(|(seed, report)| dossier::GalleryEntry { deal: Deal::from_seed(*seed), seed: *seed, report })
             .collect();
         let cpu_only = if gpu_totals.is_some() {
-            format!("; only the {} solved on the CPU are ranked", nodes.len())
+            format!("; only the {all_cpu_deals} solved on the CPU are ranked")
         } else {
             String::new()
         };
@@ -1227,16 +1483,17 @@ pub fn run(given: &BatchArgs) -> Result<bool, String> {
             );
             if found.repeats == 0 {
                 say!(
-                    "distinct games   not all checked: no repeats among the {in_sample} deals a hash of the game picked, {:.3}% of the {n}, even with suits and ranks renamed. Any two the same are picked together, so {} or more pairs the same among the {n} would have been seen with 95% chance. {chance}",
-                    100.0 * fraction,
+                    "distinct games   not all checked: no repeats among the {in_sample} deals a hash of the game picked, {}% of the {n}, even with suits and ranks renamed. Any two the same are picked together, so {} or more pairs the same among the {n} would have been seen with 95% chance. {chance}",
+                    percent(100.0 * fraction, 3),
                     games::repeats_ruled_out(fraction)
                 );
             } else {
-                let shown: Vec<String> = found.same.iter().take(20).map(|(a, b)| format!("{a}={b}")).collect();
+                let shown: Vec<String> =
+                    found.same.iter().take(20).map(|(a, b)| format!("{a}={b}")).collect();
                 say!(
-                    "distinct games   {} pairs of seeds deal the same game (up to renamed suits and ranks), among the {in_sample} deals a hash of the game picked, {:.3}% of the {n}: {}. {chance}",
+                    "distinct games   {} pairs of seeds deal the same game (up to renamed suits and ranks), among the {in_sample} deals a hash of the game picked, {}% of the {n}: {}. {chance}",
                     found.repeats,
-                    100.0 * fraction,
+                    percent(100.0 * fraction, 3),
                     shown.join(", ")
                 );
             }
@@ -1261,13 +1518,14 @@ pub fn run(given: &BatchArgs) -> Result<bool, String> {
             }
         },
     }
+    let places = if n >= LONGER_WIN_RATE_FROM { 12 } else { 10 };
     say!(
-        "win rate         {:.10}%   95% CI [{:.10}%, {:.10}%] (Wilson; undecided deals counted as losses for the lower bound, wins for the upper)",
+        "win rate         {:.places$}%   95% CI [{:.places$}%, {:.places$}%] (Wilson; undecided deals counted as losses for the lower bound, wins for the upper)",
         100.0 * won as f64 / n as f64,
         100.0 * lo,
         100.0 * hi
     );
-    let cpu_deals = nodes.len();
+    let cpu_deals = all_cpu_deals;
     let on_cpu =
         if gpu_totals.is_some() { format!(" ({cpu_deals} deals solved on the CPU)") } else { String::new() };
     say!(
@@ -1277,17 +1535,23 @@ pub fn run(given: &BatchArgs) -> Result<bool, String> {
         percentile(&nodes, 0.9),
         percentile(&nodes, 0.99),
         percentile(&nodes, 0.999),
-        nodes.last().copied().unwrap_or(0)
+        most_nodes
     );
     say!(
         "ms/deal (1 core) mean {:.2}  median {:.2}  p90 {:.2}  p99 {:.2}  p99.9 {:.2}  max {:.1}{on_cpu}",
-        micros.iter().sum::<u64>() as f64 / cpu_deals.max(1) as f64 / 1e3,
+        total_micros as f64 / cpu_deals.max(1) as f64 / 1e3,
         percentile(&micros, 0.5) as f64 / 1e3,
         percentile(&micros, 0.9) as f64 / 1e3,
         percentile(&micros, 0.99) as f64 / 1e3,
         percentile(&micros, 0.999) as f64 / 1e3,
-        micros.last().copied().unwrap_or(0) as f64 / 1e3
+        most_micros as f64 / 1e3
     );
+    if (nodes.len() as u64) < cpu_deals {
+        say!(
+            "cost sample      the median and the percentiles above cover the first {} of the {cpu_deals} deals solved on the CPU: deals are random, so these are a fair sample. The means and maxima cover them all",
+            nodes.len()
+        );
+    }
     if let (Some(t), Some(gpu_name)) = (&gpu_totals, &state.gpu_name) {
         say!(
             "GPU              {}: won {} of the {} deals it was given ({:.2}%), {} lines failed verification; {:.1}M attempts, {:.0}M positions/s{}",
@@ -1314,7 +1578,8 @@ pub fn run(given: &BatchArgs) -> Result<bool, String> {
             share(rest)
         );
     }
-    let sessions = if state.sessions > 1 { format!(", over {} sessions", state.sessions) } else { String::new() };
+    let sessions =
+        if state.sessions > 1 { format!(", over {} sessions", state.sessions) } else { String::new() };
     say!(
         "throughput       {:.0} deals/s, {:.0}M CPU positions/s on {hardware} ({elapsed:.1} s wall{sessions})",
         n as f64 / elapsed,
@@ -1384,13 +1649,25 @@ fn free_bytes(dir: &Path) -> Option<u64> {
     let wide: Vec<u16> = dir.as_os_str().encode_wide().chain([0]).collect();
     let mut free = 0;
     // SAFETY: a null-terminated path and one place for the answer; the other two may be null.
-    let ok = unsafe { GetDiskFreeSpaceExW(wide.as_ptr(), &mut free, std::ptr::null_mut(), std::ptr::null_mut()) };
+    let ok =
+        unsafe { GetDiskFreeSpaceExW(wide.as_ptr(), &mut free, std::ptr::null_mut(), std::ptr::null_mut()) };
     (ok != 0).then_some(free)
 }
 
 #[cfg(not(windows))]
-fn free_bytes(_: &Path) -> Option<u64> {
-    None
+fn free_bytes(dir: &Path) -> Option<u64> {
+    let output = std::process::Command::new("df").args(["-Pk", "--"]).arg(dir).output().ok()?;
+    output.status.success().then(|| df_free_bytes(&String::from_utf8_lossy(&output.stdout))).flatten()
+}
+
+/// The bytes free, from what `df -Pk` prints: a heading, then `name blocks used free percent mount`, in which the name and
+/// the mount may have spaces in them. So the free blocks are found as what comes before the percentage.
+#[cfg(any(not(windows), test))]
+fn df_free_bytes(text: &str) -> Option<u64> {
+    let fields: Vec<&str> = text.lines().nth(1)?.split_whitespace().collect();
+    let percent = fields.iter().position(|f| f.ends_with('%'))?;
+    let kilobytes: u64 = fields.get(percent.checked_sub(1)?)?.parse().ok()?;
+    kilobytes.checked_mul(1024)
 }
 
 /// Keeps the computer from going to sleep while this thread (the run's) lives, as a video player does; the screen
@@ -1426,5 +1703,91 @@ mod tests {
         assert!(!stuck.after(1, t + STUCK_AFTER * 2));
         assert!(!stuck.after(1, t + STUCK_AFTER * 2 + STUCK_AFTER / 2));
         assert!(stuck.after(1, t + STUCK_AFTER * 3));
+    }
+
+    #[test]
+    fn df_is_read_however_the_disk_is_named() {
+        let heading = "Filesystem     1024-blocks      Used Available Capacity Mounted on\n";
+        let linux = format!("{heading}/dev/sda1        41152736  20000000  19035256      52% /\n");
+        assert_eq!(df_free_bytes(&linux), Some(19_035_256 * 1024));
+        let spaces = format!("{heading}//server/my share 100 90 10 90% /Volumes/My Disk\n");
+        assert_eq!(df_free_bytes(&spaces), Some(10 * 1024));
+        assert_eq!(df_free_bytes(heading), None);
+        assert_eq!(df_free_bytes(""), None);
+        assert_eq!(df_free_bytes(&format!("{heading}proc 0 0 0 - /proc\n")), None);
+    }
+
+    #[test]
+    fn small_percentages_keep_two_figures() {
+        // As they always were.
+        assert_eq!(percent(45.4545, 2), "45.45");
+        assert_eq!(percent(0.1, 2), "0.10");
+        assert_eq!(percent(0.455, 3), "0.455");
+        assert_eq!(percent(0.0, 2), "0.00");
+        // At 100 trillion deals and 50 GB, which used to read 0.00.
+        assert_eq!(percent(0.004545, 2), "0.0045");
+        assert_eq!(percent(0.004545, 3), "0.0045");
+        assert_eq!(percent(0.00000123, 2), "0.0000012");
+    }
+
+    fn write_costs(path: &Path, costs: &[(u64, u64)]) {
+        let bytes: Vec<u8> =
+            costs.iter().flat_map(|(n, us)| [n.to_le_bytes(), us.to_le_bytes()].concat()).collect();
+        std::fs::write(path, bytes).unwrap();
+    }
+
+    fn costs_file(name: &str) -> PathBuf {
+        std::env::temp_dir().join(format!("acc-costs-test-{}-{name}.costs", std::process::id()))
+    }
+
+    #[test]
+    fn a_checkpoint_without_totals_gets_them_from_the_whole_file() {
+        let file = costs_file("old");
+        write_costs(&file, &[(5, 50), (9, 10), (2, 70), (7, 20)]);
+        // As it comes from a checkpoint that hasn't the new fields.
+        let mut tally: Tally = serde_json::from_value(serde_json::json!({
+            "won": 4, "exhausted": 0, "unknown": 0, "failed": 0, "gpu_stage": 0, "stages": {}, "total_nodes": 23,
+            "cpu_deals": 4, "any_dossier": false, "hardest": []
+        }))
+        .unwrap();
+        let (nodes, micros) = tally.load_costs(&file, 100).unwrap();
+        assert_eq!((nodes, micros), (vec![5, 9, 2, 7], vec![50, 10, 70, 20]));
+        assert_eq!((tally.cpu_deals, tally.all_cpu_deals), (4, 4));
+        assert_eq!((tally.total_micros, tally.most_nodes, tally.most_micros), (150, 9, 70));
+
+        // Over the limit: the first ones are kept, and the totals still count every one.
+        let mut tally = Tally { cpu_deals: 4, ..Tally::default() };
+        let (nodes, micros) = tally.load_costs(&file, 2).unwrap();
+        assert_eq!((nodes, micros), (vec![5, 9], vec![50, 10]));
+        assert_eq!((tally.cpu_deals, tally.all_cpu_deals), (2, 4));
+        assert_eq!((tally.total_micros, tally.most_nodes, tally.most_micros), (150, 9, 70));
+        std::fs::remove_file(&file).unwrap();
+    }
+
+    #[test]
+    fn a_checkpoint_with_totals_keeps_them_and_reads_no_more_than_it_keeps() {
+        let file = costs_file("new");
+        write_costs(&file, &[(5, 50), (9, 10)]);
+        let mut tally = Tally {
+            cpu_deals: 2,
+            all_cpu_deals: 1_000,
+            total_micros: 123_456,
+            most_nodes: 77,
+            most_micros: 88,
+            ..Tally::default()
+        };
+        let (nodes, _) = tally.load_costs(&file, 100).unwrap();
+        assert_eq!(nodes, [5, 9]);
+        assert_eq!(
+            (tally.all_cpu_deals, tally.total_micros, tally.most_nodes, tally.most_micros),
+            (1_000, 123_456, 77, 88)
+        );
+        std::fs::remove_file(&file).unwrap();
+    }
+
+    #[test]
+    fn no_file_of_costs_is_needed_for_no_costs() {
+        let mut tally = Tally::default();
+        assert_eq!(tally.load_costs(Path::new("no-such-file.costs"), 100), Ok((Vec::new(), Vec::new())));
     }
 }

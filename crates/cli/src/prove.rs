@@ -21,12 +21,18 @@ use std::time::Instant;
 /// Positions each run may generate unless told otherwise: about half an hour of one core apiece.
 pub const DEFAULT_POSITIONS: u64 = 10_000_000_000;
 
+const EXAMPLES: &str = "\
+Examples:
+  acc prove --seed 1005616798
+  acc prove --seed 1005616798 --max-positions 2b --memory 4";
+
 #[derive(Args)]
+#[command(after_help = EXAMPLES)]
 pub struct ProveArgs {
     #[command(flatten)]
     source: SolveSource,
     /// Positions each of the two runs may generate before giving up.
-    #[arg(long, default_value_t = DEFAULT_POSITIONS)]
+    #[arg(long, default_value_t = DEFAULT_POSITIONS, value_parser = crate::numbers::parse_count)]
     max_positions: u64,
     /// Memory each run's set of dead positions may take, in GB; past it, positions are forgotten and searched again.
     #[arg(long, default_value_t = 8)]
@@ -42,7 +48,7 @@ pub struct ProveArgs {
     #[arg(long)]
     out: Option<PathBuf>,
     /// Where the deal's dossier is.
-    #[arg(long, default_value = "hard-deals")]
+    #[arg(long, default_value = "output/hard-deals")]
     dossiers: PathBuf,
     #[arg(long, default_value = "endgame")]
     endgame_dir: PathBuf,
@@ -190,6 +196,7 @@ pub fn prove_both(
 }
 
 pub fn run(args: &ProveArgs) -> Result<bool, String> {
+    crate::numbers::check_gigabytes("--memory", args.memory as u64)?;
     let Source { deal, seed, game } = args.source.load()?;
     let root = Position::from_tops(&game.tops());
     let mut config = accordion_solver::Config::default();

@@ -42,7 +42,8 @@ fn acc(dir: &Path) -> Command {
 
 /// A run's settings: the CPU alone, in a few seconds.
 fn run_args(from: u64, count: u64) -> Vec<String> {
-    let mut args: Vec<String> = ["--gpu", "off", "--endgame", "off", "--threads", "4"].map(String::from).to_vec();
+    let mut args: Vec<String> =
+        ["--gpu", "off", "--endgame", "off", "--threads", "4"].map(String::from).to_vec();
     args.extend(["--from".to_string(), from.to_string(), "--count".to_string(), count.to_string()]);
     args
 }
@@ -172,9 +173,17 @@ fn a_pause_changes_nothing() {
         let done = done_in(&checkpoint);
         // A pause can land before the resumed run has finished anything (a loaded machine is slow to start, and the pause
         // file is asked for again every 250 ms), but a run that goes no further in four pauses is stuck.
-        assert!(stops.len() < 4 || stops[stops.len() - 4] < done, "no further than {done} in four pauses: {stops:?}");
+        assert!(
+            stops.len() < 4 || stops[stops.len() - 4] < done,
+            "no further than {done} in four pauses: {stops:?}"
+        );
         stops.push(done);
-        child = acc(&dir.0).args(["--resume", "cp.json"]).stdout(Stdio::piped()).stderr(Stdio::piped()).spawn().unwrap();
+        child = acc(&dir.0)
+            .args(["--resume", "cp.json"])
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .unwrap();
     }
     assert!(stops.len() >= 2, "it should have paused at least twice, not at {stops:?}");
     assert_eq!(report(&stdout), report_alone, "after pausing at {stops:?}");
@@ -202,7 +211,10 @@ fn a_crash_loses_only_the_last_checkpoint() {
     child.wait().unwrap();
     let done = done_in(&checkpoint);
     assert!(done > 0 && done < 60_000, "done {done}");
-    assert!(acc(&dir.0).args(&args).output().unwrap().status.code() != Some(0), "a second run must not overwrite it");
+    assert!(
+        acc(&dir.0).args(&args).output().unwrap().status.code() != Some(0),
+        "a second run must not overwrite it"
+    );
 
     let stdout = succeeded(&resume(&dir.0, "cp.json", &[]));
     assert_eq!(report(&stdout), report_alone);
@@ -235,7 +247,12 @@ fn proofs_in_hand_are_proved_again() {
         let checkpoint: Value =
             serde_json::from_str(&std::fs::read_to_string(dir.file("cp.json")).unwrap()).unwrap();
         pending_seen |= checkpoint["proofs_pending"].as_array().is_some_and(|p| !p.is_empty());
-        child = acc(&dir.0).args(["--resume", "cp.json"]).stdout(Stdio::piped()).stderr(Stdio::piped()).spawn().unwrap();
+        child = acc(&dir.0)
+            .args(["--resume", "cp.json"])
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .unwrap();
     }
     assert!(pending_seen, "no proofs were in hand at a pause: this test should be made harder");
     assert_eq!(report(&stdout), report_alone);
@@ -287,7 +304,12 @@ fn a_sample_comes_out_the_same_however_the_run_is_interrupted() {
     assert!(counted.is_multiple_of(11) && written >= counted, "{counted} counted of {written}");
 
     // Then pauses, until the end.
-    let mut child = acc(&dir.0).args(["--resume", "cp.json"]).stdout(Stdio::piped()).stderr(Stdio::piped()).spawn().unwrap();
+    let mut child = acc(&dir.0)
+        .args(["--resume", "cp.json"])
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
     let mut stdout;
     loop {
         std::thread::sleep(Duration::from_millis(1500));
@@ -295,7 +317,12 @@ fn a_sample_comes_out_the_same_however_the_run_is_interrupted() {
         if !stdout.is_empty() {
             break;
         }
-        child = acc(&dir.0).args(["--resume", "cp.json"]).stdout(Stdio::piped()).stderr(Stdio::piped()).spawn().unwrap();
+        child = acc(&dir.0)
+            .args(["--resume", "cp.json"])
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .unwrap();
     }
     assert_eq!(report(&stdout), report_alone);
     assert_eq!(records(&dir.file("out.jsonl")), left_alone(&dir, &with(run_args(7_000, 60_000), SAMPLED)).1);
@@ -305,12 +332,14 @@ fn a_sample_comes_out_the_same_however_the_run_is_interrupted() {
 #[test]
 fn a_log_shorter_than_its_checkpoint_says_is_an_error() {
     let dir = Dir::new("short-log");
-    let args = with(with(with(run_args(0, 60_000), SAMPLED), &["--dossiers", "d"]), &["--checkpoint", "cp.json"]);
+    let args =
+        with(with(with(run_args(0, 60_000), SAMPLED), &["--dossiers", "d"]), &["--checkpoint", "cp.json"]);
     let mut child = spawn(&dir.0, &with(args, &["--checkpoint-every", "1"]));
     let checkpoint = dir.file("cp.json");
     wait_for(&checkpoint, &mut child);
     while {
-        let saved: Value = serde_json::from_str(&std::fs::read_to_string(&checkpoint).unwrap_or("{}".into())).unwrap_or_default();
+        let saved: Value = serde_json::from_str(&std::fs::read_to_string(&checkpoint).unwrap_or("{}".into()))
+            .unwrap_or_default();
         saved["games_bytes"].as_u64().unwrap_or(0) == 0
     } {
         std::thread::sleep(Duration::from_millis(50));
@@ -331,7 +360,9 @@ fn repeats_are_all_found_or_their_share_in_a_sample() {
         let output = acc(&dir.0).args(with(args.clone(), more)).output().unwrap();
         report(&succeeded(&output))["distinct games"].clone()
     };
-    for line in [line(&[]), line(&["--games-memory", "0"]), line(&["--games-memory", "0", "--games-disk", "1"])] {
+    for line in
+        [line(&[]), line(&["--games-memory", "0"]), line(&["--games-memory", "0", "--games-disk", "1"])]
+    {
         assert!(line.starts_with("distinct games   400 pairs of seeds"), "{line}");
     }
     // A quarter of the deals in the sample, so about a quarter of the pairs.
@@ -370,7 +401,11 @@ fn a_run_can_go_in_legs_and_says_how_it_is_going() {
     assert_eq!(status(&dir)["left"].as_u64().unwrap(), 0);
     assert!(status(&dir)["deals_on_cpu"].as_u64().unwrap() > 0);
     let events = std::fs::read_to_string(dir.file("cp.events.log")).unwrap();
-    for said in [format!("paused at {first} deals"), format!("session 2 started at {first} deals"), "finished".to_string()] {
+    for said in [
+        format!("paused at {first} deals"),
+        format!("session 2 started at {first} deals"),
+        "finished".to_string(),
+    ] {
         assert!(events.contains(&said), "{said} in {events}");
     }
 }
@@ -378,7 +413,10 @@ fn a_run_can_go_in_legs_and_says_how_it_is_going() {
 #[test]
 fn a_disk_running_out_pauses_the_run_with_its_own_exit_code() {
     let dir = Dir::new("room");
-    let args = with(run_args(0, 200_000), &["--dossiers", "d", "--checkpoint", "cp.json", "--checkpoint-every", "1"]);
+    let args = with(
+        run_args(0, 200_000),
+        &["--dossiers", "d", "--checkpoint", "cp.json", "--checkpoint-every", "1"],
+    );
     let output = acc(&dir.0).args(with(args, &["--keep-free", "1000000000"])).output().unwrap();
     assert_eq!(output.status.code(), Some(74), "{}", text(&output.stderr));
     assert!(done_in(&dir.file("cp.json")) < 200_000);
@@ -393,9 +431,17 @@ fn a_run_carries_on_only_with_its_own_settings() {
     let output = acc(&dir.0).args(["--resume", "cp.json", "--count", "5"]).output().unwrap();
     assert!(!output.status.success() && text(&output.stderr).contains("--count"), "{}", text(&output.stderr));
     let output = acc(&dir.0).args(["--resume", "cp.json", "--games-disk", "5"]).output().unwrap();
-    assert!(!output.status.success() && text(&output.stderr).contains("--games-disk"), "{}", text(&output.stderr));
+    assert!(
+        !output.status.success() && text(&output.stderr).contains("--games-disk"),
+        "{}",
+        text(&output.stderr)
+    );
     let output = resume(&dir.0, "nothing-here.json", &[]);
-    assert!(!output.status.success() && text(&output.stderr).contains("nothing-here"), "{}", text(&output.stderr));
+    assert!(
+        !output.status.success() && text(&output.stderr).contains("nothing-here"),
+        "{}",
+        text(&output.stderr)
+    );
 }
 
 #[test]
@@ -403,7 +449,11 @@ fn a_short_run_leaves_nothing_behind() {
     let dir = Dir::new("short");
     let output = acc(&dir.0).args(run_args(0, 200)).args(["--dossiers", "d"]).output().unwrap();
     succeeded(&output);
-    assert!(!dir.file("checkpoints").exists(), "{:?}", std::fs::read_dir(&dir.0).unwrap().collect::<Vec<_>>());
+    assert!(
+        !dir.file("checkpoints").exists(),
+        "{:?}",
+        std::fs::read_dir(&dir.0).unwrap().collect::<Vec<_>>()
+    );
 }
 
 /// Ctrl+Break, which is all that one process can send another on Windows, asks for a pause, and a second one stops the

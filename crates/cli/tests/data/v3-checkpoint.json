@@ -1,0 +1,155 @@
+{
+  "version": 3,
+  "dir": "replaced-by-the-test",
+  "args": {
+    "from": 0,
+    "count": 3000,
+    "max_nodes": 50000000,
+    "config": null,
+    "out": null,
+    "dossiers": "d",
+    "no_dossiers": false,
+    "table": 14,
+    "threads": 1,
+    "gpu": "off",
+    "gpu_config": null,
+    "gpu_kernel": null,
+    "gpu_define": [],
+    "endgame_dir": "endgame",
+    "endgame": "off",
+    "gallery": 0,
+    "log_dir": "logs",
+    "no_log": true,
+    "prove": 10000000000,
+    "prove_memory": 8,
+    "checkpoint": "cp.json",
+    "no_checkpoint": false,
+    "checkpoint_every": 60,
+    "resume": null,
+    "games_memory": 16,
+    "games_disk": null,
+    "no_games_check": false,
+    "keep_free": 5.0,
+    "until": null,
+    "stop_after": 0.00003,
+    "plant_repeats": null
+  },
+  "config": {
+    "max_nodes": 50000000,
+    "luby_unit": 1000,
+    "restarts": "luby",
+    "search": {
+      "gates": {
+        "connectivity": 19,
+        "left_leaf": 0,
+        "every_node": false,
+        "leftmost": true
+      },
+      "order": "uniform",
+      "sleep_sets": true,
+      "table_min_piles": 0,
+      "probe_first": false,
+      "endgame_piles": 0,
+      "pattern_piles": 0,
+      "pattern_table": 16
+    },
+    "ladder": {
+      "start": 36,
+      "end": 24,
+      "step": 2,
+      "tries": 256,
+      "budget": 4000,
+      "growth": 200,
+      "prefix": "uniform",
+      "leap_weight": 8,
+      "unstuck": false
+    },
+    "seed": 0
+  },
+  "settings": {
+    "rungs": [
+      [
+        40,
+        24
+      ],
+      [
+        38,
+        376
+      ]
+    ],
+    "budget": 700,
+    "batch": 262144,
+    "block": 64,
+    "blocks_per_sm": 8,
+    "conn_gate": 19,
+    "leftmost": true,
+    "leap_weight": 8,
+    "seed": 24301,
+    "profile": false,
+    "prefix_warps": 1,
+    "share_group": 2,
+    "share_moves": 20,
+    "rank_gate": [
+      8,
+      10
+    ]
+  },
+  "gpu_name": null,
+  "hardware": "1 threads",
+  "commits": [
+    ""
+  ],
+  "sessions": 1,
+  "elapsed_s": 0.109789,
+  "standing": {
+    "done": 79,
+    "gpu": {
+      "launches": 0,
+      "deals": 0,
+      "won": 0,
+      "failed": 0,
+      "attempts": 0,
+      "positions": 0,
+      "cpu": {
+        "verifying": 0,
+        "misses": 0,
+        "own": 0,
+        "waiting": 0,
+        "handing_on": 0,
+        "total": 0
+      }
+    }
+  },
+  "tally": {
+    "won": 79,
+    "exhausted": 0,
+    "unknown": 0,
+    "failed": 0,
+    "gpu_stage": 0,
+    "stages": {
+      "ladder-0": 79
+    },
+    "total_nodes": 406716,
+    "cpu_deals": 79,
+    "any_dossier": false,
+    "hardest": []
+  },
+  "proofs": {
+    "lost": 0,
+    "won": 0,
+    "undecided": 0,
+    "failed": 0
+  },
+  "proofs_pending": [],
+  "out_bytes": 0,
+  "games": "Whole",
+  "games_bytes": 0,
+  "games_found": {
+    "parts_done": 0,
+    "parts": 0,
+    "chance": 0,
+    "repeats": 0,
+    "same": []
+  },
+  "same": null
+}

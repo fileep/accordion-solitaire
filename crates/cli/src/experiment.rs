@@ -24,9 +24,9 @@ pub struct ExperimentArgs {
     /// regression (0–99,999), hard (<out>/sets/hard.txt), a range FROM:COUNT, or a file of seeds.
     #[arg(long)]
     set: String,
-    /// A configuration as JSON: {"name": "...", "solver": {Config fields}, "table": 14, "threads": 16, "gpu":
-    /// {accordion_gpu::Settings fields}, "note": ".."}. Repeatable; fields left out keep their defaults, and without
-    /// "gpu" the GPU isn't used.
+    /// A configuration: the name of a JSON file, or the JSON itself: {"name": "...", "solver": {Config fields},
+    /// "table": 14, "threads": 16, "gpu": {accordion_gpu::Settings fields}, "note": ".."}. Repeatable; fields left out
+    /// keep their defaults, and without "gpu" the GPU isn't used.
     #[arg(long = "config")]
     configs: Vec<String>,
     /// A JSON file holding a list of configurations like --config, run after them.
@@ -45,7 +45,7 @@ pub struct ExperimentArgs {
     #[arg(long, default_value = "endgame")]
     endgame_dir: PathBuf,
     /// Where summary.jsonl, sets/ and deals/ live.
-    #[arg(long, default_value = "research/experiments/phase5")]
+    #[arg(long, default_value = "output/experiments")]
     out: PathBuf,
     /// Also write one row per deal (first repeat only) to <out>/deals/<set>-<name>.jsonl.
     #[arg(long)]
@@ -150,11 +150,8 @@ struct Outcome {
 
 pub fn run(args: &ExperimentArgs) -> Result<bool, String> {
     let seeds = deal_set(&args.set, &args.out)?;
-    let mut variants: Vec<Variant> = args
-        .configs
-        .iter()
-        .map(|c| serde_json::from_str(c).map_err(|e| format!("--config {c}: {e}")))
-        .collect::<Result<_, _>>()?;
+    let mut variants: Vec<Variant> =
+        args.configs.iter().map(|c| crate::json_setting("--config", c)).collect::<Result<_, _>>()?;
     if let Some(path) = &args.grid {
         let text = std::fs::read_to_string(path).map_err(|e| format!("reading {}: {e}", path.display()))?;
         let more: Vec<Variant> =
@@ -196,7 +193,10 @@ pub fn run(args: &ExperimentArgs) -> Result<bool, String> {
     let mut all_won = true;
     for rep in 0..args.repeat {
         for (vi, v) in variants.iter().enumerate() {
-            let opts = Options { each_gpu_win: args.deals && rep == 0, ..v.options(args.threads, args.table, &endgame, &gpus[vi]) };
+            let opts = Options {
+                each_gpu_win: args.deals && rep == 0,
+                ..v.options(args.threads, args.table, &endgame, &gpus[vi])
+            };
             let (threads, table) = (opts.threads + usize::from(opts.gpu.is_some()), opts.table_log2);
             let mut deal_rows = if args.deals && rep == 0 {
                 let dir = args.out.join("deals");

@@ -266,7 +266,7 @@ pub fn write_index(dir: &Path) -> Result<(), String> {
     gallery.sort_by_key(|r| r["stats"]["rank"].as_u64().unwrap_or(u64::MAX));
     let mut text = String::from(
         "# Hard deals\n\nEvery deal the solver has not won within its cap gets a dossier here (`<id>.json`) and a row below.\n\
-         See PLAN.md §5 for the dossier format and the escalation stages. `acc` rewrites this file after every run.\n\n\
+         See docs/FORMATS.md for what a dossier holds. `acc` rewrites this file after every run.\n\n\
          | Deal | Status | Stages run | Best (piles left) | Positions searched | Last attempt |\n|---|---|---|---|---|---|\n",
     );
     if rows.is_empty() {

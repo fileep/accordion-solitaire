@@ -35,11 +35,11 @@ laptop drift with heat by up to ±25% between runs. They are only compared withi
 `--repeat 3` and the configurations interleaved, the spread is ±1–5%.
 
 ```bash
-cargo run --release -p accordion-cli -- experiment --set train --grid research/experiments/phase5/grids/c3-order-sleep.json
+cargo run --release -p accordion-cli -- experiment --out research/experiments/phase5 --set train --grid research/experiments/phase5/grids/c3-order-sleep.json
 ```
 
 ```bash
-cargo run --release -p accordion-cli -- experiment --set validation --warmup 40 --repeat 3 --config '{"name": "phase 5"}'
+cargo run --release -p accordion-cli -- experiment --out research/experiments/phase5 --set validation --warmup 40 --repeat 3 --config '{"name": "phase 5"}'
 ```
 
 Endgame-table configurations need the tables first:

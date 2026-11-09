@@ -114,7 +114,9 @@ pub fn watch(file: PathBuf) {
                 PAUSE.store(true, Ordering::Relaxed);
             }
             if requested() {
-                eprintln!("\npausing: finishing what is in hand (a second Ctrl+C stops at once, at the last checkpoint)");
+                eprintln!(
+                    "\npausing: finishing what is in hand (a second Ctrl+C stops at once, at the last checkpoint)"
+                );
                 return;
             }
             std::thread::sleep(Duration::from_millis(250));

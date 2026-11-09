@@ -18,12 +18,19 @@ use std::sync::Arc;
 use std::sync::atomic::Ordering;
 use std::time::{Duration, Instant};
 
+const EXAMPLES: &str = "\
+Examples:
+  acc solve --seed 42
+  acc solve --seed 42 --out win.json        save the winning line in a file
+  acc solve --file deck.txt --escalate      a deck from a file, trying harder if it isn't won";
+
 #[derive(Args)]
+#[command(after_help = EXAMPLES)]
 pub struct SolveArgs {
     #[command(flatten)]
     source: SolveSource,
     /// Positions to search in total, across all threads, before giving up (each --escalate stage multiplies it by 10).
-    #[arg(long, default_value_t = 200_000_000)]
+    #[arg(long, default_value_t = 200_000_000, value_parser = crate::numbers::parse_count)]
     max_nodes: u64,
     /// Threads to use (0 = every core).
     #[arg(long, default_value_t = 0)]
@@ -38,9 +45,9 @@ pub struct SolveArgs {
     #[arg(long)]
     escalate: bool,
     /// Where a deal that isn't won gets its dossier.
-    #[arg(long, default_value = "hard-deals")]
+    #[arg(long, default_value = "output/hard-deals")]
     dossiers: PathBuf,
-    /// Solver settings as JSON (see `accordion_solver::Config`); --max-nodes and --rng-seed override theirs.
+    /// Solver settings: the name of a JSON file, or the JSON itself; --max-nodes and --rng-seed override theirs.
     #[arg(long)]
     config: Option<String>,
     /// Directory holding endgame tables (`acc endgame build`).
@@ -57,7 +64,7 @@ pub struct SolveSource {
     /// The deal for this seed.
     #[arg(long)]
     seed: Option<u64>,
-    /// A deck as text: 52 cards like "KS 7H 10d ♣A", separated by spaces or commas.
+    /// A deck as text: 52 cards like "KS 7H 10d A♣", separated by spaces or commas.
     #[arg(long)]
     cards: Option<String>,
     /// Read the deck from a file, or "-" for standard input.
@@ -154,7 +161,7 @@ pub fn run(args: &SolveArgs) -> Result<bool, String> {
         &[(1, "solve")]
     };
     let mut base: Config = match &args.config {
-        Some(text) => serde_json::from_str(text).map_err(|e| format!("--config: {e}"))?,
+        Some(text) => crate::json_setting("--config", text)?,
         None => Config::default(),
     };
     // A single solve takes milliseconds; loading the 1.2 GB 11-pile table would take longer than that, so `auto`
@@ -192,7 +199,10 @@ pub fn run(args: &SolveArgs) -> Result<bool, String> {
     };
     let what = match report.verdict {
         Verdict::Win(_) => "won".to_string(),
-        Verdict::Exhausted => "no win: every line was searched (not a proof; see PLAN.md §5)".to_string(),
+        Verdict::Exhausted => {
+            "no win found; every line was searched, but this is not the double-checked proof. For that, run: acc prove"
+                .to_string()
+        }
         Verdict::Unknown => {
             format!("not won within the limit; best line leaves {}", piles(report.best_piles))
         }

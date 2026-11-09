@@ -559,7 +559,7 @@ fn find_libraries() -> Result<(), String> {
         add_bundled_nvrtc();
         if !nvrtc() {
             return Err(
-                "NVRTC, the CUDA runtime compiler, not found: put its bin folder on PATH (PLAN.md Phase 0 notes)"
+                "NVRTC, the CUDA runtime compiler, not found: put its bin folder on PATH"
                     .into(),
             );
         }

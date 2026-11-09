@@ -35,10 +35,17 @@ use std::time::{Duration, Instant};
 /// The deals of a run, by position: a range of seeds (nothing to hold, for runs of billions) or a list.
 #[derive(Clone, Copy)]
 pub enum Seeds<'a> {
-    Range { from: u64, count: usize },
+    Range {
+        from: u64,
+        count: usize,
+    },
     List(&'a [u64]),
     /// A range in which every `every`th deal is the deal before it: repeats, to test the check for them with.
-    Repeating { from: u64, count: usize, every: usize },
+    Repeating {
+        from: u64,
+        count: usize,
+        every: usize,
+    },
 }
 
 impl Seeds<'_> {
@@ -273,7 +280,7 @@ pub fn choose_endgame(config: &mut Config, flag: &str, dir: &Path, cap: usize) -
             config.search.endgame_piles = available_endgame(dir).min(cap);
             if config.search.endgame_piles == 0 {
                 eprintln!(
-                    "hint: no endgame tables in {}; `acc endgame build --piles 11` builds them (about 7 minutes, 1.2 GB) and makes solving about 1.2-1.3x faster",
+                    "note: no endgame tables in {}; `acc endgame build --piles 11` builds them (about 7 minutes, 1.2 GB) and makes solving about 1.2-1.3x faster",
                     dir.display()
                 );
             }
@@ -364,7 +371,8 @@ pub fn run(
     let next = AtomicUsize::new(so_far.done);
     let abort = AtomicBool::new(false);
     let gpu_down = AtomicBool::new(false);
-    let pausing = || gpu_down.load(Ordering::Relaxed) || opts.pause.is_some_and(|p| p.load(Ordering::Relaxed));
+    let pausing =
+        || gpu_down.load(Ordering::Relaxed) || opts.pause.is_some_and(|p| p.load(Ordering::Relaxed));
     let from_gpu: Mutex<VecDeque<Arc<GpuBatch>>> = Mutex::new(VecDeque::new());
     let more_from_gpu = Condvar::new();
     let feeding = AtomicBool::new(opts.gpu.is_some());
@@ -398,7 +406,10 @@ pub fn run(
                 });
                 let error = fed.err().map(|(e, mut lost)| {
                     if opts.pause_if_gpu_fails {
-                        eprintln!("\nGPU stopped: {e}\n(pausing: the {} deals it had in hand are done again)", lost.len());
+                        eprintln!(
+                            "\nGPU stopped: {e}\n(pausing: the {} deals it had in hand are done again)",
+                            lost.len()
+                        );
                         gpu_down.store(true, Ordering::Relaxed);
                     } else {
                         eprintln!(
@@ -563,7 +574,8 @@ pub fn run(
                         if stretch.gpu.failed > 0 {
                             gpu_failed.fetch_add(stretch.gpu.failed, Ordering::Relaxed);
                         }
-                        let sampled = (!stretch.sampled.is_empty()).then_some(Finished::Sampled(stretch.sampled));
+                        let sampled =
+                            (!stretch.sampled.is_empty()).then_some(Finished::Sampled(stretch.sampled));
                         let wins = (stretch.wins > 0).then_some(Finished::GpuWins(stretch.wins));
                         result = sampled
                             .into_iter()
@@ -673,7 +685,13 @@ fn gpu_line_verifies(
 }
 
 /// A deal the GPU won with all that is known of it, verified, or the error if its line fails.
-fn gpu_win_recorded(result: &BatchResult, i: usize, index: usize, seed: u64, records: bool) -> Result<Solved, String> {
+fn gpu_win_recorded(
+    result: &BatchResult,
+    i: usize,
+    index: usize,
+    seed: u64,
+    records: bool,
+) -> Result<Solved, String> {
     let deal = Deal::from_seed(seed);
     let line = result.line(i).expect("it is won");
     let report = Report {
@@ -825,7 +843,18 @@ const KEY_BYTES: usize = 5;
 
 /// What [`same_games_on_disk`] needs on disk at most.
 pub fn same_games_disk_bytes(count: u64) -> u64 {
-    count * KEY_BYTES as u64
+    count.saturating_mul(KEY_BYTES as u64)
+}
+
+/// Into how many parts, as a power of two, [`same_games_on_disk`] splits `count` deals.
+fn disk_part_bits(count: u64) -> u32 {
+    (count >> 24).max(1).next_power_of_two().trailing_zeros().clamp(4, 12)
+}
+
+/// What [`same_games_on_disk`] holds in memory at most, on `threads` threads: a part of the deals each, read whole and
+/// spread out into keys of 8 bytes beside the 5 read.
+pub fn same_games_disk_memory(count: u64, threads: usize) -> u64 {
+    (count >> disk_part_bits(count)).saturating_mul(KEY_BYTES as u64 + 8).saturating_mul(threads as u64)
 }
 
 /// `f` over the positions of `count` seeds, a chunk at a time in parallel, saying how far it has got.
@@ -849,7 +878,11 @@ fn over_chunks<R: Send>(count: usize, doing: &str, f: impl Fn(Range<usize>) -> R
 /// goes to a file in `dir` (removed at the end) by its first bits, as the next 5 bytes, about 16 million deals to a
 /// file so that one sorts in memory; what repeats in a file is looked up by fingerprinting again, as there. A repeat of
 /// those bits needn't be one of the whole fingerprint (at 25 billion, about 140,000 are not), which costs nothing.
-pub fn same_games_on_disk(seeds: Seeds, print: impl Fn(u64) -> u64 + Sync, dir: &Path) -> Result<Vec<(u64, u64)>, String> {
+pub fn same_games_on_disk(
+    seeds: Seeds,
+    print: impl Fn(u64) -> u64 + Sync,
+    dir: &Path,
+) -> Result<Vec<(u64, u64)>, String> {
     let _ = std::fs::remove_dir_all(dir);
     std::fs::create_dir_all(dir).map_err(|e| format!("creating {}: {e}", dir.display()))?;
     let result = same_games_in(seeds, &print, dir);
@@ -857,9 +890,13 @@ pub fn same_games_on_disk(seeds: Seeds, print: impl Fn(u64) -> u64 + Sync, dir: 
     result
 }
 
-fn same_games_in(seeds: Seeds, print: &(impl Fn(u64) -> u64 + Sync), dir: &Path) -> Result<Vec<(u64, u64)>, String> {
+fn same_games_in(
+    seeds: Seeds,
+    print: &(impl Fn(u64) -> u64 + Sync),
+    dir: &Path,
+) -> Result<Vec<(u64, u64)>, String> {
     let count = seeds.count();
-    let bits = (count >> 24).max(1).next_power_of_two().trailing_zeros().clamp(4, 12);
+    let bits = disk_part_bits(count as u64);
     let key_bits = 8 * KEY_BYTES as u32;
     let key = |f: u64| f >> (64 - bits - key_bits);
     let paths: Vec<PathBuf> = (0..1usize << bits).map(|b| dir.join(format!("{b}.bin"))).collect();
@@ -903,7 +940,11 @@ fn same_games_in(seeds: Seeds, print: &(impl Fn(u64) -> u64 + Sync), dir: &Path)
             drop(bytes);
             let _ = std::fs::remove_file(path);
             keys.sort_unstable();
-            Ok(keys.windows(2).filter(|w| w[0] == w[1]).map(|w| (b as u64) << key_bits | w[0]).collect::<Vec<u64>>())
+            Ok(keys
+                .windows(2)
+                .filter(|w| w[0] == w[1])
+                .map(|w| (b as u64) << key_bits | w[0])
+                .collect::<Vec<u64>>())
         })
         .collect::<Result<Vec<_>, String>>()?;
     let repeated: HashSet<u64> = repeated.into_iter().flatten().collect();
@@ -954,6 +995,24 @@ mod tests {
     }
 
     #[test]
+    fn wilson_at_100_trillion_deals_is_good_to_the_digits_printed() {
+        // By Python's decimal module, with the same z, to the 12 decimals printed from 10 trillion deals on.
+        let (lo, hi) = wilson(100_000_000_000_000 - 74_000, 100_000_000_000_000);
+        assert!((100.0 * lo - 99.999_999_925_464_9_f64).abs() < 1e-12, "{}", 100.0 * lo);
+        assert!((100.0 * hi - 99.999_999_926_531_25_f64).abs() < 1e-12, "{}", 100.0 * hi);
+    }
+
+    #[test]
+    fn the_memory_of_the_check_on_disk_goes_by_its_parts() {
+        // 4,096 parts at most, as `same_games_in` makes them.
+        assert_eq!(same_games_disk_memory(1 << 40, 16), 13 * (1 << 28) * 16);
+        // Fewer parts for fewer deals: each still has up to 2^24.
+        assert_eq!(same_games_disk_memory(1 << 34, 2), 13 * (1 << 24) * 2);
+        assert_eq!(same_games_disk_memory(5_000, 4), 13 * (5_000 / 16) * 4);
+        assert_eq!(same_games_disk_memory(u64::MAX, usize::MAX), u64::MAX, "and no overflow");
+    }
+
+    #[test]
     fn wilson_interval_matches_known_values() {
         let (lo, hi) = wilson(0, 10);
         assert!(lo == 0.0 && (hi - 0.2775).abs() < 1e-3, "{hi}");
@@ -961,7 +1020,10 @@ mod tests {
         assert!((lo - 0.999_962).abs() < 1e-5 && (hi - 1.0).abs() < 1e-12, "{lo} {hi}");
         // A deal in a billion lost, as in the 20 billion run: doubles still hold it, to the digits the report prints.
         let (lo, hi) = wilson(19_999_999_980, 20_000_000_000);
-        assert!((lo - 0.999_999_998_455).abs() < 1e-11 && (hi - 0.999_999_999_353).abs() < 1e-11, "{lo} {hi}");
+        assert!(
+            (lo - 0.999_999_998_455).abs() < 1e-11 && (hi - 0.999_999_999_353).abs() < 1e-11,
+            "{lo} {hi}"
+        );
     }
 
     fn check_run(gpu: Option<Arc<Gpu>>, count: u64, records: bool) {
@@ -1238,7 +1300,9 @@ mod tests {
     fn on_disk_it_finds_the_same_games() {
         let dir = std::env::temp_dir().join(format!("acc-games-test-{}", std::process::id()));
         let print = |s: u64| fingerprint(&Deal::from_seed(s));
-        let on_disk = |seeds: Seeds, print: &(dyn Fn(u64) -> u64 + Sync)| same_games_on_disk(seeds, print, &dir).unwrap();
+        let on_disk = |seeds: Seeds, print: &(dyn Fn(u64) -> u64 + Sync)| {
+            same_games_on_disk(seeds, print, &dir).unwrap()
+        };
         // More than a chunk, so that a repeat is seen across chunks and buckets.
         let range = Seeds::Range { from: 0, count: 2 * CHUNK + 5 };
         assert!(on_disk(range, &print).is_empty());

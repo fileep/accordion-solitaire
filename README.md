@@ -52,7 +52,7 @@ git). `batch` and `solve` find and use them automatically, and run without them 
 cargo run --release -p accordion-cli -- endgame build --piles 11
 ```
 
-Solve one deal or position on every core (a deal that isn't won gets a dossier in `hard-deals/`):
+Solve one deal or position on every core (a deal that isn't won gets a dossier in `output/hard-deals/`, or the folder `--dossiers` names):
 
 ```bash
 cargo run --release -p accordion-cli -- solve --seed 42
@@ -71,12 +71,12 @@ the GPU doesn't win goes through the CPU solver as usual (`--gpu off` turns it o
 cargo run --release -p accordion-cli -- batch --from 0 --count 100000 --out results.jsonl
 ```
 
-Add `--gallery 20` to keep a run's 20 hardest deals as verified solve files in `hard-deals/gallery/`, listed in
-`hard-deals/INDEX.md` and loadable in the visualizer. Results of the big runs are in [docs/RESULTS.md](docs/RESULTS.md).
+Add `--gallery 20` to keep a run's 20 hardest deals as verified solve files in `output/hard-deals/gallery/`, listed in
+`output/hard-deals/INDEX.md` and loadable in the visualizer. Results of the big runs are in [docs/RESULTS.md](docs/RESULTS.md).
 
 A deal `batch` doesn't win is then proved lost if it can be, on a thread of its own while the run goes on, the way
 `prove` does it (below). The run waits for the last proof, which can take an hour; `--prove <positions a run>` sets the
-limit and `--prove 0` turns proofs off. A proven loss gets a `loss` record in `hard-deals/proofs/`.
+limit and `--prove 0` turns proofs off. A proven loss gets a `loss` record in `output/hard-deals/proofs/`.
 
 A long `batch` can stop and carry on. **Ctrl+C pauses it:** it finishes what is in hand (under a second, or as long as a
 hard deal takes), saves, and says how to carry on. A second Ctrl+C stops it at once. So does anything else that stops it,
@@ -140,7 +140,7 @@ Compare solver configurations on a fixed deal set (results append to `research/e
 [research/experiments/phase5/README.md](research/experiments/phase5/README.md)):
 
 ```bash
-cargo run --release -p accordion-cli -- experiment --set validation --warmup 40 --repeat 3 --config '{"name": "default"}'
+cargo run --release -p accordion-cli -- experiment --out research/experiments/phase5 --set validation --warmup 40 --repeat 3 --config '{"name": "default"}'
 ```
 
 Check the fast engine against the reference engine (lockstep playouts), dead-end soundness, and that sleep sets and

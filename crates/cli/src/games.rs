@@ -62,7 +62,13 @@ impl Sieve {
     /// [`Sieve::note`] for a deal that the GPU was given, which is in `codes` as the engine's card bytes: the deal itself,
     /// shuffled from its seed again, is made by `deal` only for the few in the sample (a shuffle costs ten times the hash).
     #[inline]
-    pub fn note_codes(&self, codes: &[u8; 52], index: usize, records: &mut Vec<u8>, deal: impl FnOnce() -> Deal) {
+    pub fn note_codes(
+        &self,
+        codes: &[u8; 52],
+        index: usize,
+        records: &mut Vec<u8>,
+        deal: impl FnOnce() -> Deal,
+    ) {
         if game_hash_codes(codes.iter().copied()) <= self.below {
             Sieve::record(&deal(), index, records);
         }
@@ -163,7 +169,14 @@ pub fn check(log: &Path, bytes: u64, seeds: Seeds, memory: u64, found: &Mutex<Fo
     Ok(())
 }
 
-fn check_part(log: &Path, bytes: u64, part: u64, parts: u64, seeds: Seeds, found: &Mutex<Found>) -> Result<(), String> {
+fn check_part(
+    log: &Path,
+    bytes: u64,
+    part: u64,
+    parts: u64,
+    seeds: Seeds,
+    found: &Mutex<Found>,
+) -> Result<(), String> {
     let mut members = read_part(log, bytes, part, parts)?;
     members.par_sort_unstable_by_key(key_of);
     let mut runs = Vec::new();
@@ -383,7 +396,10 @@ mod tests {
         let in_many = checked(large, every, &dir, 1 << 20);
         assert!(in_many.parts >= 3, "{}", in_many.parts);
         assert_eq!(in_one.repeats, 3_000);
-        assert_eq!((in_one.repeats, in_one.chance, &in_one.same), (in_many.repeats, in_many.chance, &in_many.same));
+        assert_eq!(
+            (in_one.repeats, in_one.chance, &in_one.same),
+            (in_many.repeats, in_many.chance, &in_many.same)
+        );
         std::fs::remove_dir_all(&dir).unwrap();
     }
 
@@ -420,7 +436,8 @@ mod tests {
         // 2^40 is a lot of keys, so take a short key's worth of the same arithmetic on real deals: 40-bit keys of two
         // million deals share a key about 1.8 times.
         let dir = temp("chance");
-        let found = checked(Seeds::Range { from: 0, count: 2_000_000 }, Sieve { below: u64::MAX }, &dir, 1 << 30);
+        let found =
+            checked(Seeds::Range { from: 0, count: 2_000_000 }, Sieve { below: u64::MAX }, &dir, 1 << 30);
         assert_eq!(found.repeats, 0);
         let expected = chance_matches(2_000_000);
         assert!((1.8..1.83).contains(&expected), "{expected}");
@@ -437,13 +454,15 @@ mod tests {
         use rayon::iter::{IntoParallelIterator, ParallelIterator};
         use std::io::Write;
         use std::time::Instant;
-        let var = |name: &str, default: f64| std::env::var(name).map_or(default, |v| v.parse::<f64>().unwrap());
+        let var =
+            |name: &str, default: f64| std::env::var(name).map_or(default, |v| v.parse::<f64>().unwrap());
         let count = var("ACC_DEALS", 2e9) as usize;
         let from = var("ACC_FROM", 0.0) as u64;
         let fraction = var("ACC_FRACTION", 0.125);
         let every = var("ACC_EVERY", 0.0) as usize;
         let memory = (var("ACC_GB", 16.0) * (1u64 << 30) as f64) as u64;
-        let seeds = if every > 0 { Seeds::Repeating { from, count, every } } else { Seeds::Range { from, count } };
+        let seeds =
+            if every > 0 { Seeds::Repeating { from, count, every } } else { Seeds::Range { from, count } };
         let sieve = Sieve { below: (fraction.min(1.0) * 2f64.powi(64)) as u64 };
 
         // One thread's costs, for the run's hot path.
