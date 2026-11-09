@@ -253,8 +253,9 @@ have no win and exactly the plain run's count of positions (26,948,206 in all). 
 | **Split** | 17 | 22–45 | 27–45 | 29–45 |
 | **Endgame** | 6 | 1 | 2–3 | 1–15 |
 
-A split deal needs no search to explain, once its groups are listed. A pile only ever holds cards of one group, so at least one pile
-per group is always left, and two or more groups can't be won. An endgame deal has no such block: all 52 cards link up through
+A split deal has a short explanation, though the groups come from the search: knowing that two cards never meet takes every reachable
+position. A pile only ever holds cards of one group, so at least one pile per group is always left, and two or more groups can't be
+won. An endgame deal has no such block: all 52 cards link up through
 moves that some line can play, but no single line plays enough of them, and play gets down to 2 or 3 piles and stops there.
 
 **Why they're lost, two in detail.** Seed 202,346,720 is split and seed 112,249,515 an endgame loss. The Python search of

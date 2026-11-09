@@ -5,10 +5,10 @@
 #   python testdata/tools/classify_losses.py hard-deals/proofs research/runs/losses.csv [jobs]     (from the repository root)
 #
 # Each row records which cards ever interact, taken over every move of every reachable position. A move joins two cards,
-# the mover and the card it covers. Cards never joined form separate groups, and these prove the loss by themselves:
-# a pile only ever holds cards of one group, so at least one pile per group is always left. Two cards that are never
-# covered prove it as well, since a win covers every card but one, and so does a first card that is never covered,
-# since the first card never moves and the last card standing is one that moved.
+# the mover and the card it covers. Cards never joined form separate groups, which explain the loss but are no proof apart
+# from the search that found them: a pile only ever holds cards of one group, so at least one pile per group is always left.
+# Two cards that are never covered explain it as well, since a win covers every card but one, and so does a first card that
+# is never covered, since the first card never moves and the last card standing is one that moved.
 import csv
 import json
 import multiprocessing
