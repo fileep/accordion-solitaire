@@ -42,10 +42,7 @@ def table(edges, acc, sup):
                     for out, a, s in zip(edges, acc, sup))
 
 
-HEADER = "import Certificate
-open Accordion
-
-"
+HEADER = "import Certificate\nopen Accordion\n\n"
 
 
 def source(seed):
@@ -57,15 +54,13 @@ def source(seed):
              f"theorem lost_{seed} : DealLost (deal {seed}) :=",
              f"  dealLost_of_lost (Aut.lost_of_check (A := Aut.ofTree {len(edges)} t{seed}) (root := 0) (by decide +kernel) (by decide +kernel))", "",
              f"#print axioms lost_{seed}", "", ""]
-    return "
-".join(lines), (len(edges), sum(map(len, edges)), sum(map(len, sup)))
+    return "\n".join(lines), (len(edges), sum(map(len, edges)), sum(map(len, sup)))
 
 
 def main():
     text, size = source(int(sys.argv[2]))
     print("nodes, edges, claims:", size)
-    with open(sys.argv[1], "w", encoding="utf-8", newline="
-") as f:
+    with open(sys.argv[1], "w", encoding="utf-8", newline="\n") as f:
         f.write(HEADER + text)
 
 

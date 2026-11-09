@@ -29,8 +29,7 @@ def cpu_seconds(process):
 
 def prove(batch, texts, build, env, writer):
     file = build / "Current.lean"
-    file.write_text(HEADER + "".join(t for t, _ in texts), encoding="utf-8", newline="
-")
+    file.write_text(HEADER + "".join(t for t, _ in texts), encoding="utf-8", newline="\n")
     process = subprocess.Popen([LEAN, "-j", "1", str(file)], env=env, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, encoding="utf-8")
     stdout, stderr = process.communicate()
     axioms = re.findall(r"depends on axioms: \[(.*?)\]", stdout)
@@ -48,8 +47,7 @@ def main():
     seeds = sorted(int(p.name.split("-")[1]) for p in directory.glob("seed-*-loss.json"))
     env = dict(os.environ, LEAN_PATH=str(build))
     with out.open("a", newline="", encoding="utf-8") as f:
-        writer = csv.DictWriter(f, fieldnames=FIELDS, lineterminator="
-")
+        writer = csv.DictWriter(f, fieldnames=FIELDS, lineterminator="\n")
         if not done:
             writer.writeheader()
         batch, texts = [], []
