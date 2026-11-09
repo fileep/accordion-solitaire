@@ -13,7 +13,8 @@ try:
 except Exception:
     PRIO_OK = False
 
-PROOFS = r"C:/Users/Filip/Documents/Accordion Solitaire/hard-deals/proofs"
+from pathlib import Path
+PROOFS = str(Path(__file__).resolve().parents[3] / "hard-deals/proofs")
 RANKS = "A23456789TJQK"
 SUITS = "CDHS"
 

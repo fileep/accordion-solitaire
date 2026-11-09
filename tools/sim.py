@@ -13,7 +13,7 @@ Misses need many deals: at 20,000 deals one miss is 5 per 100k, and the table sh
 """
 import argparse, os, re, statistics, subprocess, sys, time
 
-S = os.environ.get("ACC_SCRATCH", "C:/Users/Filip/AppData/Local/Temp/claude/C--Users-Filip-Documents-Accordion-Solitaire/2d8fbaee-89f4-4073-a2f7-1bc93a04a06d/scratchpad")
+S = os.environ.get("ACC_SCRATCH", "scratch")
 HERE = os.path.dirname(os.path.abspath(__file__))
 SOURCE = S + "/ov/learn/sim/src/main.rs"
 MINE = HERE + "/mine.exe"

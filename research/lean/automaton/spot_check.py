@@ -1,7 +1,8 @@
 # Independent spot check of lean2.md, written without reading dawg.py.
 import json, random, sys, time
 
-PROOFS = "C:/Users/Filip/Documents/Accordion Solitaire/hard-deals/proofs/seed-%s-loss.json"
+from pathlib import Path
+PROOFS = str(Path(__file__).resolve().parents[3] / "hard-deals/proofs/seed-%s-loss.json")
 
 
 def enumerate_words(start, match):

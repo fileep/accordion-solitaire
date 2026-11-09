@@ -1,4 +1,5 @@
-p = r'C:/Users/Filip/Documents/Accordion Solitaire/crates/cli/src/runner.rs'
+from pathlib import Path
+p = str(Path(__file__).resolve().parents[3] / 'crates/cli/src/runner.rs')
 s = open(p, encoding='utf-8').read()
 
 

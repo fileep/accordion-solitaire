@@ -1,11 +1,11 @@
 near 12929752010 samples 20000 moves 56537 not-in-S 0 | delete-word: rejected 30 accepted 0 | drop-edge: rejected 20 accepted 0 deal-word-gone-or-unchanged 10 minp 2 secs 31.1
 Traceback (most recent call last):
-  File "C:\Users\Filip\AppData\Local\Temp\claude\C--Users-Filip-Documents-Accordion-Solitaire\2d8fbaee-89f4-4073-a2f7-1bc93a04a06d\scratchpad\ov\lean2\falsify.py", line 223, in <module>
+  File "<scratch>\ov\lean2\falsify.py", line 223, in <module>
     main()
-  File "C:\Users\Filip\AppData\Local\Temp\claude\C--Users-Filip-Documents-Accordion-Solitaire\2d8fbaee-89f4-4073-a2f7-1bc93a04a06d\scratchpad\ov\lean2\falsify.py", line 167, in main
+  File "<scratch>\ov\lean2\falsify.py", line 167, in main
     v = verify(dd, m, 1e9)
         ^^^^^^^^^^^^^^^^^^
-  File "C:\Users\Filip\AppData\Local\Temp\claude\C--Users-Filip-Documents-Accordion-Solitaire\2d8fbaee-89f4-4073-a2f7-1bc93a04a06d\scratchpad\ov\lean2\dawg.py", line 289, in verify
+  File "<scratch>\ov\lean2\dawg.py", line 289, in verify
     for i in range(0, len(t), 2):
                       ^^^^^^
 TypeError: object of type 'NoneType' has no len()

@@ -10,7 +10,8 @@ find 2+ closed parts on a position from which a win exists.
 import json, sys, time, glob, re
 from regions import M, load, card, crossings, enum_reach, PRIO_OK
 
-GALLERY = r"C:/Users/Filip/Documents/Accordion Solitaire/hard-deals/gallery"
+from pathlib import Path
+GALLERY = str(Path(__file__).resolve().parents[3] / "hard-deals/gallery")
 
 
 def split(s, cap, cache):

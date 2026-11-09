@@ -1,19 +1,24 @@
 # Proves every loss so far in Lean's kernel, in batches that share one Lean start-up, and writes a row per batch as it goes.
 # Seeds already in the output are skipped, so it can be stopped and run again. The seeds come from the names of the loss records.
 #
-#   python research/lean/automaton/prove_all.py hard-deals/proofs research/lean/automaton/lean_results.csv <build dir>     (from the repository root)
+#   python research/lean/automaton/prove_all.py hard-deals/proofs research/lean/automaton/lean_results.csv <build dir> [jobs]     (from the repository root)
 #
 # The build dir holds Accordion.olean and Certificate.olean, from `lean -R research/lean/automaton -o <dir>/X.olean research/lean/automaton/X.lean`.
 # Times are the user CPU time of Lean, start-up included: wall time means little at idle priority beside a running batch. A Lean
-# that passes MEMORY_CAP_GB is killed and its batch marked failed, so that it can't push a long run into paging.
+# that passes MEMORY_CAP_GB is killed and its batch marked failed, so that it can't push a long run into paging. Jobs is 1 by default:
+# give more only with nothing else running, as each Lean takes up to about 3 GB. A failed batch is tried again one seed at a time, and
+# a seed that has never passed is tried again on the next run. Each batch leaves its .olean in the build dir, for replay.py.
 import csv
 import ctypes
+import multiprocessing
 import os
 import re
 import subprocess
 import sys
 import tempfile
+import threading
 import time
+from concurrent.futures import ThreadPoolExecutor
 from ctypes import wintypes
 from pathlib import Path
 
@@ -49,11 +54,11 @@ def cpu_seconds(process):
     return user.value / 1e7
 
 
-def prove(batch, texts, build, env, writer):
-    file = build / "Current.lean"
+def prove(batch, texts, build, env, record):
+    file = build / f"B{batch[0]}.lean"
     file.write_text(HEADER + "".join(t for t, _ in texts), encoding="utf-8", newline=chr(10))
     with tempfile.TemporaryFile("w+", encoding="utf-8") as out:
-        process = subprocess.Popen([LEAN, "-j", "1", str(file)], env=env, stdout=out, stderr=subprocess.STDOUT)
+        process = subprocess.Popen([LEAN, "-j", "1", "-R", str(build), "-o", str(file.with_suffix(".olean")), str(file)], env=env, stdout=out, stderr=subprocess.STDOUT)
         killed = False
         while process.poll() is None:
             if memory_gb(process)[0] > MEMORY_CAP_GB:
@@ -67,33 +72,43 @@ def prove(batch, texts, build, env, writer):
     axioms = re.findall(r"depends on axioms: \[(.*?)\]", stdout)
     ok = not killed and process.returncode == 0 and "error" not in stdout and len(axioms) == len(batch) and all(set(a.split(", ")) <= {"propext", "Quot.sound"} for a in axioms)
     sizes = [size for _, size in texts]
-    writer.writerow({"seeds": " ".join(map(str, batch)), "nodes": sum(s[0] for s in sizes), "edges": sum(s[1] for s in sizes),
-                     "claims": sum(s[2] for s in sizes), "cpu_seconds": round(cpu_seconds(process), 1), "peak_gb": round(memory_gb(process)[1], 2), "ok": ok})
+    record({"seeds": " ".join(map(str, batch)), "nodes": sum(s[0] for s in sizes), "edges": sum(s[1] for s in sizes),
+            "claims": sum(s[2] for s in sizes), "cpu_seconds": round(cpu_seconds(process), 1), "peak_gb": round(memory_gb(process)[1], 2), "ok": ok})
     if not ok:
         print(batch, "failed" + (" at the memory cap" if killed else "") + ":", stdout[:400], flush=True)
+        if len(batch) > 1:
+            for seed, text in zip(batch, texts):
+                prove([seed], [text], build, env, record)
 
 
 def main():
     directory, out, build = Path(sys.argv[1]), Path(sys.argv[2]), Path(sys.argv[3])
-    done = {int(s) for r in csv.DictReader(out.open(encoding="utf-8")) for s in r["seeds"].split()} if out.exists() else set()
-    seeds = sorted(int(p.name.split("-")[1]) for p in directory.glob("seed-*-loss.json"))
+    jobs = int(sys.argv[4]) if len(sys.argv) > 4 else 1
+    rows = list(csv.DictReader(out.open(encoding="utf-8"))) if out.exists() else []
+    done = {int(s) for r in rows if r["ok"] == "True" for s in r["seeds"].split()}
+    todo = sorted(s for s in (int(p.name.split("-")[1]) for p in directory.glob("seed-*-loss.json")) if s not in done)
     env = dict(os.environ, LEAN_PATH=str(build))
+    lock = threading.Lock()
     with out.open("a", newline="", encoding="utf-8") as f:
         writer = csv.DictWriter(f, fieldnames=FIELDS, lineterminator=chr(10))
-        if not done:
+        if not rows:
             writer.writeheader()
-        batch, texts = [], []
-        for seed in seeds:
-            if seed in done:
-                continue
-            batch.append(seed)
-            texts.append(source(seed))
-            if len(batch) >= MAX_SEEDS or sum(size[0] for _, size in texts) >= MAX_NODES:
-                prove(batch, texts, build, env, writer)
+
+        def record(row):
+            with lock:
+                writer.writerow(row)
                 f.flush()
-                batch, texts = [], []
-        if batch:
-            prove(batch, texts, build, env, writer)
+
+        with multiprocessing.Pool(jobs) as sources, ThreadPoolExecutor(jobs) as lean:
+            batch, texts = [], []
+            for seed, made in zip(todo, sources.imap(source, todo)):
+                batch.append(seed)
+                texts.append(made)
+                if len(batch) >= MAX_SEEDS or sum(size[0] for _, size in texts) >= MAX_NODES:
+                    lean.submit(prove, batch, texts, build, env, record)
+                    batch, texts = [], []
+            if batch:
+                lean.submit(prove, batch, texts, build, env, record)
 
 
 if __name__ == "__main__":
