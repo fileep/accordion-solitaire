@@ -20,6 +20,7 @@ replaying selected deals.
 | `viz/` | Vite + TypeScript visualizer |
 | `research/probes/` | Python probes behind the numbers in RESEARCH.md |
 | `research/experiments/` | experiment configs and results |
+| `research/runs/` | speed logs and reports of the big runs, tests of the deal generator, and every proven loss explained |
 | `hard-deals/` | dossiers for every deal not yet won |
 | `testdata/` | golden deals and solutions shared by Rust and TypeScript tests |
 

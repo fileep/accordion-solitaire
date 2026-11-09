@@ -143,11 +143,12 @@ The engine takes leap distances as const generics, so the default {1,3} hot loop
   - Deal 2844920 took about 5 minutes, 451 attempts, and 226k positions.
   - Hard deals have few initially playable cards: 8–9, against about 26 on average by our estimate (a given card matches a given other card with probability 15/51).
 
-### 3.2 Blake & Gent, "The Winnability of Klondike Solitaire and Many Other Patience Games" (JAIR)
+### 3.2 Blake & Gent, "The Winnability of Klondike Solitaire and Many Other Patience Games" (JAIR 85, article 21, February 2026, doi:10.1613/jair.1.17167)
 
 - **Solvitaire** is a general solver. Accordion is a special-cased rule set: no foundations, moves L1/L3, build by same suit or same rank.
-- **Accordion result:** 99.99948 ± 0.00052% (95% CI). They report Masten's estimate (99.9999936 ± 0.0000064%) as the
-  state of the art; theirs is about 80× wider.
+- **Accordion result:** 1,000,000 deals, 999,996 won, 4 undecided and none proven lost, at a mean of 9.8 CPU-seconds a deal:
+  99.99948 ± 0.00052% (95% CI). As the best earlier result they list 99.9999936 ± 0.0000064%, which is the Wilson interval on
+  Masten's 30,000,000 wins out of 30,000,000 (Masten's page gives only the count); theirs is about 80× wider.
 - **Transferable techniques:**
   - DFS with *trailing* (make/unmake) rather than copying;
   - a transposition table keyed by the full compressed state, LRU-bounded, never evicting ancestors;
@@ -158,6 +159,9 @@ The engine takes leap distances as const generics, so the default {1,3} hot loop
 - **Statistics:** Wilson 95% CI; unknown (timed-out) deals are counted both as wins and as losses, and the reported interval spans both.
 
 ### 3.3 Keller, "How I learned to play (the) Accordion" (Solitaire Laboratory)
+
+The page (last edited June 2024) knows of no random deal shown impossible, and credits Jason Crupper with showing that
+impossible deals can be constructed, namely deals with no move at all.
 
 Strategy that can become heuristic features:
 

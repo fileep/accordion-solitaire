@@ -1,0 +1,70 @@
+endgame tables for up to 11 piles loaded (1225 MB, 0.6 s)
+GPU: NVIDIA T550 Laptop GPU (16 multiprocessors), kernel compiled in 1.5 s
+seeds 1000000000..1999999999 (1000000000 deals), up to 50000000 positions per deal, 15 CPU threads + GPU
+speed log: logs\batch-20261106-001633Z.csv
+
+seed 1005616798: not won; proving it lost, up to 10000000000 positions a run
+seed 1005616798: independent run: lost after 6702116 positions (3389020 dead, 512 MB) in 1.93 s
+seed 1005616798: plain run:       lost after 16141582 positions (3405471 dead, 512 MB) in 2.68 s
+seed 1005616798: proven lost
+  ░░░░░░░░░░░░░░░░░░░░░░░░   2.4%  23,534,493 done · 976,465,507 left · 383,216 deals/s (avg 392,211) · 42m 28s to go
+  █░░░░░░░░░░░░░░░░░░░░░░░   4.7%  46,505,840 done · 953,494,160 left · 381,952 deals/s (avg 387,525) · 41m 36s to go
+  █░░░░░░░░░░░░░░░░░░░░░░░   6.9%  69,228,481 done · 930,771,519 left · 380,087 deals/s (avg 384,563) · 40m 49s to go
+  ██░░░░░░░░░░░░░░░░░░░░░░   9.1%  91,308,965 done · 908,691,035 left · 353,031 deals/s (avg 380,376) · 42m 54s to go
+  ██░░░░░░░░░░░░░░░░░░░░░░  11.3%  112,747,561 done · 887,252,439 left · 344,008 deals/s (avg 375,710) · 42m 59s to go
+  ███░░░░░░░░░░░░░░░░░░░░░  13.5%  134,702,158 done · 865,297,842 left · 370,738 deals/s (avg 374,048) · 38m 54s to go
+  ███░░░░░░░░░░░░░░░░░░░░░  15.7%  156,730,131 done · 843,269,869 left · 370,923 deals/s (avg 373,046) · 37m 53s to go
+  ████░░░░░░░░░░░░░░░░░░░░  17.9%  178,664,321 done · 821,335,679 left · 371,346 deals/s (avg 372,100) · 36m 52s to go
+  ████░░░░░░░░░░░░░░░░░░░░  20.1%  200,560,170 done · 799,439,830 left · 369,346 deals/s (avg 371,294) · 36m 04s to go
+  █████░░░░░░░░░░░░░░░░░░░  22.3%  222,508,024 done · 777,491,976 left · 369,108 deals/s (avg 370,732) · 35m 06s to go
+  █████░░░░░░░░░░░░░░░░░░░  24.4%  244,333,558 done · 755,666,442 left · 369,046 deals/s (avg 370,083) · 34m 08s to go
+  ██████░░░░░░░░░░░░░░░░░░  26.6%  266,298,089 done · 733,701,911 left · 368,308 deals/s (avg 369,743) · 33m 12s to go
+  ██████░░░░░░░░░░░░░░░░░░  28.8%  288,269,724 done · 711,730,276 left · 369,572 deals/s (avg 369,467) · 32m 06s to go
+  ███████░░░░░░░░░░░░░░░░░  31.0%  310,222,556 done · 689,777,444 left · 369,716 deals/s (avg 369,204) · 31m 06s to go
+  ███████░░░░░░░░░░░░░░░░░  33.2%  332,200,702 done · 667,799,298 left · 370,298 deals/s (avg 368,998) · 30m 03s to go
+  ████████░░░░░░░░░░░░░░░░  35.4%  354,144,686 done · 645,855,314 left · 365,500 deals/s (avg 368,787) · 29m 27s to go
+  █████████░░░░░░░░░░░░░░░  37.6%  376,039,025 done · 623,960,975 left · 370,266 deals/s (avg 368,549) · 28m 05s to go
+  █████████░░░░░░░░░░░░░░░  39.8%  397,851,854 done · 602,148,146 left · 368,613 deals/s (avg 368,260) · 27m 14s to go
+  ██████████░░░░░░░░░░░░░░  42.0%  419,976,303 done · 580,023,697 left · 371,806 deals/s (avg 368,280) · 26m 00s to go
+  ██████████░░░░░░░░░░░░░░  44.2%  442,128,687 done · 557,871,313 left · 373,276 deals/s (avg 368,321) · 24m 55s to go
+  ███████████░░░░░░░░░░░░░  46.4%  464,048,400 done · 535,951,600 left · 376,793 deals/s (avg 368,175) · 23m 42s to go
+  ███████████░░░░░░░░░░░░░  48.6%  486,149,079 done · 513,850,921 left · 370,249 deals/s (avg 368,179) · 23m 08s to go
+  ████████████░░░░░░░░░░░░  50.8%  508,127,973 done · 491,872,027 left · 370,693 deals/s (avg 368,091) · 22m 07s to go
+  ████████████░░░░░░░░░░░░  53.0%  530,161,656 done · 469,838,344 left · 365,798 deals/s (avg 368,049) · 21m 24s to go
+  █████████████░░░░░░░░░░░  55.2%  552,140,277 done · 447,859,723 left · 369,993 deals/s (avg 367,970) · 20m 10s to go
+  █████████████░░░░░░░░░░░  57.4%  574,110,588 done · 425,889,412 left · 368,384 deals/s (avg 367,898) · 19m 16s to go
+  ██████████████░░░░░░░░░░  59.6%  596,134,681 done · 403,865,319 left · 370,314 deals/s (avg 367,865) · 18m 11s to go
+  ██████████████░░░░░░░░░░  61.8%  617,950,936 done · 382,049,064 left · 368,854 deals/s (avg 367,708) · 17m 16s to go
+  ███████████████░░░░░░░░░  64.0%  639,895,441 done · 360,104,559 left · 365,056 deals/s (avg 367,638) · 16m 26s to go
+  ███████████████░░░░░░░░░  66.2%  661,772,408 done · 338,227,592 left · 370,373 deals/s (avg 367,536) · 15m 13s to go
+  ████████████████░░░░░░░░  68.3%  683,460,100 done · 316,539,900 left · 367,385 deals/s (avg 367,337) · 14m 22s to go
+  ████████████████░░░░░░░░  70.5%  705,367,266 done · 294,632,734 left · 368,067 deals/s (avg 367,265) · 13m 20s to go
+  █████████████████░░░░░░░  72.7%  727,151,106 done · 272,848,894 left · 367,949 deals/s (avg 367,134) · 12m 22s to go
+  █████████████████░░░░░░░  74.9%  748,806,704 done · 251,193,296 left · 367,129 deals/s (avg 366,946) · 11m 24s to go
+  ██████████████████░░░░░░  77.1%  770,642,390 done · 229,357,610 left · 353,877 deals/s (avg 366,859) · 10m 48s to go
+  ███████████████████░░░░░  79.3%  792,577,219 done · 207,422,781 left · 367,511 deals/s (avg 366,819) · 9m 24s to go
+  ███████████████████░░░░░  81.4%  814,264,115 done · 185,735,885 left · 346,293 deals/s (avg 366,673) · 8m 56s to go
+  ████████████████████░░░░  83.6%  836,213,358 done · 163,786,642 left · 370,016 deals/s (avg 366,647) · 7m 23s to go
+  ████████████████████░░░░  85.8%  858,265,302 done · 141,734,698 left · 370,207 deals/s (avg 366,665) · 6m 23s to go
+  █████████████████████░░░  88.0%  880,016,044 done · 119,983,956 left · 367,374 deals/s (avg 366,559) · 5m 27s to go
+  █████████████████████░░░  90.2%  902,073,436 done · 97,926,564 left · 370,105 deals/s (avg 366,581) · 4m 25s to go
+  ██████████████████████░░  92.4%  924,170,511 done · 75,829,489 left · 369,994 deals/s (avg 366,620) · 3m 25s to go
+  ██████████████████████░░  94.6%  946,108,385 done · 53,891,615 left · 371,215 deals/s (avg 366,593) · 2m 25s to go
+  ███████████████████████░  96.8%  968,061,894 done · 31,938,106 left · 368,738 deals/s (avg 366,575) · 1m 27s to go
+  ███████████████████████░  99.0%  989,996,069 done · 10,003,931 left · 369,445 deals/s (avg 366,551) · 27s to go
+  ████████████████████████ 100.0%  1,000,000,000 done · 0 left · 366,826 deals/s (avg 366,515) · finished in 45m 28s
+
+finishing the proof of the deal not won
+deals            1000000000 (seeds 1000000000..1999999999)
+won              999999999 (every one verified by the reference engine); by stage: gpu 994056063, ladder-0 4264658, ladder-1 1148628, ladder-2 419421, ladder-3 88610, ladder-4 17263, ladder-5 3871, ladder-6 1057, thorough 428
+not won          1 by the solver (0 exhausted, 1 hit the limit of 50000000 positions)
+proofs           1 proven lost, 0 won, 0 undecided (two exhaustive runs of up to 10000000000 positions each)
+failed to verify 0
+distinct games   all 1000000000 deals differ, even with suits and ranks renamed
+win rate         100.000000%   95% CI [99.999999%, 100.000000%] (Wilson; undecided deals counted as losses for the lower bound, wins for the upper)
+positions/deal   mean 15165  median 4884  p90 39364  p99 131917  p99.9 313943  max 50000001 (5943937 deals solved on the CPU)
+ms/deal (1 core) mean 5.57  median 1.36  p90 14.60  p99 57.86  p99.9 143.44  max 4851.8 (5943937 deals solved on the CPU)
+GPU              NVIDIA T550 Laptop GPU: won 994056063 of the 996646794 deals it was given (99.74%), 0 lines failed verification; 132650.6M attempts, 3206M positions/s
+CPU threads      verifying GPU lines 11.8% (4.9 us a line), the GPU's misses 71.3%, own deals 9.8%, waiting for the GPU 0.0%, handing results on 2.2%, other 5.0%
+throughput       366514 deals/s, 33M CPU positions/s on 15 CPU threads + GPU (2728.4 s wall)
+exit 0

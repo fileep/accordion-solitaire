@@ -19,7 +19,8 @@ deals/s,** 8.4 times the first billion's speed on the same laptop. No two of its
 **Then 20 billion (seeds 2,000,000,000–21,999,999,999): 19,999,999,980 won and 20 proven lost, in 5 h 56 min 52 s at 934,074
 deals/s,** 2.5 times the second billion's speed on the same laptop. No two of its deals are the same game. Over all three,
 **21,999,999,977 of 22,000,000,000 deals won and the other 23 proven lost**: about 1 deal in 960 million can't be won (Wilson
-95%: 1 in 637 million to 1 in 1.44 billion; win rate [99.99999984%, 99.99999993%]).
+95%: 1 in 637 million to 1 in 1.44 billion; win rate [99.99999984%, 99.99999993%]). The exact (Garwood) 95% interval for 23 events
+is 1 in 637 million to 1 in 1.51 billion; Wilson is quoted throughout because the earlier work used it.
 
 ## Runs
 
@@ -152,14 +153,14 @@ The CPU won the deals it missed: rung 0 244,759, rung 1 562,320, rung 2 678,360,
 
 | | Deals | Won | Reported interval | Speed |
 |---|---|---|---|---|
-| Masten (1999 onwards, Solitaire Win Rates) | 30,000,000 | 30,000,000 | his estimate 99.9999936 ± 0.0000064% | about 12 deals/s with his newer program; his hardest 1999 deal took about 2 hours |
-| Blake & Gent, Solvitaire (JAIR) | — | — | 99.99948 ± 0.00052% (95%) | general-purpose solver |
+| Masten (1999 onwards, Solitaire Win Rates) | 30,000,000 | 30,000,000 | none published; Blake & Gent's Wilson 95% on this count is 99.9999936 ± 0.0000064% | about 12 deals/s with the newer program; the hardest 1999 deal took about 2 hours |
+| Blake & Gent, Solvitaire (JAIR 85, article 21, 2026) | 1,000,000 | 999,996; 4 undecided, none proven lost | 99.99948 ± 0.00052% (95%) | general-purpose solver: mean 9.8 CPU-seconds a deal, 110 CPU-days in all |
 | **This solver** | **22,000,000,000** | **21,999,999,977; the other 23 proven lost** | **Wilson 95% [99.99999984%, 99.99999993%]** | **934,000 deals/s sustained on a laptop with its GPU** |
 
-Masten's deals come from his own generator, so his 30M deals and these are different deals; the agreement is in the
-rate, not the deals. Both earlier intervals contain this one. Before the first billion no random Accordion deal had been
-shown unwinnable, as far as docs/RESEARCH.md found. At 23 in 22 billion that is no surprise: Masten's 30M deals would hold
-about 0.03 of one.
+Masten's deals come from another generator, so those 30M deals and these are different deals; the agreement is in the
+rate, not the deals. Both earlier intervals contain this one, and both still include 100%. Before the first billion no random
+Accordion deal had been shown unwinnable, as far as docs/RESEARCH.md found. At 23 in 22 billion that is no surprise: Masten's
+30M deals would hold about 0.03 of one.
 
 ## Hardest deals
 
@@ -243,7 +244,21 @@ Since the first billion, `acc batch` proves the deals it doesn't win itself, whi
 (both runs on seed 112,249,515 now take 16 s; docs/BENCHMARKS.md, "After Phase 8 — proving losses"). A future run's
 undecided deals are only those a proof of 10 billion positions a run can't settle.
 
-**Why they're lost.** The Python search also prints what it saw:
+**Two kinds of loss.** `testdata/tools/classify_losses.py` searches every reachable position of every loss again with the
+independent Python rules, and records which cards ever interact: a move joins the card that moves and the card it covers. All 23
+have no win and exactly the plain run's count of positions (26,948,206 in all). Row by row in `research/runs/losses.csv`:
+
+| Kind | Deals | Groups of cards that ever meet | Fewest piles reached | Cards that never move |
+|---|---|---|---|---|
+| **Split** | 17 | 22–45 | 27–45 | 29–45 |
+| **Endgame** | 6 | 1 | 2–3 | 1–15 |
+
+A split deal needs no search to explain, once its groups are listed. A pile only ever holds cards of one group, so at least one pile
+per group is always left, and two or more groups can't be won. An endgame deal has no such block: all 52 cards link up through
+moves that some line can play, but no single line plays enough of them, and play gets down to 2 or 3 piles and stops there.
+
+**Why they're lost, two in detail.** Seed 202,346,720 is split and seed 112,249,515 an endgame loss. The Python search of
+`check_loss.py` also prints what it saw:
 
 - **Seed 202,346,720 locks up at its left end.** It opens 3H 5S QH, and none of the three ever moves: 5S doesn't match
   3H, QH doesn't match 5S, and nothing ever lands on them. A card could land on them only from the 4th, 5th or 6th slot,
@@ -257,7 +272,11 @@ undecided deals are only those a proof of 10 billion positions a run can't settl
 
 ## How every win is checked
 
-- The solver searches with the fast engine, but nothing counts until the deliberately simple **reference engine** replays
+- **By run.** Up to the first billion, the reference engine replayed every line. The second billion and the 20 billion replayed
+  every line by the reference rules on the top cards alone (`replay_tops`, below), and sent 1 deal in 256 through the reference
+  engine as well. The runs keep no lines (1.1 TB for 22 billion deals at 51 bytes each), so to check a win independently, solve
+  that deal again and replay its line; a deal once won stays won, whatever path the search took.
+- The solver searches with the fast engine, but nothing counts until the deliberately simple **reference rules** replay
   the whole line. That covers legality of every move, the card set, and one pile after exactly 51 moves (PLAN.md §6.1).
 - The reference engine's rules agree with an independent Python implementation on every golden file. The fast engine
   agrees with the reference engine over 10M lockstep random playouts.
@@ -272,6 +291,29 @@ undecided deals are only those a proof of 10 billion positions a run can't settl
   - sleep sets;
   - endgame tables, whose winnable counts also match an independent Python enumeration.
 - Lossy caching can only miss wins, never invent one, and every win is replayed anyway.
+
+## Are the deals uniformly random?
+
+The win rate is a statement about uniformly random deals, and the runs take theirs from consecutive seeds. So
+`crates/core/examples/deal_stats.rs` compares the deals of a range of seeds with exact expectations, in 25 tests: which card lands in
+each position; the cards at six pairs of positions a slide or a leap apart; the first three cards together; fixed points, parity and
+inversions of the shuffle; opening slides and leaps; and how many positions hold the same card in the deals of seeds s and s + d, for
+twelve differences d. A set of tests fails if any p is under 0.002, 5% shared among the 25. The output is in
+`research/runs/generator-tests.txt`. As a control, the textbook wrong shuffle fails the first 13 tests outright on a million deals
+(every p under 0.000001).
+
+| Deals | Seeds | Smallest p of the 25 | |
+|---|---|---|---|
+| 22,000,000,000 | all of 0–21,999,999,999 | 0.017 | pass |
+| 10,082,474,226 | every 97th from 22,000,000,000, up to the trillion | 0.00011 (same cards as seed + 2^32) | **one test under the line** |
+| 2,000,000,000 | every 97th from 200,000,000,000, fresh seeds | 0.013 | pass; seed + 2^32 has p = 0.79 |
+
+Each set tested the seed differences on its first billion deals, the last on all two billion. The one failure was chance, as a real
+effect grows with the deals: at twice as many pairs its chi-square of 31.6 would have been about 55, and on fresh seeds it was 4.7. Earlier,
+a timing run of 200M deals showed a low p for seed + 8 (0.0013), which went back to 0.60 at a billion.
+
+These tests look at the deals, and at their low-order structure; the raw generator has not been through a general battery such as
+TestU01 or PractRand. A 64-bit seed can reach at most 2^64 of the 52! orders of the cards.
 
 ## The strategy
 
@@ -292,6 +334,16 @@ The defaults since Phase 5 (docs/BENCHMARKS.md has the measurements):
   play a move that leaves no move. A deal it misses goes to the CPU, which solves it from the start.
 
 ## Reproducing
+
+The commands below run the current code, which reaches the same counts faster. To repeat a run of record exactly, check out its
+build first; its speed log and report are in [research/runs/](../research/runs/README.md).
+
+| Run | Build |
+|---|---|
+| 100M | af14316 plus uncommitted changes (`af14316+dirty`) |
+| First billion | a761123; its speed log says `f91bd67+dirty`, as the run started before that commit was made |
+| Second billion | d167ccf |
+| 20 billion | 926e105 |
 
 ```bash
 cargo run --release -p accordion-cli -- endgame build --piles 11

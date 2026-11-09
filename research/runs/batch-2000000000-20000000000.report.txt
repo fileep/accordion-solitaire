@@ -1,0 +1,12 @@
+deals            20000000000 (seeds 2000000000..21999999999)
+won              19999999980 (every one verified by the reference rules); by stage: gpu 19997847246, ladder-0 244759, ladder-1 562320, ladder-2 678360, ladder-3 418683, ladder-4 168107, ladder-5 54944, ladder-6 17231, thorough 8330
+not won          20 by the solver (19 exhausted, 1 hit the limit of 50000000 positions)
+proofs           20 proven lost, 0 won, 0 undecided (two exhaustive runs of up to 10000000000 positions each)
+failed to verify 0
+distinct games   all 20000000000 deals differ, even with suits and ranks renamed
+win rate         100.000000%   95% CI [100.000000%, 100.000000%] (Wilson; undecided deals counted as losses for the lower bound, wins for the upper)
+positions/deal   mean 64686  median 39262  p90 138582  p99 418504  p99.9 970789  max 50000001 (2152754 deals solved on the CPU)
+ms/deal (1 core) mean 8.99  median 6.65  p90 19.12  p99 38.36  p99.9 80.62  max 3155.9 (2152754 deals solved on the CPU)
+GPU              NVIDIA T550 Laptop GPU: won 19997847246 of the 20000000000 deals it was given (99.99%), 0 lines failed verification; 553594.7M attempts, 2632M positions/s
+CPU threads      verifying GPU lines 16.3% (2.6 us a line), the GPU's misses 6.0%, own deals 0.0%, waiting for the GPU 77.2%, handing results on 0.4%, other 0.1%
+throughput       934074 deals/s, 7M CPU positions/s on 15 CPU threads + GPU (21411.6 s wall)
