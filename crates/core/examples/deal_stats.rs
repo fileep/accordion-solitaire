@@ -242,9 +242,9 @@ fn chi2_of(counts: &[u64], odds: &[f64], total: u64) -> f64 {
 }
 
 fn arg(args: &[String], name: &str, default: u64) -> u64 {
-    args.iter().position(|a| a == name).map_or(default, |i| {
-        args[i + 1].parse().unwrap_or_else(|_| panic!("{name} needs a number"))
-    })
+    args.iter()
+        .position(|a| a == name)
+        .map_or(default, |i| args[i + 1].parse().unwrap_or_else(|_| panic!("{name} needs a number")))
 }
 
 fn main() {
@@ -284,7 +284,9 @@ fn main() {
     });
 
     let shuffle = if naive { "the naive shuffle" } else { "Deal::from_seed" };
-    println!("{count} deals by {shuffle}: seeds from {from}, stride {stride}; seed differences on the first {delta_count}");
+    println!(
+        "{count} deals by {shuffle}: seeds from {from}, stride {stride}; seed differences on the first {delta_count}"
+    );
     let total = tally.deals as f64;
     let mut r = Report { tests: 0, smallest: 1.0 };
 
@@ -341,6 +343,9 @@ fn main() {
 
     let threshold = 0.05 / f64::from(r.tests);
     let verdict = if r.smallest < threshold { "FAIL" } else { "pass" };
-    println!("{} tests, smallest p = {:.6}, Bonferroni 5% line {threshold:.6}: {verdict}", r.tests, r.smallest);
+    println!(
+        "{} tests, smallest p = {:.6}, Bonferroni 5% line {threshold:.6}: {verdict}",
+        r.tests, r.smallest
+    );
     eprintln!("{:.1} s on {threads} threads", start.elapsed().as_secs_f64());
 }
