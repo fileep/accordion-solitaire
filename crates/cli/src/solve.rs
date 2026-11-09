@@ -148,6 +148,21 @@ impl SolveSource {
 }
 
 pub fn run(args: &SolveArgs) -> Result<bool, String> {
+    let (text, won) = solve_text(args)?;
+    match &args.out {
+        Some(path) => {
+            std::fs::write(path, text + "\n").map_err(|e| format!("writing {}: {e}", path.display()))?
+        }
+        None => {
+            let mut out = std::io::stdout().lock();
+            writeln!(out, "{text}").map_err(|e| e.to_string())?;
+        }
+    }
+    Ok(won)
+}
+
+/// Solves as [`run`] does, and gives back the solve file it writes, and whether the deal was won.
+pub fn solve_text(args: &SolveArgs) -> Result<(String, bool), String> {
     let Source { deal, seed, game: start_game } = args.source.load()?;
     let root = Position::from_tops(&start_game.tops());
     let threads = if args.threads == 0 {
@@ -256,14 +271,5 @@ pub fn run(args: &SolveArgs) -> Result<bool, String> {
             .expect("serializable")
         }
     };
-    match &args.out {
-        Some(path) => {
-            std::fs::write(path, text + "\n").map_err(|e| format!("writing {}: {e}", path.display()))?
-        }
-        None => {
-            let mut out = std::io::stdout().lock();
-            writeln!(out, "{text}").map_err(|e| e.to_string())?;
-        }
-    }
-    Ok(won)
+    Ok((text, won))
 }

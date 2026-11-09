@@ -536,35 +536,63 @@ fn reciprocal(n: usize) -> u64 {
     if n <= 1 { 0 } else { (u64::MAX / n as u64) + 1 }
 }
 
-/// Finds the NVIDIA driver and NVRTC without letting cudarc panic when one is missing, adding the copy of NVRTC
-/// in `.tools/` (PLAN.md Phase 0 notes) to PATH when NVRTC isn't on it.
-fn find_libraries() -> Result<(), String> {
+/// What [`diagnose`] found of what the GPU needs. Driver versions are CUDA's, 12090 for 12.9.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Libraries {
+    /// No NVIDIA driver: no NVIDIA card, or none installed for it.
+    NoDriver,
+    /// A driver older than the kernel needs.
+    OldDriver(i32),
+    /// A driver that will do, but no NVRTC, the compiler the kernel is built with when a run starts.
+    NoNvrtc(i32),
+    /// Both, as far as can be told without opening the GPU.
+    Found(i32),
+}
+
+impl Libraries {
+    /// A driver version as `12.9`.
+    pub fn cuda(version: i32) -> String {
+        format!("{}.{}", version / 1000, version % 1000 / 10)
+    }
+}
+
+/// Looks for the NVIDIA driver and NVRTC as opening the GPU does first, adding the copy of NVRTC in `.tools/` to PATH
+/// when NVRTC isn't on it. It opens no CUDA context and runs nothing on the GPU, so it is safe beside a run using it.
+pub fn diagnose() -> Result<Libraries, String> {
     // SAFETY: loads and unloads the NVIDIA driver library, which cudarc would load anyway.
     if !unsafe { cudarc::driver::sys::is_culib_present() } {
-        return Err("no NVIDIA driver found".into());
+        return Ok(Libraries::NoDriver);
     }
     let mut version = 0;
     // SAFETY: cuDriverGetVersion only writes the version; it needs no initialization.
     unsafe { cudarc::driver::sys::cuDriverGetVersion(&mut version) }.result().map_err(err)?;
     if version < MIN_DRIVER {
-        return Err(format!(
-            "the NVIDIA driver supports CUDA {}.{}; the kernel needs 12.9 or later",
-            version / 1000,
-            version % 1000 / 10
-        ));
+        return Ok(Libraries::OldDriver(version));
     }
     // SAFETY: as above, for NVRTC.
     let nvrtc = || unsafe { cudarc::nvrtc::sys::is_culib_present() };
     if !nvrtc() {
         add_bundled_nvrtc();
         if !nvrtc() {
-            return Err(
-                "NVRTC, the CUDA runtime compiler, not found: put its bin folder on PATH"
-                    .into(),
-            );
+            return Ok(Libraries::NoNvrtc(version));
         }
     }
-    Ok(())
+    Ok(Libraries::Found(version))
+}
+
+/// Finds the NVIDIA driver and NVRTC without letting cudarc panic when one is missing ([`diagnose`]).
+fn find_libraries() -> Result<(), String> {
+    match diagnose()? {
+        Libraries::NoDriver => Err("no NVIDIA driver found".into()),
+        Libraries::OldDriver(version) => Err(format!(
+            "the NVIDIA driver supports CUDA {}; the kernel needs 12.9 or later",
+            Libraries::cuda(version)
+        )),
+        Libraries::NoNvrtc(_) => {
+            Err("NVRTC, the CUDA runtime compiler, not found: put its bin folder on PATH".into())
+        }
+        Libraries::Found(_) => Ok(()),
+    }
 }
 
 /// `.tools/cuda-nvrtc-*/nvidia/cuda_nvrtc/bin` in the current directory or the executable's, or above them.

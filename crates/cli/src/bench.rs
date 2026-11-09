@@ -13,7 +13,14 @@ use clap::Args;
 use std::path::Path;
 use std::time::Instant;
 
+const EXAMPLES: &str = "\
+Examples:
+  acc bench                                the default workload, one thread
+  acc bench --sweep                        the dead-end gates' settings compared
+  acc bench --prove --budget 1m            the exhaustive prover instead";
+
 #[derive(Args)]
+#[command(after_help = EXAMPLES)]
 pub struct BenchArgs {
     /// Deals per prefix depth.
     #[arg(long, default_value_t = 300)]

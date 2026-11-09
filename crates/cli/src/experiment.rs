@@ -18,7 +18,14 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Instant;
 
+const EXAMPLES: &str = "\
+Examples:
+  acc experiment --set validation --config '{\"name\": \"default\"}' --dry
+  acc experiment --set 0:5000 --config a.json --config b.json --repeat 3
+                                           two settings files, compared three times over, interleaved";
+
 #[derive(Args)]
+#[command(after_help = EXAMPLES)]
 pub struct ExperimentArgs {
     /// Deal set: train (seeds 200,000–209,999), validation (300,000–309,999), test (1,000,000–1,099,999),
     /// regression (0–99,999), hard (<out>/sets/hard.txt), a range FROM:COUNT, or a file of seeds.

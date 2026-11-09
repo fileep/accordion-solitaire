@@ -457,7 +457,18 @@ impl RunLock {
             .truncate(false)
             .open(&path)
             .map_err(|e| format!("creating {}: {e}", path.display()))?;
-        match file.try_lock() {
+        // `acc status` and the like look at a lock by taking it for a moment, so it is tried again for a second.
+        let mut tried = 0;
+        let locked = loop {
+            match file.try_lock() {
+                Err(TryLockError::WouldBlock) if tried < 10 => {
+                    tried += 1;
+                    std::thread::sleep(Duration::from_millis(100));
+                }
+                other => break other,
+            }
+        };
+        match locked {
             Ok(()) => {}
             Err(TryLockError::WouldBlock) => return Err("this run is already going in another window".into()),
             // A file system that can't lock is no worse off than before there were locks.
@@ -1640,7 +1651,7 @@ fn warn_of_space(dir: &Path, needed: u64, what: &str) {
 
 /// The bytes free on `dir`'s disk, if it can tell.
 #[cfg(windows)]
-fn free_bytes(dir: &Path) -> Option<u64> {
+pub fn free_bytes(dir: &Path) -> Option<u64> {
     use std::os::windows::ffi::OsStrExt;
     #[link(name = "kernel32")]
     unsafe extern "system" {
@@ -1655,7 +1666,7 @@ fn free_bytes(dir: &Path) -> Option<u64> {
 }
 
 #[cfg(not(windows))]
-fn free_bytes(dir: &Path) -> Option<u64> {
+pub fn free_bytes(dir: &Path) -> Option<u64> {
     let output = std::process::Command::new("df").args(["-Pk", "--"]).arg(dir).output().ok()?;
     output.status.success().then(|| df_free_bytes(&String::from_utf8_lossy(&output.stdout))).flatten()
 }

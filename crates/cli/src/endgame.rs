@@ -8,7 +8,13 @@ use clap::{Args, Subcommand};
 use std::path::PathBuf;
 use std::time::Instant;
 
+const EXAMPLES: &str = "\
+Examples:
+  acc endgame build                        tables to 10 piles: 68 MB, about a minute
+  acc endgame build --piles 11             to 11 piles: 1.2 GB, about 7 minutes, and solving 1.2-1.3x faster";
+
 #[derive(Args)]
+#[command(after_help = EXAMPLES)]
 pub struct EndgameArgs {
     #[command(subcommand)]
     command: EndgameCommand,

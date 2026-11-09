@@ -191,7 +191,7 @@ fn speed(per_s: f64) -> String {
 }
 
 /// `n` with commas between thousands.
-fn thousands(n: u64) -> String {
+pub fn thousands(n: u64) -> String {
     let digits = n.to_string();
     let mut out = String::with_capacity(digits.len() + digits.len() / 3);
     for (i, c) in digits.chars().enumerate() {
@@ -222,7 +222,7 @@ fn short_count(n: u64) -> String {
 }
 
 /// Seconds as `175d 09h`, `2h 05m`, `6m 14s` or `42s`; in days past 48 hours.
-fn duration(secs: f64) -> String {
+pub fn duration(secs: f64) -> String {
     let s = secs.round() as u64;
     match s {
         0..60 => format!("{s}s"),

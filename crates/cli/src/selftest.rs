@@ -28,6 +28,10 @@ pub fn run(
     endgame_dir: &Path,
 ) -> Result<bool, String> {
     let threads = rayon::current_num_threads();
+    let phases = 2 + u32::from(residuals > 0) + u32::from(proofs > 0);
+    eprintln!(
+        "check 1 of {phases}: {playouts} random games, played by the fast engine and the reference one side by side"
+    );
     let start = Instant::now();
     let moves = (0..playouts)
         .into_par_iter()
@@ -49,6 +53,9 @@ pub fn run(
         start.elapsed().as_secs_f64()
     );
 
+    eprintln!(
+        "check 2 of {phases}: {positions} small positions; any dead end the fast solver finds must be confirmed by a plain search"
+    );
     let start = Instant::now();
     let counts = (0..positions)
         .into_par_iter()
@@ -83,9 +90,24 @@ pub fn run(
     let tables = Arc::new(if piles > 0 {
         Endgame::load(endgame_dir, piles)?
     } else {
+        eprintln!(
+            "no endgame tables in {}: building tables for up to 8 piles to check",
+            endgame_dir.display()
+        );
         Endgame::build(8, crate::runner::all_threads(), |_, _, _| {})
     });
-    Ok(pruning(residuals, &tables)? & proof_check(proofs, &tables)?)
+    if residuals > 0 {
+        eprintln!(
+            "check 3 of {phases}: {residuals} part-played deals, searched with and without what makes the search fast; the answers must agree"
+        );
+    }
+    let pruned = pruning(residuals, &tables)?;
+    if proofs > 0 {
+        eprintln!(
+            "check {phases} of {phases}: {proofs} positions proved by the exhaustive prover, three ways, and by a plain recursive search; all must agree"
+        );
+    }
+    Ok(pruned & proof_check(proofs, &tables)?)
 }
 
 /// Seeds for the pruning check's residuals.
