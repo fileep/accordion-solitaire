@@ -261,7 +261,7 @@ fn the_check_for_repeats_works_from_disk_and_can_be_skipped() {
     assert!(report(&succeeded(&output))["distinct games"].contains("not checked"));
 }
 
-/// Runs with these look at a sample of the deals: 200 KB of them, a third of 60,000 at 10 bytes each.
+/// Runs with these look at a sample of the deals: 200 KB of them, 0.3 of 60,000 at 11 bytes each.
 const SAMPLED: &[&str] = &["--games-memory", "0", "--games-disk", "0.0002"];
 
 #[test]
@@ -284,7 +284,7 @@ fn a_sample_comes_out_the_same_however_the_run_is_interrupted() {
     let saved: Value = serde_json::from_str(&std::fs::read_to_string(&checkpoint).unwrap()).unwrap();
     let counted = saved["games_bytes"].as_u64().unwrap();
     let written = std::fs::metadata(&log).unwrap().len();
-    assert!(counted.is_multiple_of(10) && written >= counted, "{counted} counted of {written}");
+    assert!(counted.is_multiple_of(11) && written >= counted, "{counted} counted of {written}");
 
     // Then pauses, until the end.
     let mut child = acc(&dir.0).args(["--resume", "cp.json"]).stdout(Stdio::piped()).stderr(Stdio::piped()).spawn().unwrap();

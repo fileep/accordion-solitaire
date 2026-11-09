@@ -15,7 +15,7 @@
 use crate::dossier;
 use crate::games::{self, Found, Sieve};
 use crate::pause;
-use crate::progress::Meter;
+use crate::progress::{Meter, Trouble};
 use crate::prove::{self, Finding, Limits};
 use crate::runner::{self, Finished, Options, Progress, Seeds, Standing, percentile, wilson};
 use accordion_core::Deal;
@@ -24,6 +24,7 @@ use accordion_gpu::Settings;
 use accordion_solver::{Config, Endgame, Search, Stage, Verdict, solve};
 use clap::Args;
 use serde::{Deserialize, Serialize};
+use std::cell::Cell;
 use std::cmp::Reverse;
 use std::collections::{BTreeMap, BTreeSet, BinaryHeap};
 use std::fs::{File, OpenOptions};
@@ -126,7 +127,7 @@ pub struct BatchArgs {
     /// the end. Past that, it checks a sample of them as it goes.
     #[arg(long, default_value_t = 16)]
     games_memory: u64,
-    /// Room the sample may take on disk, in GB, at 10 bytes a deal (in the checkpoint's directory, or the system's temporary
+    /// Room the sample may take on disk, in GB, at 11 bytes a deal (in the checkpoint's directory, or the system's temporary
     /// one without a checkpoint): by default 50, or half of what is free if that's less. Room for 5 bytes for every deal asks
     /// for the full check on disk instead, which takes two more passes over the deals at the end.
     #[arg(long)]
@@ -277,8 +278,10 @@ struct Tally {
     hardest: BinaryHeap<Reverse<(u64, u64)>>,
 }
 
-/// A checkpoint's format.
-const VERSION: u32 = 2;
+/// A checkpoint's format. 3: the games log's records are 11 bytes (a 5-byte key and a 6-byte position), not 10.
+const VERSION: u32 = 3;
+/// The format before, whose checkpoints are the same but for the games log of a sample, whose records were 10 bytes.
+const VERSION_WITH_SHORT_RECORDS: u32 = 2;
 /// The bytes of a deal in the file of costs: its positions, and its microseconds.
 const COST_BYTES: usize = 16;
 /// The exit code of a run that paused because the GPU failed: try again, as a new process may well get the GPU back.
@@ -290,7 +293,7 @@ const SAVES_FAILED_AT_MOST: u32 = 5;
 /// With no deal finished for this long, the GPU must have stuck where its watchdog didn't catch it.
 const STUCK_AFTER: Duration = Duration::from_secs(15 * 60);
 /// The most room the sample takes unless asked for more. It has only to back the assumption that the generator behaves like
-/// a random one: 5 billion records, enough to show a flaw that made more than a few hundred repeats in a trillion deals.
+/// a random one: 4.5 billion records, enough to show a flaw that made more than a few hundred repeats in a trillion deals.
 const GAMES_DISK_MOST: u64 = 50_000_000_000;
 /// The number of deals, and of games: deals with suits and ranks renamed, each game being 4!·13! different deals, since no
 /// renaming leaves a deal of 52 different cards as it was.
@@ -369,11 +372,20 @@ impl Stuck {
 impl Checkpoint {
     fn load(path: &Path) -> Result<Checkpoint, String> {
         let text = std::fs::read_to_string(path).map_err(|e| format!("reading {}: {e}", path.display()))?;
-        let checkpoint: Checkpoint =
+        let mut checkpoint: Checkpoint =
             serde_json::from_str(&text).map_err(|e| format!("reading {}: {e}", path.display()))?;
-        if checkpoint.version != VERSION {
+        let short_records = checkpoint.version == VERSION_WITH_SHORT_RECORDS;
+        if checkpoint.version != VERSION && !short_records {
             return Err(format!("{}: format {}, not {VERSION}", path.display(), checkpoint.version));
         }
+        // Its log would be read 11 bytes to a record, and every one after the first misread.
+        if short_records && matches!(checkpoint.games, GamesPlan::Sampled(_)) {
+            return Err(format!(
+                "{}: made by an older acc, whose log of a sample of the games has 10 bytes a deal; this one writes 11, so it can't carry on with that log: finish the run with the acc that started it",
+                path.display()
+            ));
+        }
+        checkpoint.version = VERSION;
         // Compared as the file system sees them: on Windows a path can be typed in any case.
         let here = std::env::current_dir().and_then(std::fs::canonicalize).map_err(|e| e.to_string())?;
         if std::fs::canonicalize(&checkpoint.dir).ok().as_ref() != Some(&here) {
@@ -409,6 +421,13 @@ impl Checkpoint {
             "sessions": self.sessions,
             "commit": self.commits.last(),
             "hardware": self.hardware,
+            // Failures so far, as the progress line shows them (as of the last checkpoint): `lost` is proven lost, and
+            // what is neither won nor proven lost stays visible as `proving` (proof in hand), `undecided` or `unverified`.
+            "lost": self.proofs.lost,
+            "proving": self.proofs_pending.len(),
+            "undecided": self.proofs.undecided,
+            "unverified": self.tally.failed + self.standing.gpu.failed,
+            "proof_failed": self.proofs.failed,
             "not_won_by_solver": self.tally.exhausted + self.tally.unknown,
             "failed_verification": self.tally.failed + self.standing.gpu.failed,
             "proofs": { "lost": self.proofs.lost, "won": self.proofs.won, "undecided": self.proofs.undecided,
@@ -632,6 +651,7 @@ pub fn run(given: &BatchArgs) -> Result<bool, String> {
         gpu_won: state.standing.gpu.won,
         gpu_positions: state.standing.gpu.positions,
         backlog: 0,
+        gpu_failed: state.standing.gpu.failed,
     };
     let mut meter = Meter::new(seeds.count(), first, (!args.no_log).then_some(args.log_dir.as_path()), &about)?;
     stay_awake();
@@ -764,6 +784,10 @@ pub fn run(given: &BatchArgs) -> Result<bool, String> {
         events.note(starting.take().as_deref().unwrap_or_default());
     }
     let on_the_gpu = gpu.is_some();
+    // For the progress line, which can't see `state` while the sink has it: what the sink has counted so far of deals the
+    // solver didn't win and lines that failed verification. Set only for the deals the CPU solved, never per GPU win.
+    let (not_won, unverified) =
+        (Cell::new(state.tally.exhausted + state.tally.unknown), Cell::new(state.tally.failed));
     let mut stuck = Stuck::new();
     if some_left {
         let opts = Options {
@@ -889,6 +913,8 @@ pub fn run(given: &BatchArgs) -> Result<bool, String> {
                         tx.send(s.seed).map_err(|_| "the prover thread stopped".to_string())?;
                     }
                 }
+                not_won.set(tally.exhausted + tally.unknown);
+                unverified.set(tally.failed);
                 if let Some(w) = out.as_mut()
                     && let Some(line) = s.verified.is_ok().then_some(s.record).flatten()
                 {
@@ -897,7 +923,19 @@ pub fn run(given: &BatchArgs) -> Result<bool, String> {
                 Ok(())
             },
             |p| {
-                meter.update(&p);
+                let trouble = {
+                    let proofs = proofs_state.lock().expect("no panics");
+                    Trouble {
+                        not_won: not_won.get(),
+                        lost: proofs.tally.lost,
+                        proving: proofs.pending.len() as u64,
+                        undecided: proofs.tally.undecided,
+                        unverified: unverified.get() + p.gpu_failed,
+                        proof_failed: proofs.tally.failed,
+                        proving_on: args.prove > 0,
+                    }
+                };
+                meter.update(&p, &trouble);
                 if args.until.is_some_and(|until| p.done as u64 >= until) {
                     pause::ask();
                 }

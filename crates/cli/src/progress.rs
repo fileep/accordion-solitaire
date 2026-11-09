@@ -1,6 +1,7 @@
-//! `acc batch`'s progress line and speed log. Once a second the line shows deals done and left, the rate and the
-//! time to go (on a terminal it updates in place; otherwise a line a minute), and the log gets a CSV row of how fast
-//! the run is going, to look back on later: thermal throttling, a stalled GPU, CPU workers falling behind it.
+//! `acc batch`'s progress line and speed log. Once a second the line shows deals done and left, the rate, the time to
+//! go and how many deals have failed so far (on a terminal it updates in place; otherwise a line a minute), and the log
+//! gets a CSV row of how fast the run is going, to look back on later: thermal throttling, a stalled GPU, CPU workers
+//! falling behind it.
 
 use crate::runner::Progress;
 use std::collections::VecDeque;
@@ -12,9 +13,52 @@ use std::time::{Instant, SystemTime, UNIX_EPOCH};
 /// The progress line's rate is over the last this many seconds.
 const WINDOW: usize = 10;
 /// Width of the progress bar.
-const BAR: usize = 24;
+const BAR: usize = 16;
 /// Without a terminal, a progress line this often (seconds).
 const PLAIN_EVERY: f64 = 60.0;
+
+/// What has gone wrong, or not been won, so far: the figures behind the progress line's "lost" and its flags. They count
+/// the deals handed on in seed order (the ones a checkpoint counts) and what the prover has finished of those, so a deal
+/// the solver didn't win shows as "proving" until its proof is done, as "lost" once it is proven lost, and never as won.
+#[derive(Clone, Copy, Default, Debug, PartialEq)]
+pub struct Trouble {
+    /// Deals the solver didn't win. Each goes to the prover, if there is one.
+    pub not_won: u64,
+    /// Proven lost: two exhaustive runs agreed.
+    pub lost: u64,
+    /// Sent to the prover, not yet decided.
+    pub proving: u64,
+    /// The proof hit its limit, so the deal is neither won nor proven lost.
+    pub undecided: u64,
+    /// Winning lines that failed verification (a bug), on the GPU or the CPU.
+    pub unverified: u64,
+    /// Proofs that failed (a bug).
+    pub proof_failed: u64,
+    /// Whether there is a prover (`--prove` above 0). Without, no deal can be proven lost.
+    pub proving_on: bool,
+}
+
+impl Trouble {
+    /// The line's part about them: `1,040 lost`, then whatever isn't zero of the rest.
+    pub fn text(&self) -> String {
+        let mut out = if self.proving_on {
+            format!("{} lost", thousands(self.lost))
+        } else {
+            format!("{} not won, no proofs", thousands(self.not_won))
+        };
+        for (n, what) in [
+            (self.proving, "proving"),
+            (self.undecided, "undecided"),
+            (self.unverified, "UNVERIFIED"),
+            (self.proof_failed, "PROOF FAILED"),
+        ] {
+            if n > 0 {
+                out += &format!(", {} {what}", thousands(n));
+            }
+        }
+        out
+    }
+}
 
 pub struct Meter {
     total: usize,
@@ -68,7 +112,7 @@ impl Meter {
     }
 
     /// Takes a sample: a log row, and the progress line when it is due.
-    pub fn update(&mut self, now: &Progress) {
+    pub fn update(&mut self, now: &Progress, trouble: &Trouble) {
         let t = self.start.elapsed().as_secs_f64();
         let &(t0, last) = self.recent.back().expect("never empty");
         let dt = (t - t0).max(1e-3);
@@ -95,16 +139,16 @@ impl Meter {
         }
         let finished = now.done == self.total;
         if self.terminal {
-            let line = self.line(t, now.done, finished);
+            let line = self.line(t, now.done, finished, trouble);
             eprint!("\r{line:<w$}", w = self.width);
             self.width = line.chars().count();
         } else if finished || t - self.printed >= PLAIN_EVERY {
             self.printed = t;
-            eprintln!("{}", self.line(t, now.done, finished));
+            eprintln!("{}", self.line(t, now.done, finished, trouble));
         }
     }
 
-    fn line(&self, t: f64, done: usize, finished: bool) -> String {
+    fn line(&self, t: f64, done: usize, finished: bool, trouble: &Trouble) -> String {
         let &(t0, first) = self.recent.front().expect("never empty");
         let rate = done.saturating_sub(first.done) as f64 / (t - t0).max(1e-3);
         let filled = (BAR * done / self.total.max(1)).min(BAR);
@@ -117,16 +161,22 @@ impl Meter {
             "time to go unknown".into()
         };
         format!(
-            "  {}{} {:5.1}%  {} done · {} left · {} deals/s (avg {}) · {to_go}",
+            "  {}{} {:5.1}%  {} done · {} left · {} deals/s (avg {}) · {to_go} · {}",
             "█".repeat(filled),
             "░".repeat(BAR - filled),
             100.0 * done as f64 / self.total.max(1) as f64,
             thousands(done as u64),
             thousands(left as u64),
-            thousands(rate.round() as u64),
-            thousands((done.saturating_sub(self.first.done) as f64 / t.max(1e-3)).round() as u64),
+            speed(rate),
+            speed(done.saturating_sub(self.first.done) as f64 / t.max(1e-3)),
+            trouble.text(),
         )
     }
+}
+
+/// Deals a second as `5.90M` from a million up, else with commas.
+fn speed(per_s: f64) -> String {
+    if per_s >= 1e6 { format!("{:.2}M", per_s / 1e6) } else { thousands(per_s.round() as u64) }
 }
 
 /// `n` with commas between thousands.
@@ -176,11 +226,31 @@ mod tests {
         assert_eq!(thousands(999), "999");
         assert_eq!(thousands(1_000), "1,000");
         assert_eq!(thousands(12_345_678), "12,345,678");
+        assert_eq!(speed(5_904_000.0), "5.90M");
+        assert_eq!(speed(850_400.0), "850,400");
         assert_eq!(duration(42.4), "42s");
         assert_eq!(duration(374.0), "6m 14s");
         assert_eq!(duration(7_500.0), "2h 05m");
         assert_eq!(utc_stamp(0), "19700101-000000");
         assert_eq!(utc_stamp(1_700_000_000), "20231114-221320");
         assert_eq!(utc_stamp(1_709_164_800), "20240229-000000");
+    }
+
+    #[test]
+    fn the_failures_show_and_are_never_hidden() {
+        let none = Trouble { proving_on: true, ..Trouble::default() };
+        assert_eq!(none.text(), "0 lost");
+        let some = Trouble {
+            not_won: 1_044,
+            lost: 1_040,
+            proving: 1,
+            undecided: 2,
+            unverified: 3,
+            proof_failed: 4,
+            proving_on: true,
+        };
+        assert_eq!(some.text(), "1,040 lost, 1 proving, 2 undecided, 3 UNVERIFIED, 4 PROOF FAILED");
+        // With no prover nothing is proven lost, and the deals not won say so.
+        assert_eq!(Trouble { not_won: 7, ..Trouble::default() }.text(), "7 not won, no proofs");
     }
 }

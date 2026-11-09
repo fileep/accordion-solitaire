@@ -110,11 +110,20 @@ done, and either goes with `--resume` (or `-StopAfterHours` and `-Until` on the 
 `.status.json` says where the run stands, updated every minute, and `.events.log` says what has happened to it (sessions,
 pauses, GPU failures, proofs), which outlasts the terminal's history. Neither takes the place of the report.
 
+The progress line shows how many deals are done and how many have failed so far, such as `1,040 lost`: deals proven lost.
+It counts the deals handed on in seed order, with the proofs the prover has finished. A deal the solver didn't win is
+never shown as won: it is `proving` until its proof is done, then `lost`, or `undecided` if the proof hit its limit; lines
+that failed verification show as `UNVERIFIED` and failed proofs as `PROOF FAILED` (each only when not zero). With
+`--prove 0` nothing can be proven lost and the line says `N not won, no proofs`. `.status.json` has the same figures
+(`lost`, `proving`, `undecided`, `unverified`, `proof_failed`), as of its last update.
+
 The report gives the odds that any two of the deals are the same game, by the birthday bound and on the condition that the
 generator behaves like a random one: about 1 in 10³³ at a trillion deals. The check backs that condition. Up to `--games-memory`
 (16 GB, 2 billion deals) it looks at every deal, at the end, and only then does the report say that all the deals differ. Past
-that it looks at a sample, picked by a hash of the game as the deals are solved, 10 bytes each in up to `--games-disk` (by default
-50 GB, or half of what is free if that's less), and the report says how many repeats it would have seen. Room for 5 bytes a deal
+that it looks at a sample, picked by a hash of the game as the deals are solved, 11 bytes each (a 5-byte key and a 6-byte
+position, so a run can have up to 2^48 deals) in up to `--games-disk` (by default 50 GB, or half of what is free if that's
+less), and the report says how many repeats it would have seen. A checkpoint with a sample log made by an older acc (10 bytes
+a deal) is refused on `--resume` with a message saying so. Room for 5 bytes a deal
 in `--games-disk` asks for the full check on disk instead, two more passes over the deals at the end. `--no-games-check` skips
 the check. See "pausing, and tens of billions of deals" and "a trillion deals" in [docs/BENCHMARKS.md](docs/BENCHMARKS.md).
 

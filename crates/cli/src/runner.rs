@@ -195,6 +195,8 @@ pub struct Progress {
     pub gpu_positions: u64,
     /// GPU results waiting for a CPU worker to verify them, or to solve the deals the GPU didn't win.
     pub backlog: usize,
+    /// GPU lines that failed verification so far (a bug), counted as results come in.
+    pub gpu_failed: u64,
 }
 
 /// How often [`run`] reports progress.
@@ -368,6 +370,7 @@ pub fn run(
     let feeding = AtomicBool::new(opts.gpu.is_some());
     let gpu_won = AtomicU64::new(so_far.gpu.won);
     let gpu_positions = AtomicU64::new(so_far.gpu.positions);
+    let gpu_failed = AtomicU64::new(so_far.gpu.failed);
     let launches = AtomicU64::new(so_far.gpu.launches);
     let cpu_time = Mutex::new(so_far.gpu.cpu);
     let started = Instant::now();
@@ -535,6 +538,7 @@ pub fn run(
                 .iter()
                 .map(|b| b.indices.len().saturating_sub(b.next.load(Ordering::Relaxed)))
                 .sum(),
+            gpu_failed: gpu_failed.load(Ordering::Relaxed),
         };
         let with_times = |standing: &Standing| {
             let mut whole = standing.clone();
@@ -556,6 +560,9 @@ pub fn run(
                     {
                         standing.done += stretch.count;
                         standing.gpu.add(&stretch.gpu);
+                        if stretch.gpu.failed > 0 {
+                            gpu_failed.fetch_add(stretch.gpu.failed, Ordering::Relaxed);
+                        }
                         let sampled = (!stretch.sampled.is_empty()).then_some(Finished::Sampled(stretch.sampled));
                         let wins = (stretch.wins > 0).then_some(Finished::GpuWins(stretch.wins));
                         result = sampled

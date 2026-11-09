@@ -1,7 +1,7 @@
 //! The check that a run's deals are different games, past what memory holds. By the birthday bound a repeat is out of the
 //! question if the generator behaves like a random one (about 1e-33 at a trillion deals), so this has only to back that
 //! assumption; looking at every deal would take 5 bytes a deal and two passes over the deals at the end, 5 TB and a day at a
-//! trillion deals. So a run this long goes by a sample. A hash of the game (which renaming suits and ranks doesn't change)
+//! trillion deals. So a run this long goes by a sample, 11 bytes to a deal in it. A hash of the game (which renaming suits and ranks doesn't change)
 //! picks a fraction of the deals as they are solved, when their cards are at hand anyway, and each one picked goes in a log.
 //! Both deals of any repeat are picked together, so the sample sees a given repeat with the chance the fraction says, where a
 //! sample of seeds would see it with that chance squared.
@@ -21,8 +21,9 @@ use std::sync::Mutex;
 
 /// Bytes of a fingerprint in the log, which are enough that the matches by chance take little time to compare.
 const KEY_BYTES: usize = 5;
-/// Bytes of a deal's position in the run.
-const INDEX_BYTES: usize = 5;
+/// Bytes of a deal's position in the run: 6, so that a run can have up to 2^48 deals (5 allowed 2^40, 1.1 trillion). A log
+/// made with 5 (records of 10 bytes) is not this format: a checkpoint of one is refused (`batch.rs`).
+const INDEX_BYTES: usize = 6;
 /// A deal's bytes in the log.
 pub const RECORD: usize = KEY_BYTES + INDEX_BYTES;
 /// The most deals a run's log can number.
@@ -262,7 +263,7 @@ mod tests {
             sieve.note(&deal, seed as usize, &mut a);
             sieve.note_codes(&accordion_gpu::deal_codes(&deal), seed as usize, &mut b, || deal.clone());
         }
-        assert!(a.len() > 10 * 4000 / 2, "a quarter of the deals are in the sample");
+        assert!(a.len() > RECORD * 4000 / 2, "a quarter of the deals are in the sample");
         assert_eq!(a, b);
     }
 
@@ -289,6 +290,30 @@ mod tests {
         let found = Mutex::new(Found::default());
         check(&path, records.len() as u64, seeds, memory, &found).unwrap();
         found.into_inner().unwrap()
+    }
+
+    /// A position past 2^40 is kept whole (it took 6 bytes), and the check finds a repeat across such positions.
+    #[test]
+    fn records_are_11_bytes_and_hold_positions_past_2_40() {
+        assert_eq!((RECORD, MAX_DEALS), (11, 1 << 48));
+        let every = Sieve { below: u64::MAX };
+        // The deal at (1 << 41) - 1 is the deal before it, as every `every`th is in a repeating range.
+        let seeds = Seeds::Repeating { from: 5, count: 3 << 40, every: 1 << 41 };
+        let mut records = Vec::new();
+        for index in [(1usize << 41) - 2, (1 << 41) - 1, (1 << 40) + 3] {
+            let before = records.len();
+            every.note(&Deal::from_seed(seeds.seed(index)), index, &mut records);
+            assert_eq!(records.len() - before, RECORD);
+            assert_eq!(index_of(records[before..].try_into().unwrap()), index);
+        }
+        let dir = temp("past-2-40");
+        let log = dir.join("log");
+        std::fs::write(&log, &records).unwrap();
+        let found = Mutex::new(Found::default());
+        check(&log, records.len() as u64, seeds, 1 << 30, &found).unwrap();
+        let found = found.into_inner().unwrap();
+        assert_eq!((found.repeats, found.same.len()), (1, 1), "{:?}", found.same);
+        std::fs::remove_dir_all(&dir).unwrap();
     }
 
     #[test]

@@ -1882,8 +1882,9 @@ for it. Nothing here depends on the GPU's speed; only the time does.
 - **Fine as it is:** 64-bit fingerprints (27,105 collisions at a trillion, compared card by card); the file of costs (1.72 GB); the
   checkpoint (3.9 KB, doesn't grow); about 1,040 proofs, each under a minute; dossiers and loss records (5 MB); the speed log (75 MB);
   counters, which are `u64`; seeds past 2^32, 2^37 and 2^40; the win rate to 10 decimals (matches exact arithmetic at a trillion);
-  memory and handles over 3,039 launches (flat). The games log's index is 40 bits, so a run over 1.0995 trillion is refused unless
-  it passes `--no-games-check`.
+  memory and handles over 3,039 launches (flat). The games log's index was 40 bits (10-byte records), so a run over 1.0995 trillion was refused unless
+  it passed `--no-games-check`; it is 48 bits now (11-byte records, run of 2 trillion started on this), so up to 2.8e14 deals.
+  A version-2 checkpoint with a sample log (10-byte records) is refused on resume, one without a sample log resumes.
 - **Pausing:** `--stop-after <hours>` and `--until <deals>` pause the run, and `--resume` goes on. A GPU that fails to open on resuming
   or answers nothing for 15 minutes exits 75; a disk under `--keep-free` (5 GB) or 5 failed saves in a row, 74; the log being
   unwritable, 74 at once. `tools/long-run.ps1` carries on after 75 and stops with a message if `acc` won't start (Smart App
@@ -1893,12 +1894,12 @@ for it. Nothing here depends on the GPU's speed; only the time does.
 **The repeat check, past 2 billion deals.** The user's decision was that no proof is needed if the odds of a repeat are under 1 in
 1,000. By the birthday bound at 1.022 trillion they are about 9.7e-34 for the same game with suits and ranks renamed, and 6.5e-45
 for the same deal, if the generator behaves like a random one; so the check only backs that assumption. A hash of the game's first
-16 cards, unchanged by renaming, picks the deals: each costs 10 bytes (a 5-byte key and a 5-byte position) in an append-only log in
+16 cards, unchanged by renaming, picks the deals: each costs 11 bytes (a 5-byte key and a 6-byte position; 10 and 5 up to the 1-trillion build) in an append-only log in
 seed order, so a checkpoint can say how much of it counts and a resume can cut it back. At the end it is read a part at a time
 within `--games-memory` and deals sharing a key are compared card by card. The default room is 50 GB (or half of what is free): 0.5%
 of the deals at a trillion. It would still show a flaw that makes more than 598 repeated pairs, and the count of chance matches of 40
 bits tests the generator to about 0.03%. `--games-disk` with room for 5 bytes a deal asks for the full check, two more passes at the
-end; room for 10 bytes a deal logs every deal and counts as exact. The report says "all deals differ" only if every deal was
+end; room for 11 bytes a deal logs every deal and counts as exact. At 2 trillion deals the 50 GB default is 0.23% of the deals (4.5 billion records). The report says "all deals differ" only if every deal was
 looked at; for a sample it says "not all checked", how many repeated pairs it would have seen with 95% chance, and the chance matches
 against the formula.
 
