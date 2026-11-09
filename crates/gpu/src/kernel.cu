@@ -1,3 +1,154 @@
+// The switches below (VP_*, VS_*, VK_*, VW_*, VY_*, SA_*, A2_*) select code paths measured while this kernel was
+// built; each default is the configuration that ships. VP_*/VK_*/VW_* drop six policy terms (ML2, AL3, NT, NE5, the St1 keep
+// level, win_try's front keep); A2_* (ALU2) factor the own move's sums; SA_* are the search turn's cheaper edit, masks and test; docs/BENCHMARKS.md has the numbers.
+#define VP_ML2 1
+#define VP_AL3 1
+#define VP_NT 1
+#define VP_NE5 1
+#define VK_L1 1
+#define VW_F 1
+#ifndef VS_DMODE
+#define VS_DMODE 0
+#endif
+#ifndef VS_D
+#define VS_D 0
+#endif
+#define VS_NOTEST(d) (VS_DMODE == 1 ? (d) < VS_D : VS_DMODE == 2 ? (d) >= VS_D : false)
+#ifndef VS_T
+#define VS_T 3
+#endif
+#ifndef VS_A
+#define VS_A 0
+#endif
+#ifndef VS_Z
+#define VS_Z 0
+#endif
+#ifndef VP_MS1
+#define VP_MS1 0
+#endif
+#ifndef VP_MS2
+#define VP_MS2 0
+#endif
+#ifndef VP_MS3
+#define VP_MS3 0
+#endif
+#ifndef VP_ML1
+#define VP_ML1 0
+#endif
+#ifndef VP_ML2
+#define VP_ML2 0
+#endif
+#ifndef VP_ML3
+#define VP_ML3 0
+#endif
+#ifndef VP_ML4
+#define VP_ML4 0
+#endif
+#ifndef VP_ML5
+#define VP_ML5 0
+#endif
+#ifndef VP_AS1
+#define VP_AS1 0
+#endif
+#ifndef VP_AS2
+#define VP_AS2 0
+#endif
+#ifndef VP_AS3
+#define VP_AS3 0
+#endif
+#ifndef VP_AS4
+#define VP_AS4 0
+#endif
+#ifndef VP_AS5
+#define VP_AS5 0
+#endif
+#ifndef VP_AS6
+#define VP_AS6 0
+#endif
+#ifndef VP_AL1
+#define VP_AL1 0
+#endif
+#ifndef VP_AL2
+#define VP_AL2 0
+#endif
+#ifndef VP_AL3
+#define VP_AL3 0
+#endif
+#ifndef VP_AL4
+#define VP_AL4 0
+#endif
+#ifndef VP_AL5
+#define VP_AL5 0
+#endif
+#ifndef VP_AL6
+#define VP_AL6 0
+#endif
+#ifndef VP_AL7
+#define VP_AL7 0
+#endif
+#ifndef VP_AL8
+#define VP_AL8 0
+#endif
+#ifndef VP_AL9
+#define VP_AL9 0
+#endif
+#ifndef VP_NT
+#define VP_NT 0
+#endif
+#ifndef VP_NE5
+#define VP_NE5 0
+#endif
+#ifndef VP_E4
+#define VP_E4 0
+#endif
+#ifndef VP_E3
+#define VP_E3 0
+#endif
+#ifndef VP_LY
+#define VP_LY 0
+#endif
+#ifndef VP_NY
+#define VP_NY 0
+#endif
+#ifndef VW_T1
+#define VW_T1 0
+#endif
+#ifndef VW_W
+#define VW_W 0
+#endif
+#ifndef VW_T3
+#define VW_T3 0
+#endif
+#ifndef VW_F
+#define VW_F 0
+#endif
+#ifndef VK_L1
+#define VK_L1 0
+#endif
+#ifndef VK_L2
+#define VK_L2 0
+#endif
+#ifndef VK_L3
+#define VK_L3 0
+#endif
+#ifndef VK_ROT
+#define VK_ROT 0
+#endif
+#ifndef VK_R11
+#define VK_R11 0
+#endif
+#ifndef VY_F0
+#define VY_F0 0
+#endif
+#ifndef VY_F1
+#define VY_F1 0
+#endif
+#ifndef VY_F3
+#define VY_F3 0
+#endif
+#ifndef VY_O1
+#define VY_O1 0
+#endif
 // Ladder attempts on the GPU (PLAN.md Phase 5 track F, Phase 8): one attempt per thread. An attempt plays `prefix`
 // random moves on its position, then a first-win depth-first search of what is left (at most 16 piles) with sleep
 // sets and the connectivity dead-end test, up to `budget` positions. The rules are the Rust fast engine's
@@ -527,6 +678,63 @@ __device__ __forceinline__ void insert_card(u64& lo, u64& hi, int i, u32 c) {
         hi = (hi & keep) | ((hi << 8) & ~keep & ~(0xFFull << (8 * j))) | ((u64)c << (8 * j));
     }
 }
+
+#ifndef A2_K
+#define A2_K 1
+#endif
+#ifndef A2_D
+#define A2_D 1
+#endif
+#ifndef A2_A
+#define A2_A 1
+#endif
+#ifndef A2_P
+#define A2_P 1
+#endif
+#ifndef A2_L
+#define A2_L 1
+#endif
+#ifndef A2_N
+#define A2_N 1
+#endif
+#ifndef A2_W
+#define A2_W 1
+#endif
+#ifndef A2_T
+#define A2_T 0
+#endif
+#ifndef SA_E
+#define SA_E 1
+#endif
+#ifndef SA_Z
+#define SA_Z 1
+#endif
+#ifndef SA_P
+#define SA_P 1
+#endif
+#ifndef SA_L
+#define SA_L 1
+#endif
+#ifndef SA_T
+#define SA_T 1
+#endif
+#ifndef SA_A
+#define SA_A 1
+#endif
+#ifndef SA_M
+#define SA_M 1
+#endif
+// bitwise a ? b : c as one LOP3
+__device__ __forceinline__ u32 sa_mux(u32 a, u32 b, u32 c) { u32 r; asm("lop3.b32 %0, %1, %2, %3, 0xCA;" : "=r"(r) : "r"(a), "r"(b), "r"(c)); return r; }
+// ~(a | b | 1) and ~(a | b | 7), and (m & 0xFFFF) | (h & 0xFFFF0000) of its low parts: the tail of the move masks
+__device__ __forceinline__ u32 sa_nor1(u32 a, u32 b) { u32 r; asm("lop3.b32 %0, %1, %2, 1, 0x01;" : "=r"(r) : "r"(a), "r"(b)); return r; }
+__device__ __forceinline__ u32 sa_nor7(u32 a, u32 b) { u32 r; asm("lop3.b32 %0, %1, %2, 7, 0x01;" : "=r"(r) : "r"(a), "r"(b)); return r; }
+__device__ __forceinline__ u32 sa_u(u32 m, u32 h) { u32 r, s = h << 16; asm("lop3.b32 %0, %1, 65535, %2, 0xE2;" : "=r"(r) : "r"(m), "r"(s)); return r; }
+__device__ __forceinline__ u32 sa_andn(u32 a, u32 b) { u32 r; asm("lop3.b32 %0, %1, %2, 0, 0x30;" : "=r"(r) : "r"(a), "r"(b)); return r; }
+__device__ __forceinline__ u32 sa_or1(u32 a) { u32 r; asm("lop3.b32 %0, %1, 1, 0, 0xFC;" : "=r"(r) : "r"(a)); return r; }
+// a & (b | c) and a & (b | ~c)
+__device__ __forceinline__ u32 sa_andor(u32 a, u32 b, u32 c) { u32 r; asm("lop3.b32 %0, %1, %2, %3, 0xE0;" : "=r"(r) : "r"(a), "r"(b), "r"(c)); return r; }
+__device__ __forceinline__ u32 sa_andorn(u32 a, u32 b, u32 c) { u32 r; asm("lop3.b32 %0, %1, %2, %3, 0xD0;" : "=r"(r) : "r"(a), "r"(b), "r"(c)); return r; }
 // ---- The search's row in bit planes: three words, each holding two 16-bit planes of the 6-bit codes of up to 16 cards
 // (R[0]: rank bits 0 and 1, R[1]: rank bits 2 and 3, R[2]: the suit's two bits), so that one shift and xor compares the
 // whole row with itself, and moving a card is a mask and a shift on each word.
@@ -548,8 +756,18 @@ __device__ __forceinline__ u32 bp_match(const u32 (&R)[3], int d) {
     u32 r = (R[0] ^ (R[0] << d)) | (R[1] ^ (R[1] << d)), s = R[2] ^ (R[2] << d);
     return ~((r | r >> 16) & (s | s >> 16));
 }
+#if SA_M
+__device__ __forceinline__ u32 bp_mis(const u32 (&R)[3], int d) {
+    u32 r = (R[0] ^ (R[0] << d)) | (R[1] ^ (R[1] << d)), s = R[2] ^ (R[2] << d);
+    return (r | r >> 16) & (s | s >> 16);
+}
+#endif
 __device__ __forceinline__ void bp_masks(const u32 (&R)[3], int len, u32& s, u32& l) {
+    #if SA_L
+    u32 valid = ~(u32)len;                                  // len holds the row-end mask E = -1 << len
+    #else
     u32 valid = (1u << len) - 1;
+    #endif
     s = bp_match(R, 1) & valid & ~1u;
     l = bp_match(R, 3) & valid & ~7u;
 }
@@ -557,6 +775,24 @@ __device__ __forceinline__ void bp_masks(const u32 (&R)[3], int len, u32& s, u32
 // ---- One edit for playing a move and taking it back, so that the threads doing either run the same instructions.
 __device__ __forceinline__ u32 rotr(u32 x, u32 n) { return __funnelshift_r(x, x, n); }
 // Pile x = y + dd onto pile y (`fwd`), or back with `cov`, the covered card, returning to y. Bits at and above the row's end are junk.
+#if SA_E
+// As bp_edit below, the same bits: each word is three bitwise muxes (the shifted part over the low part, the moved card, the covered card back).
+// Y is 0x00010001u << y, which the caller has already.
+__device__ __forceinline__ void sa_edit(u32 (&R)[3], bool fwd, u32 y, u32 dd, u32 cov, u32 Y, u32 K1) {
+    u32 X = Y << dd, LOW = X - 0x00010001u;
+    u32 sh = fwd ? K1 : 31u, shm = sh * dd;   // 31 * dd = -dd mod 32
+    u32 M1 = fwd ? Y : X, M2 = fwd ? 0u : Y;
+    u32 e0 = cov * 0x8001u;
+    u32 e = __funnelshift_l(e0, e0, y);
+    #pragma unroll
+    for (int j = 0; j < 3; j++) {
+        u32 w = R[j];
+        u32 s = sa_mux(LOW, w, rotr(w, sh));
+        u32 t = sa_mux(M1, rotr(w, shm), s);
+        R[j] = sa_mux(M2, rotr(e, 2 * j), t);
+    }
+}
+#endif
 __device__ __forceinline__ void bp_edit(u32 (&R)[3], bool fwd, u32 x, u32 y, u32 dd, u32 cov) {
     u32 Y = 0x00010001u << y, X = Y << dd, LOW = X - 0x00010001u;
     u32 src = fwd ? X : Y, clr = fwd ? Y : (X | Y), sh = fwd ? 1u : 31u, shm = fwd ? dd : 32u - dd;
@@ -597,6 +833,49 @@ __device__ __forceinline__ bool alive_rest(u32 r0, u32 r1, u32 left) {
     return (mates != 0) & (((pieces >> (2 * (links & 15))) & 3) + __popc(suits) == 4);
 }
 
+#if SA_A
+// alive_rest with mates read through the suit flags (the same result): a suit present is one of the flags bits 15, 31, 14, 30.
+__device__ __forceinline__ bool sa_alive(u32 r0, u32 r1, u32 left) {
+    const u32 K = 0x7FFF7FFFu, H = 0x80008000u;
+    u32 r1r = __funnelshift_l(r1, r1, 16);
+    u32 a = (r0 & r1) + K, b = (VS_A & 2) ? ~0u : (r0 & r1r) + K, c = (VS_A & 1) ? ~0u : ((r0 & (r0 >> 16)) | (r1 & r1r & 0xFFFF0000u)) + K;
+    u32 w = ((a & H) >> 15) | ((b & H) >> 14) | ((c & H) >> 13);
+    u32 links = (w | (w >> 13)) & 0x3F;
+    u32 pieces = (links & 32) ? ((links & 16) ? 0x10001u : 0x10156u) : ((links & 16) ? 0x10516u : 0x1116166Bu);
+    u32 suits = ((r0 + K) & H) | (((r1 + K) & H) >> 1);
+    u32 pos = 15u + (left & 16u) - (left >> 5);
+    u32 rank = left & 0x0F;
+    u32 m = ((suits >> (pos & 31)) & 1u) | (((r0 | r1) >> rank) & 0x00010001u);
+    return (m != 0) & (((pieces >> (2 * (links & 15))) & 3) + __popc(suits) == 4);
+}
+#else
+#define sa_alive alive_rest
+#endif
+#if A2_A
+__device__ __forceinline__ bool a2_alive(u32 r0, u32 r1, u32 left, u32 K10001_, u32 K10516_) {
+    const u32 K = 0x7FFF7FFFu, H = 0x80008000u;
+    u32 r1r = __funnelshift_l(r1, r1, 16);
+    u32 a = (r0 & r1) + K, b = (VS_A & 2) ? ~0u : (r0 & r1r) + K, c = (VS_A & 1) ? ~0u : ((r0 & (r0 >> 16)) | (r1 & r1r & 0xFFFF0000u)) + K;
+    u32 ah = a & H;
+    u32 amt = (ah >> 14) | ((b & 0x8000u) >> 13) | ((c & 0x8000u) >> 12) | (ah >> 27);   // 2 * (links & 15) in bits 1-4; above them ignored by the rotation
+    const bool b1 = (int)b < 0, c1 = (int)c < 0;
+    u32 pieces = c1 ? (b1 ? K10001_ : 0x10156u) : (b1 ? K10516_ : 0x1116166Bu);
+    u32 suits = ((r0 + K) & H) | (((r1 + K) & H) >> 1);
+    u32 pos = (left | 15u) - (left >> 5);                  // 15 + (left & 16) - (left >> 5), mod 32
+    u32 rr = r0 | r1;
+    u32 m = (__funnelshift_r(suits, suits, pos) & 1u) | (__funnelshift_r(rr, rr, left) & 0x00010001u);   // rotation by left: rank + 16 * bit 4, both halves tested
+    const bool mok = (VS_T & 1) ? (m != 0) : true, cok = (VS_T & 2) ? ((VS_A ? ((__funnelshift_r(pieces, pieces, amt) & 3u) + __popc(suits) <= 4) : ((__funnelshift_r(pieces, pieces, amt) & 3u) + __popc(suits) == 4))) : true;
+    return mok & cok;
+}
+#endif
+#if SA_T
+// bp_card with the final fold as one mux; the low six bits are the card.
+__device__ __forceinline__ u32 sa_card(const u32 (&R)[3], int i) {
+    u32 a = (R[0] >> i) & 0x00010001u, b = (R[1] >> i) & 0x00010001u, c = (R[2] >> i) & 0x00010001u;
+    u32 x = a | b << 2 | c << 4;
+    return sa_mux(0x15u, x, x >> 15);
+}
+#endif
 // Legal-move masks of the residual: bit i of s, pile i may slide; of l, leap. Four piles at a time in 32-bit words
 // (match16); pile 0 can't slide and piles 0 to 2 can't leap, since sentinels lie before them.
 __device__ __forceinline__ void masks(u64 lo, u64 hi, int len, u32& s, u32& l) {
@@ -811,6 +1090,24 @@ __device__ __forceinline__ int win_try(u32 (&B)[6], u32 (&T)[6], int& len, u32& 
     u32 s_ = c1, l_ = c3, a1, a3;
     bool any;
     const u32 t1 = w0 | w1, t3 = w0 & w1;
+    #if A2_W
+    #define KEEP2(m1, m3) { a1 = s_ & (m1); if ((a1 | (l_ & (m3))) != 0) { s_ = a1; l_ &= (m3); } }
+#if !VW_T1
+    KEEP2(t1 << 1, t1 << 3)
+#endif
+#if !VW_W
+    KEEP2(w1 << 1, w1 << 3)
+#endif
+#if !VW_T3
+    KEEP2(t3 << 1, t3 << 3)
+#endif
+    const u32 front = len >= 35 ? ~0u : (1u << (len - 3)) - 1;
+#if !VW_F
+    KEEP2(front, front)
+#endif
+    #undef KEEP2
+    (void)a3; (void)any;
+    #else
     a1 = s_ & (t1 << 1); a3 = l_ & (t1 << 3);
     any = (a1 | a3) != 0;
     s_ = any ? a1 : s_; l_ = any ? a3 : l_;
@@ -824,6 +1121,7 @@ __device__ __forceinline__ int win_try(u32 (&B)[6], u32 (&T)[6], int& len, u32& 
     a1 = s_ & front; a3 = l_ & front;
     any = (a1 | a3) != 0;
     s_ = any ? a1 : s_; l_ = any ? a3 : l_;
+    #endif
     const u32 n1 = __popc(s_), n3 = __popc(l_);
     const u32 k = below(rng, n1 + (n3 << leap_shift));
     const bool leap = k >= n1;
@@ -905,7 +1203,154 @@ __device__ __forceinline__ int pat_move(u32 (&B)[6], int& len, u32& l1, u32& l3,
     const u32 BC3_4 = (u32)((int)(BT3 << 4) >> 31);
     const u32 BC3_5 = (u32)((int)(BT3 << 5) >> 31);
     u32 Y0 = 0, Y1 = 0, Y2 = 0, Y3 = 0, Y4 = 0, Y5 = 0, AS0 = 0, AL0 = 0, AS1 = 0, AL1 = 0, AS2 = 0, AL2 = 0, AS3 = 0, AL3 = 0, AS4 = 0, AL4 = 0, AS5 = 0, AL5 = 0, AS6 = 0, AL6 = 0;
+    u32 SB0 = 0, SB1 = 0, SB2 = 0, SB3 = 0, SB4 = 0, SB5 = 0, SB6 = 0, LB0 = 0, LB1 = 0, LB2 = 0, LB3 = 0, LB4 = 0, LB5 = 0, LB6 = 0;
+    const u32 R11S = VK_R11 ? 0u : __funnelshift_r(r0, r0, 11), R11L = VK_R11 ? 0u : __funnelshift_r(r1, r1, 11);
     if (last) {
+        #if A2_L
+        const u32 Eq0 = ~((B[0] ^ BC0_0) | (B[1] ^ BC1_0) | (B[2] ^ BC2_0) | (B[3] ^ BC3_0)) & (~(TOPB >> 0) | O0);
+        const u32 Eq1 = ~((B[0] ^ BC0_1) | (B[1] ^ BC1_1) | (B[2] ^ BC2_1) | (B[3] ^ BC3_1)) & (~(TOPB >> 1) | O0);
+        const u32 Eq2 = ~((B[0] ^ BC0_2) | (B[1] ^ BC1_2) | (B[2] ^ BC2_2) | (B[3] ^ BC3_2)) & (~(TOPB >> 2) | O0);
+        const u32 Eq3 = (VP_E3) ? 0u : (~((B[0] ^ BC0_3) | (B[1] ^ BC1_3) | (B[2] ^ BC2_3) | (B[3] ^ BC3_3)) & (~(TOPB >> 3) | O0));
+        const u32 Eq4 = (VP_E4) ? 0u : (~((B[0] ^ BC0_4) | (B[1] ^ BC1_4) | (B[2] ^ BC2_4) | (B[3] ^ BC3_4)) & (~(TOPB >> 4) | O0));
+        const u32 gq1 = Eq0 ^ Eq1 ^ Eq2;
+        const u32 gq2 = (Eq0 & Eq1) | (Eq2 & (Eq0 ^ Eq1));
+        const u32 gq3 = Eq3 ^ Eq4 ^ gq1;
+        const u32 gq4 = (Eq3 & Eq4) | (gq1 & (Eq3 ^ Eq4));
+        const u32 gq5 = gq2 ^ gq4;
+        const u32 gq6 = gq2 & gq4;
+        const u32 O1q = VY_O1 ? 0u : (~w0 & w1);
+        const u32 Z0 = (gq3 ^ ~w0) & w1, Z1 = (gq5 ^ ~w0) & w1, Z2 = (gq6 ^ ~w0) & w1;
+        const u32 F0 = VY_F0 ? 0u : w1 & PV, F1 = VY_F1 ? 0u : (w0 | w1) & PV, F3 = VY_F3 ? 0u : w0 & w1 & PV;
+        const u32 YN1 = Z0 ^ O1q ^ F0;
+        const u32 YN2 = (Z0 & O1q) | (F0 & (Z0 ^ O1q));
+        const u32 YN3 = Z1 ^ F1 ^ ~0u;
+        const u32 YN4 = (Z1 & F1) | (~0u & (Z1 ^ F1));
+        const u32 YN5 = YN2 ^ YN3;
+        const u32 YN6 = YN2 & YN3;
+        const u32 YN7 = Z2 ^ Z0 ^ O1q;
+        const u32 YN8 = (Z2 & Z0) | (O1q & (Z2 ^ Z0));
+        const u32 YN9 = F0 ^ YN4 ^ YN6;
+        const u32 YN10 = (F0 & YN4) | (YN6 & (F0 ^ YN4));
+        const u32 YN11 = YN7 ^ YN9;
+        const u32 YN12 = YN7 & YN9;
+        const u32 YN13 = O1q ^ Z1 ^ F3;
+        const u32 YN14 = (O1q & Z1) | (F3 & (O1q ^ Z1));
+        const u32 YN15 = ~0u ^ YN8 ^ YN10;
+        const u32 YN16 = (~0u & YN8) | (YN10 & (~0u ^ YN8));
+        const u32 YN17 = YN12 ^ YN13 ^ YN15;
+        const u32 YN18 = (YN12 & YN13) | (YN15 & (YN12 ^ YN13));
+        const u32 YN19 = O1q ^ Z2 ^ ~0u;
+        const u32 YN20 = (O1q & Z2) | (~0u & (O1q ^ Z2));
+        const u32 YN21 = YN14 ^ YN16 ^ YN18;
+        const u32 YN22 = (YN14 & YN16) | (YN18 & (YN14 ^ YN16));
+        const u32 YN23 = YN19 ^ YN21;
+        const u32 YN24 = YN19 & YN21;
+        const u32 YN25 = O1q ^ O1q ^ YN20;
+        const u32 YN26 = YN22 ^ YN24 ^ YN25;
+        const u32 ASt1 = (VP_AS1) ? 0u : ((D2) & (O0 << 2));
+        const u32 ASt2 = (VP_AS1) ? ~0u : (~((l1 << 1) & (O0 << 2)));
+        const u32 ASt3 = (VP_AS2) ? ~0u : (~((~0u) & (O0 << 1)));
+        const u32 ASt6 = (VP_AS3) ? 0u : ((D4) & (O0 << 4));
+        const u32 ASt7 = (VP_AS3) ? ~0u : (~((l3 << 1) & (O0 << 4)));
+        const u32 ASt8 = (VP_AS4) ? 0u : ((D4 >> 1) & (O0 << 3));
+        const u32 ASt9 = (VP_AS4) ? ~0u : (~((l3) & (O0 << 3)));
+        const u32 ASt10 = (VP_AS5) ? 0u : ((D4 >> 2) & (O0 << 2));
+        const u32 ASt11 = (VP_AS5) ? ~0u : (~((l3 >> 1) & (O0 << 2)));
+        const u32 ASt12 = (VP_AS6) ? ~0u : (~((l3 >> 2) & (O0 << 1)));
+        const u32 ASN1 = ASt1 ^ ASt2 ^ ASt3;
+        const u32 ASN2 = (ASt1 & ASt2) | (ASt3 & (ASt1 ^ ASt2));
+        const u32 ASN3 = ASt6 ^ ASt7 ^ ASt8;
+        const u32 ASN4 = (ASt6 & ASt7) | (ASt8 & (ASt6 ^ ASt7));
+        const u32 ASN5 = ASt9 ^ ASt10 ^ ASt11;
+        const u32 ASN6 = (ASt9 & ASt10) | (ASt11 & (ASt9 ^ ASt10));
+        const u32 ASN7 = ASt12 ^ ASN3 ^ ASN5;
+        const u32 ASN8 = (ASt12 & ASN3) | (ASN5 & (ASt12 ^ ASN3));
+        const u32 ASN9 = ASN4 ^ ASN6 ^ ASN8;
+        const u32 ASN10 = (ASN4 & ASN6) | (ASN8 & (ASN4 ^ ASN6));
+        const u32 ASN11 = ASN2 ^ ASN7;
+        const u32 ASN12 = ASN2 & ASN7;
+        const u32 ASN13 = ASN1 ^ ASN9 ^ ASN7;
+        const u32 ASN14 = (ASN1 & ASN9) | (ASN7 & (ASN1 ^ ASN9));
+        const u32 ASN15 = ASN12 ^ ASN13;
+        const u32 ASN16 = ASN12 & ASN13;
+        const u32 ASN17 = ASN2 ^ ASN10 ^ ASN9;
+        const u32 ASN18 = (ASN2 & ASN10) | (ASN9 & (ASN2 ^ ASN10));
+        const u32 ASN19 = ASN14 ^ ASN16 ^ ASN17;
+        const u32 ASN20 = (ASN14 & ASN16) | (ASN17 & (ASN14 ^ ASN16));
+        const u32 ASN21 = ASN10 ^ ~0u ^ ASN18;
+        const u32 ASN22 = (ASN10 & ~0u) | (ASN18 & (ASN10 ^ ~0u));
+        const u32 ASN23 = ASN20 ^ ASN21;
+        const u32 ASN24 = ASN20 & ASN21;
+        const u32 ASN25 = ASN22 ^ ASN24;
+        const u32 ASN26 = ASN22 & ASN24;
+        const u32 ALt1 = (VP_AL1) ? 0u : ((D4) & (O0 << 4));
+        const u32 ALt2 = (VP_AL1) ? ~0u : (~((l1 << 3) & (O0 << 4)));
+        const u32 ALt3 = (VP_AL2) ? 0u : ((D2) & O0);
+        const u32 ALt4 = (VP_AL2) ? ~0u : (~((l1 >> 1) & O0));
+        const u32 ALt5 = (VP_AL3) ? ~0u : (~((l1 << 2) & (O0 << 3)));
+        const u32 ALt6 = (VP_AL4) ? 0u : ((D2 >> 1) & (O0 << 1));
+        const u32 ALt7 = (VP_AL4) ? ~0u : (~((l1) & (O0 << 1)));
+        const u32 ALt14 = (VP_AL5) ? 0u : ((D6) & (O0 << 6));
+        const u32 ALt15 = (VP_AL5) ? ~0u : (~((l3 << 3) & (O0 << 6)));
+        const u32 ALt16 = (VP_AL6) ? ~0u : (~((~0u) & (O0 << 3)));
+        const u32 ALt17 = (VP_AL7) ? 0u : ((l1 >> 1) & O0);
+        const u32 ALt18 = (VP_AL7) ? ~0u : (~((l3 >> 3) & O0));
+        const u32 ALt19 = (VP_AL8) ? 0u : ((D4 >> 2) & (O0 << 2));
+        const u32 ALt20 = (VP_AL8) ? ~0u : (~((l3 >> 1) & (O0 << 2)));
+        const u32 ALt21 = (VP_AL9) ? 0u : ((D4 >> 3) & (O0 << 1));
+        const u32 ALt22 = (VP_AL9) ? ~0u : (~((l3 >> 2) & (O0 << 1)));
+        const u32 ALN1 = ALt1 ^ ALt2 ^ ALt3;
+        const u32 ALN2 = (ALt1 & ALt2) | (ALt3 & (ALt1 ^ ALt2));
+        const u32 ALN3 = ALt4 ^ ALt5 ^ ALt6;
+        const u32 ALN4 = (ALt4 & ALt5) | (ALt6 & (ALt4 ^ ALt5));
+        const u32 ALN5 = ALt7 ^ ALN1 ^ ALN3;
+        const u32 ALN6 = (ALt7 & ALN1) | (ALN3 & (ALt7 ^ ALN1));
+        const u32 ALN7 = ALN2 ^ ALN4 ^ ALN6;
+        const u32 ALN8 = (ALN2 & ALN4) | (ALN6 & (ALN2 ^ ALN4));
+        const u32 ALN9 = ALt14 ^ ALt15 ^ ALt16;
+        const u32 ALN10 = (ALt14 & ALt15) | (ALt16 & (ALt14 ^ ALt15));
+        const u32 ALN11 = ALt17 ^ ALt18 ^ ALt19;
+        const u32 ALN12 = (ALt17 & ALt18) | (ALt19 & (ALt17 ^ ALt18));
+        const u32 ALN13 = ALt20 ^ ALt21 ^ ALt22;
+        const u32 ALN14 = (ALt20 & ALt21) | (ALt22 & (ALt20 ^ ALt21));
+        const u32 ALN15 = ALN9 ^ ALN11 ^ ALN13;
+        const u32 ALN16 = (ALN9 & ALN11) | (ALN13 & (ALN9 ^ ALN11));
+        const u32 ALN17 = ALN10 ^ ALN12 ^ ALN14;
+        const u32 ALN18 = (ALN10 & ALN12) | (ALN14 & (ALN10 ^ ALN12));
+        const u32 ALN19 = ALN16 ^ ALN17;
+        const u32 ALN20 = ALN16 & ALN17;
+        const u32 ALN21 = ALN18 ^ ALN20;
+        const u32 ALN22 = ALN18 & ALN20;
+        const u32 ALN23 = ALN7 ^ ALN15;
+        const u32 ALN24 = ALN7 & ALN15;
+        const u32 ALN25 = ALN8 ^ ALN5 ^ ALN19;
+        const u32 ALN26 = (ALN8 & ALN5) | (ALN19 & (ALN8 ^ ALN5));
+        const u32 ALN27 = ALN15 ^ ALN24 ^ ALN25;
+        const u32 ALN28 = (ALN15 & ALN24) | (ALN25 & (ALN15 ^ ALN24));
+        const u32 ALN29 = ALN7 ^ ALN21 ^ ALN19;
+        const u32 ALN30 = (ALN7 & ALN21) | (ALN19 & (ALN7 ^ ALN21));
+        const u32 ALN31 = ALN26 ^ ALN28 ^ ALN29;
+        const u32 ALN32 = (ALN26 & ALN28) | (ALN29 & (ALN26 ^ ALN28));
+        const u32 ALN33 = ALN8 ^ ALN22 ^ ALN21;
+        const u32 ALN34 = (ALN8 & ALN22) | (ALN21 & (ALN8 ^ ALN22));
+        const u32 ALN35 = ALN30 ^ ALN32 ^ ALN33;
+        const u32 ALN36 = (ALN30 & ALN32) | (ALN33 & (ALN30 ^ ALN32));
+        const u32 ALN37 = ALN22 ^ ALN34 ^ ALN36;
+        const u32 ALN38 = (ALN22 & ALN34) | (ALN36 & (ALN22 ^ ALN34));
+        Y0 = VP_LY ? 0u : YN1;
+        Y1 = VP_LY ? 0u : YN5;
+        Y2 = VP_LY ? 0u : YN11;
+        Y3 = VP_LY ? 0u : YN17;
+        Y4 = VP_LY ? 0u : YN23;
+        Y5 = VP_LY ? 0u : YN26;
+        AS0 = ASN1; AL0 = ALN5;
+        AS1 = ASN11; AL1 = ALN23;
+        AS2 = ASN15; AL2 = ALN27;
+        AS3 = ASN19; AL3 = ALN31;
+        AS4 = ASN23; AL4 = ALN35;
+        AS5 = ASN25; AL5 = ALN37;
+        AS6 = ASN26; AL6 = ALN38;
+        #else
         const u32 E0 = ~((B[0] ^ BC0_0) | (B[1] ^ BC1_0) | (B[2] ^ BC2_0) | (B[3] ^ BC3_0)) & ~(TOPB >> 0);
         const u32 E1 = ~((B[0] ^ BC0_1) | (B[1] ^ BC1_1) | (B[2] ^ BC2_1) | (B[3] ^ BC3_1)) & ~(TOPB >> 1);
         const u32 E2 = ~((B[0] ^ BC0_2) | (B[1] ^ BC1_2) | (B[2] ^ BC2_2) | (B[3] ^ BC3_2)) & ~(TOPB >> 2);
@@ -1206,7 +1651,188 @@ __device__ __forceinline__ int pat_move(u32 (&B)[6], int& len, u32& l1, u32& l3,
         AS4 = ASt69; AL4 = ALt110;
         AS5 = ASt73; AL5 = ALt114;
         AS6 = ASt75; AL6 = ALt116;
+        #endif
+    const u32 MSt1 = (VP_MS1) ? 0u : (((l1 << 3) | D4));
+    const u32 MSt2 = (VP_MS1) ? ~0u : (~(((l1 << 3) | (l3 << 1))));
+    const u32 MSt3 = (VP_MS2) ? 0u : (((l1 << 2) | (D4 >> 1)));
+    const u32 MSt4 = (VP_MS2) ? ~0u : (~(((l1 << 2) | l3)));
+    const u32 MSt5 = (VP_MS3) ? 0u : ((D2 | (D4 >> 2)));
+    const u32 MSt6 = (VP_MS3) ? ~0u : (~(((l1 << 1) | (l3 >> 1))));
+    const u32 MSt7 = MSt1 ^ MSt2 ^ MSt3;
+    const u32 MSt8 = (MSt1 & MSt2) | (MSt3 & (MSt1 ^ MSt2));
+    const u32 MSt9 = MSt4 ^ MSt5 ^ MSt6;
+    const u32 MSt10 = (MSt4 & MSt5) | (MSt6 & (MSt4 ^ MSt5));
+    const u32 MSt11 = MSt7 ^ MSt9;
+    const u32 MSt12 = MSt7 & MSt9;
+    const u32 MSt13 = ~0u;
+    const u32 MSt14 = MSt8;
+    const u32 MSt15 = MSt10;
+    const u32 MSt16 = MSt12;
+    const u32 MSt17 = MSt13 ^ MSt14 ^ MSt15;
+    const u32 MSt18 = (MSt13 & MSt14) | (MSt15 & (MSt13 ^ MSt14));
+    const u32 MSt19 = MSt16 ^ MSt17;
+    const u32 MSt20 = MSt16 & MSt17;
+    const u32 MSt21 = MSt18;
+    const u32 MSt22 = MSt20;
+    const u32 MSt23 = MSt21 ^ MSt22;
+    const u32 MSt24 = MSt21 & MSt22;
+    const u32 MSt25 = MSt24;
+    const u32 MLt1 = (VP_ML1) ? 0u : (((l1 << 5) | D6));
+    const u32 MLt2 = (VP_ML1) ? ~0u : (~(((l1 << 5) | (l3 << 3))));
+    const u32 MLt3 = (VP_ML2) ? 0u : ((D4 | (l3 << 1)));
+    const u32 MLt4 = (VP_ML2) ? ~0u : (~(((l1 << 3) | (l3 << 1))));
+    const u32 MLt5 = (VP_ML3) ? 0u : (((l1 << 1) | (D4 >> 2)));
+    const u32 MLt6 = (VP_ML3) ? ~0u : (~(((l1 << 1) | (l3 >> 1))));
+    const u32 MLt7 = (VP_ML4) ? 0u : (((D2 >> 1) | (D4 >> 3)));
+    const u32 MLt8 = (VP_ML4) ? ~0u : (~((l1 | (l3 >> 2))));
+    const u32 MLt9 = (VP_ML5) ? 0u : ((D2 | (l1 >> 1)));
+    const u32 MLt10 = (VP_ML5) ? ~0u : (~(((l1 >> 1) | (l3 >> 3))));
+    const u32 MLt11 = MLt1 ^ MLt2 ^ MLt3;
+    const u32 MLt12 = (MLt1 & MLt2) | (MLt3 & (MLt1 ^ MLt2));
+    const u32 MLt13 = MLt4 ^ MLt5 ^ MLt6;
+    const u32 MLt14 = (MLt4 & MLt5) | (MLt6 & (MLt4 ^ MLt5));
+    const u32 MLt15 = MLt7 ^ MLt8 ^ MLt9;
+    const u32 MLt16 = (MLt7 & MLt8) | (MLt9 & (MLt7 ^ MLt8));
+    const u32 MLt17 = MLt10 ^ MLt11 ^ MLt13;
+    const u32 MLt18 = (MLt10 & MLt11) | (MLt13 & (MLt10 ^ MLt11));
+    const u32 MLt19 = MLt15 ^ MLt17;
+    const u32 MLt20 = MLt15 & MLt17;
+    const u32 MLt21 = MLt12;
+    const u32 MLt22 = MLt14;
+    const u32 MLt23 = MLt16;
+    const u32 MLt24 = MLt18;
+    const u32 MLt25 = MLt20;
+    const u32 MLt26 = MLt21 ^ MLt22 ^ MLt23;
+    const u32 MLt27 = (MLt21 & MLt22) | (MLt23 & (MLt21 ^ MLt22));
+    const u32 MLt28 = MLt24 ^ MLt25 ^ MLt26;
+    const u32 MLt29 = (MLt24 & MLt25) | (MLt26 & (MLt24 ^ MLt25));
+    const u32 MLt30 = MLt27;
+    const u32 MLt31 = MLt29;
+    const u32 MLt32 = MLt30 ^ MLt31;
+    const u32 MLt33 = MLt30 & MLt31;
+    const u32 MLt34 = MLt33;
+        const u32 LSS1 = R11S ^ (Y0 << 1) ^ AS0;
+        const u32 LSS2 = (R11S & (Y0 << 1)) | (AS0 & (R11S ^ (Y0 << 1)));
+        const u32 LSS3 = (Y1 << 1) ^ AS1 ^ MSt11;
+        const u32 LSS4 = ((Y1 << 1) & AS1) | (MSt11 & ((Y1 << 1) ^ AS1));
+        const u32 LSS5 = LSS2 ^ LSS3;
+        const u32 LSS6 = LSS2 & LSS3;
+        const u32 LSS7 = (Y2 << 1) ^ AS2 ^ MSt19;
+        const u32 LSS8 = ((Y2 << 1) & AS2) | (MSt19 & ((Y2 << 1) ^ AS2));
+        const u32 LSS9 = LSS4 ^ LSS6 ^ LSS7;
+        const u32 LSS10 = (LSS4 & LSS6) | (LSS7 & (LSS4 ^ LSS6));
+        const u32 LSS11 = (Y3 << 1) ^ AS3 ^ MSt23;
+        const u32 LSS12 = ((Y3 << 1) & AS3) | (MSt23 & ((Y3 << 1) ^ AS3));
+        const u32 LSS13 = LSS8 ^ LSS10 ^ LSS11;
+        const u32 LSS14 = (LSS8 & LSS10) | (LSS11 & (LSS8 ^ LSS10));
+        const u32 LSS15 = (Y4 << 1) ^ AS4 ^ MSt25;
+        const u32 LSS16 = ((Y4 << 1) & AS4) | (MSt25 & ((Y4 << 1) ^ AS4));
+        const u32 LSS17 = LSS12 ^ LSS14 ^ LSS15;
+        const u32 LSS18 = (LSS12 & LSS14) | (LSS15 & (LSS12 ^ LSS14));
+        const u32 LSS19 = (Y5 << 1) ^ AS5 ^ LSS16;
+        const u32 LSS20 = LSS18 ^ LSS19;
+        SB0 = r0;
+        SB1 = LSS1;
+        SB2 = LSS5;
+        SB3 = LSS9;
+        SB4 = LSS13;
+        SB5 = LSS17;
+        SB6 = LSS20;
+        const u32 LSL1 = R11L ^ (Y0 << 3) ^ AL0;
+        const u32 LSL2 = (R11L & (Y0 << 3)) | (AL0 & (R11L ^ (Y0 << 3)));
+        const u32 LSL3 = (Y1 << 3) ^ AL1 ^ MLt19;
+        const u32 LSL4 = ((Y1 << 3) & AL1) | (MLt19 & ((Y1 << 3) ^ AL1));
+        const u32 LSL5 = LSL2 ^ LSL3;
+        const u32 LSL6 = LSL2 & LSL3;
+        const u32 LSL7 = (Y2 << 3) ^ AL2 ^ MLt28;
+        const u32 LSL8 = ((Y2 << 3) & AL2) | (MLt28 & ((Y2 << 3) ^ AL2));
+        const u32 LSL9 = LSL4 ^ LSL6 ^ LSL7;
+        const u32 LSL10 = (LSL4 & LSL6) | (LSL7 & (LSL4 ^ LSL6));
+        const u32 LSL11 = (Y3 << 3) ^ AL3 ^ MLt32;
+        const u32 LSL12 = ((Y3 << 3) & AL3) | (MLt32 & ((Y3 << 3) ^ AL3));
+        const u32 LSL13 = LSL8 ^ LSL10 ^ LSL11;
+        const u32 LSL14 = (LSL8 & LSL10) | (LSL11 & (LSL8 ^ LSL10));
+        const u32 LSL15 = (Y4 << 3) ^ AL4 ^ MLt34;
+        const u32 LSL16 = ((Y4 << 3) & AL4) | (MLt34 & ((Y4 << 3) ^ AL4));
+        const u32 LSL17 = LSL12 ^ LSL14 ^ LSL15;
+        const u32 LSL18 = (LSL12 & LSL14) | (LSL15 & (LSL12 ^ LSL14));
+        const u32 LSL19 = (Y5 << 3) ^ AL5 ^ LSL16;
+        const u32 LSL20 = LSL18 ^ LSL19;
+        LB0 = r1;
+        LB1 = LSL1;
+        LB2 = LSL5;
+        LB3 = LSL9;
+        LB4 = LSL13;
+        LB5 = LSL17;
+        LB6 = LSL20;
     } else {
+        #if A2_N
+        const u32 Zq = ~(w0 ^ w1), T01 = TOPB | (TOPB >> 1), T234 = (TOPB >> 2) | (TOPB >> 3) | (TOPB >> 4);
+        const u32 Eq0 = ~((B[0] ^ BC0_0) | (B[1] ^ BC1_0) | (B[2] ^ BC2_0) | (B[3] ^ BC3_0)) & (~(TOPB >> 0) | Zq);
+        const u32 Eq1 = ~((B[0] ^ BC0_1) | (B[1] ^ BC1_1) | (B[2] ^ BC2_1) | (B[3] ^ BC3_1)) & (~(TOPB >> 1) | Zq);
+        const u32 Eq2 = ~((B[0] ^ BC0_2) | (B[1] ^ BC1_2) | (B[2] ^ BC2_2) | (B[3] ^ BC3_2)) & (~(TOPB >> 2) | Zq);
+        const u32 Eq3 = (VP_E3) ? 0u : (~((B[0] ^ BC0_3) | (B[1] ^ BC1_3) | (B[2] ^ BC2_3) | (B[3] ^ BC3_3)) & (~(TOPB >> 3) | Zq));
+        const u32 Eq4 = (VP_E4) ? 0u : (~((B[0] ^ BC0_4) | (B[1] ^ BC1_4) | (B[2] ^ BC2_4) | (B[3] ^ BC3_4)) & (~(TOPB >> 4) | Zq));
+        const u32 Eq5 = (VP_NE5) ? 0u : (~((B[0] ^ BC0_5) | (B[1] ^ BC1_5) | (B[2] ^ BC2_5) | (B[3] ^ BC3_5)) & (~(TOPB >> 5) | Zq));
+        const u32 n1 = Eq0 ^ Eq1;
+        const u32 n2 = Eq0 & Eq1;
+        const u32 n3 = Eq3 ^ Eq4;
+        const u32 n4 = Eq3 & Eq4;
+        const u32 n5 = Eq2 & O3;
+        const u32 n6 = (O3 & Eq5) | (~O3 & Eq2);
+        const u32 n7 = n1 ^ n5;
+        const u32 n8 = n2 | (n1 & n5);
+        const u32 n9 = n3 ^ n6;
+        const u32 n10 = n4 | (n3 & n6);
+        const u32 n11 = n7 ^ n9;
+        const u32 n12 = n7 & n9;
+        const u32 n13 = n8 ^ n10 ^ n12;
+        const u32 n14 = (n8 & n10) | (n12 & (n8 ^ n10));
+        const u32 nb1 = n11 & ~(w0 & w1);
+        const u32 nb2 = (n13 ^ n11) & ~(w0 & w1);
+        const u32 nb3 = (n14 ^ (n13 | n11)) & ~(w0 & w1);
+        const u32 nb4 = (VP_NT) ? 0u : ((~w0 & w1) & T01);
+        const u32 nb5 = (VP_NT) ? 0u : ((~w0 & w1) & T234);
+        const u32 nb6 = n7 & w0;
+        const u32 nb7 = n9 & ~(w0 & ~w1);
+        const u32 nb8 = n8 & w0;
+        const u32 nb9 = n7 & Zq;
+        const u32 nb10 = n10 & ~(w0 & ~w1);
+        const u32 nb11 = n9 & ~w1;
+        const u32 nb12 = n8 & Zq;
+        const u32 nb13 = n10 & ~w1;
+        const u32 YM1 = nb6 ^ nb7 ^ nb4;
+        const u32 YM2 = (nb6 & nb7) | (nb4 & (nb6 ^ nb7));
+        const u32 YM3 = nb8 ^ nb9 ^ nb10;
+        const u32 YM4 = (nb8 & nb9) | (nb10 & (nb8 ^ nb9));
+        const u32 YM5 = nb11 ^ nb4 ^ nb5;
+        const u32 YM6 = (nb11 & nb4) | (nb5 & (nb11 ^ nb4));
+        const u32 YM7 = YM2 ^ YM3 ^ YM5;
+        const u32 YM8 = (YM2 & YM3) | (YM5 & (YM2 ^ YM3));
+        const u32 YM9 = nb12 ^ n7 ^ nb13;
+        const u32 YM10 = (nb12 & n7) | (nb13 & (nb12 ^ n7));
+        const u32 YM11 = n9 ^ YM4 ^ YM6;
+        const u32 YM12 = (n9 & YM4) | (YM6 & (n9 ^ YM4));
+        const u32 YM13 = YM8 ^ YM9 ^ YM11;
+        const u32 YM14 = (YM8 & YM9) | (YM11 & (YM8 ^ YM9));
+        const u32 YM15 = n8 ^ n10 ^ nb1;
+        const u32 YM16 = (n8 & n10) | (nb1 & (n8 ^ n10));
+        const u32 YM17 = ~0u ^ YM10 ^ YM12;
+        const u32 YM18 = (~0u & YM10) | (YM12 & (~0u ^ YM10));
+        const u32 YM19 = YM14 ^ YM15 ^ YM17;
+        const u32 YM20 = (YM14 & YM15) | (YM17 & (YM14 ^ YM15));
+        const u32 YM21 = nb2 ^ YM16 ^ YM18;
+        const u32 YM22 = (nb2 & YM16) | (YM18 & (nb2 ^ YM16));
+        const u32 YM23 = YM20 ^ YM21;
+        const u32 YM24 = YM20 & YM21;
+        const u32 YM25 = nb3 ^ YM22 ^ YM24;
+        Y0 = VP_NY ? 0u : YM1;
+        Y1 = VP_NY ? 0u : YM7;
+        Y2 = VP_NY ? 0u : YM13;
+        Y3 = VP_NY ? 0u : YM19;
+        Y4 = VP_NY ? 0u : YM23;
+        Y5 = VP_NY ? 0u : YM25;
+        #else
         const u32 E0 = ~((B[0] ^ BC0_0) | (B[1] ^ BC1_0) | (B[2] ^ BC2_0) | (B[3] ^ BC3_0)) & ~(TOPB >> 0);
         const u32 E1 = ~((B[0] ^ BC0_1) | (B[1] ^ BC1_1) | (B[2] ^ BC2_1) | (B[3] ^ BC3_1)) & ~(TOPB >> 1);
         const u32 E2 = ~((B[0] ^ BC0_2) | (B[1] ^ BC1_2) | (B[2] ^ BC2_2) | (B[3] ^ BC3_2)) & ~(TOPB >> 2);
@@ -1363,7 +1989,7 @@ __device__ __forceinline__ int pat_move(u32 (&B)[6], int& len, u32& l1, u32& l3,
         Y3 = Yt108;
         Y4 = Yt117;
         Y5 = Yt122;
-    }
+        #endif
     const u32 MSt1 = ((l1 << 3) | D4);
     const u32 MSt2 = ~(((l1 << 3) | (l3 << 1)));
     const u32 MSt3 = ((l1 << 2) | (D4 >> 1));
@@ -1423,136 +2049,44 @@ __device__ __forceinline__ int pat_move(u32 (&B)[6], int& len, u32& l1, u32& l3,
     const u32 MLt32 = MLt30 ^ MLt31;
     const u32 MLt33 = MLt30 & MLt31;
     const u32 MLt34 = MLt33;
-    const u32 St1 = r0;
-    const u32 St2 = MSt11;
-    const u32 St3 = (MSt11 & G3);
-    const u32 St4 = (Y0 << 1);
-    const u32 St5 = AS0;
-    const u32 St6 = __funnelshift_r(r0, r0, 11);
-    const u32 St7 = St2 ^ St3 ^ St4;
-    const u32 St8 = (St2 & St3) | (St4 & (St2 ^ St3));
-    const u32 St9 = St5 ^ St6 ^ St7;
-    const u32 St10 = (St5 & St6) | (St7 & (St5 ^ St6));
-    const u32 St11 = MSt19;
-    const u32 St12 = (MSt19 & G3);
-    const u32 St13 = (Y1 << 1);
-    const u32 St14 = AS1;
-    const u32 St15 = St8;
-    const u32 St16 = St10;
-    const u32 St17 = St11 ^ St12 ^ St13;
-    const u32 St18 = (St11 & St12) | (St13 & (St11 ^ St12));
-    const u32 St19 = St14 ^ St15 ^ St16;
-    const u32 St20 = (St14 & St15) | (St16 & (St14 ^ St15));
-    const u32 St21 = St17 ^ St19;
-    const u32 St22 = St17 & St19;
-    const u32 St23 = MSt23;
-    const u32 St24 = (MSt23 & G3);
-    const u32 St25 = (Y2 << 1);
-    const u32 St26 = AS2;
-    const u32 St27 = St18;
-    const u32 St28 = St20;
-    const u32 St29 = St22;
-    const u32 St30 = St23 ^ St24 ^ St25;
-    const u32 St31 = (St23 & St24) | (St25 & (St23 ^ St24));
-    const u32 St32 = St26 ^ St27 ^ St28;
-    const u32 St33 = (St26 & St27) | (St28 & (St26 ^ St27));
-    const u32 St34 = St29 ^ St30 ^ St32;
-    const u32 St35 = (St29 & St30) | (St32 & (St29 ^ St30));
-    const u32 St36 = MSt25;
-    const u32 St37 = (MSt25 & G3);
-    const u32 St38 = (Y3 << 1);
-    const u32 St39 = AS3;
-    const u32 St40 = St31;
-    const u32 St41 = St33;
-    const u32 St42 = St35;
-    const u32 St43 = St36 ^ St37 ^ St38;
-    const u32 St44 = (St36 & St37) | (St38 & (St36 ^ St37));
-    const u32 St45 = St39 ^ St40 ^ St41;
-    const u32 St46 = (St39 & St40) | (St41 & (St39 ^ St40));
-    const u32 St47 = St42 ^ St43 ^ St45;
-    const u32 St48 = (St42 & St43) | (St45 & (St42 ^ St43));
-    const u32 St49 = (Y4 << 1);
-    const u32 St50 = AS4;
-    const u32 St51 = St44;
-    const u32 St52 = St46;
-    const u32 St53 = St48;
-    const u32 St54 = St49 ^ St50 ^ St51;
-    const u32 St55 = (St49 & St50) | (St51 & (St49 ^ St50));
-    const u32 St56 = St52 ^ St53 ^ St54;
-    const u32 St57 = (St52 & St53) | (St54 & (St52 ^ St53));
-    const u32 St58 = (Y5 << 1);
-    const u32 St59 = AS5;
-    const u32 St60 = St55;
-    const u32 St61 = St57;
-    const u32 St62 = St58 ^ St59 ^ St60;
-    const u32 St63 = (St58 & St59) | (St60 & (St58 ^ St59));
-    const u32 St64 = St61 ^ St62;
-    const u32 St65 = St61 & St62;
-    const u32 Lt1 = r1;
-    const u32 Lt2 = MLt19;
-    const u32 Lt3 = (MLt19 & G3);
-    const u32 Lt4 = (Y0 << 3);
-    const u32 Lt5 = AL0;
-    const u32 Lt6 = __funnelshift_r(r1, r1, 11);
-    const u32 Lt7 = Lt2 ^ Lt3 ^ Lt4;
-    const u32 Lt8 = (Lt2 & Lt3) | (Lt4 & (Lt2 ^ Lt3));
-    const u32 Lt9 = Lt5 ^ Lt6 ^ Lt7;
-    const u32 Lt10 = (Lt5 & Lt6) | (Lt7 & (Lt5 ^ Lt6));
-    const u32 Lt11 = MLt28;
-    const u32 Lt12 = (MLt28 & G3);
-    const u32 Lt13 = (Y1 << 3);
-    const u32 Lt14 = AL1;
-    const u32 Lt15 = Lt8;
-    const u32 Lt16 = Lt10;
-    const u32 Lt17 = Lt11 ^ Lt12 ^ Lt13;
-    const u32 Lt18 = (Lt11 & Lt12) | (Lt13 & (Lt11 ^ Lt12));
-    const u32 Lt19 = Lt14 ^ Lt15 ^ Lt16;
-    const u32 Lt20 = (Lt14 & Lt15) | (Lt16 & (Lt14 ^ Lt15));
-    const u32 Lt21 = Lt17 ^ Lt19;
-    const u32 Lt22 = Lt17 & Lt19;
-    const u32 Lt23 = MLt32;
-    const u32 Lt24 = (MLt32 & G3);
-    const u32 Lt25 = (Y2 << 3);
-    const u32 Lt26 = AL2;
-    const u32 Lt27 = Lt18;
-    const u32 Lt28 = Lt20;
-    const u32 Lt29 = Lt22;
-    const u32 Lt30 = Lt23 ^ Lt24 ^ Lt25;
-    const u32 Lt31 = (Lt23 & Lt24) | (Lt25 & (Lt23 ^ Lt24));
-    const u32 Lt32 = Lt26 ^ Lt27 ^ Lt28;
-    const u32 Lt33 = (Lt26 & Lt27) | (Lt28 & (Lt26 ^ Lt27));
-    const u32 Lt34 = Lt29 ^ Lt30 ^ Lt32;
-    const u32 Lt35 = (Lt29 & Lt30) | (Lt32 & (Lt29 ^ Lt30));
-    const u32 Lt36 = MLt34;
-    const u32 Lt37 = (MLt34 & G3);
-    const u32 Lt38 = (Y3 << 3);
-    const u32 Lt39 = AL3;
-    const u32 Lt40 = Lt31;
-    const u32 Lt41 = Lt33;
-    const u32 Lt42 = Lt35;
-    const u32 Lt43 = Lt36 ^ Lt37 ^ Lt38;
-    const u32 Lt44 = (Lt36 & Lt37) | (Lt38 & (Lt36 ^ Lt37));
-    const u32 Lt45 = Lt39 ^ Lt40 ^ Lt41;
-    const u32 Lt46 = (Lt39 & Lt40) | (Lt41 & (Lt39 ^ Lt40));
-    const u32 Lt47 = Lt42 ^ Lt43 ^ Lt45;
-    const u32 Lt48 = (Lt42 & Lt43) | (Lt45 & (Lt42 ^ Lt43));
-    const u32 Lt49 = (Y4 << 3);
-    const u32 Lt50 = AL4;
-    const u32 Lt51 = Lt44;
-    const u32 Lt52 = Lt46;
-    const u32 Lt53 = Lt48;
-    const u32 Lt54 = Lt49 ^ Lt50 ^ Lt51;
-    const u32 Lt55 = (Lt49 & Lt50) | (Lt51 & (Lt49 ^ Lt50));
-    const u32 Lt56 = Lt52 ^ Lt53 ^ Lt54;
-    const u32 Lt57 = (Lt52 & Lt53) | (Lt54 & (Lt52 ^ Lt53));
-    const u32 Lt58 = (Y5 << 3);
-    const u32 Lt59 = AL5;
-    const u32 Lt60 = Lt55;
-    const u32 Lt61 = Lt57;
-    const u32 Lt62 = Lt58 ^ Lt59 ^ Lt60;
-    const u32 Lt63 = (Lt58 & Lt59) | (Lt60 & (Lt58 ^ Lt59));
-    const u32 Lt64 = Lt61 ^ Lt62;
-    const u32 Lt65 = Lt61 & Lt62;
+        const u32 NSS1 = R11S ^ (Y0 << 1) ^ MSt11;
+        const u32 NSS2 = (R11S & (Y0 << 1)) | (MSt11 & (R11S ^ (Y0 << 1)));
+        const u32 NSS3 = (Y1 << 1) ^ MSt19 ^ NSS2;
+        const u32 NSS4 = ((Y1 << 1) & MSt19) | (NSS2 & ((Y1 << 1) ^ MSt19));
+        const u32 NSS5 = (Y2 << 1) ^ MSt23 ^ NSS4;
+        const u32 NSS6 = ((Y2 << 1) & MSt23) | (NSS4 & ((Y2 << 1) ^ MSt23));
+        const u32 NSS7 = (Y3 << 1) ^ MSt25 ^ NSS6;
+        const u32 NSS8 = ((Y3 << 1) & MSt25) | (NSS6 & ((Y3 << 1) ^ MSt25));
+        const u32 NSS9 = (Y4 << 1) ^ NSS8;
+        const u32 NSS10 = (Y4 << 1) & NSS8;
+        const u32 NSS11 = (Y5 << 1) ^ NSS10;
+        SB0 = r0;
+        SB1 = NSS1;
+        SB2 = NSS3;
+        SB3 = NSS5;
+        SB4 = NSS7;
+        SB5 = NSS9;
+        SB6 = NSS11;
+        const u32 NSL1 = R11L ^ (Y0 << 3) ^ MLt19;
+        const u32 NSL2 = (R11L & (Y0 << 3)) | (MLt19 & (R11L ^ (Y0 << 3)));
+        const u32 NSL3 = (Y1 << 3) ^ MLt28 ^ NSL2;
+        const u32 NSL4 = ((Y1 << 3) & MLt28) | (NSL2 & ((Y1 << 3) ^ MLt28));
+        const u32 NSL5 = (Y2 << 3) ^ MLt32 ^ NSL4;
+        const u32 NSL6 = ((Y2 << 3) & MLt32) | (NSL4 & ((Y2 << 3) ^ MLt32));
+        const u32 NSL7 = (Y3 << 3) ^ MLt34 ^ NSL6;
+        const u32 NSL8 = ((Y3 << 3) & MLt34) | (NSL6 & ((Y3 << 3) ^ MLt34));
+        const u32 NSL9 = (Y4 << 3) ^ NSL8;
+        const u32 NSL10 = (Y4 << 3) & NSL8;
+        const u32 NSL11 = (Y5 << 3) ^ NSL10;
+        LB0 = r1;
+        LB1 = NSL1;
+        LB2 = NSL3;
+        LB3 = NSL5;
+        LB4 = NSL7;
+        LB5 = NSL9;
+        LB6 = NSL11;
+    }
+    const u32 St1 = SB0, St9 = SB1, St21 = SB2, St34 = SB3, St47 = SB4, St56 = SB5, St64 = SB6, Lt1 = LB0, Lt9 = LB1, Lt21 = LB2, Lt34 = LB3, Lt47 = LB4, Lt56 = LB5, Lt64 = LB6;
     const u32 D2S1 = D2 >> 1, D2S2 = D2 >> 2, D4S1 = D4 >> 1, D4S3 = D4 >> 3, D6S3 = D6 >> 3;
     const u32 L1S = l1 >> 1, L3S = l3 >> 1, W0S = w0 >> 1, W1S = w1 >> 1;
     const u32 valid = (1u << (len - 1)) - 1, V1 = valid & ~1u, V3 = valid & ~7u;
@@ -1560,17 +2094,27 @@ __device__ __forceinline__ int pat_move(u32 (&B)[6], int& len, u32& l1, u32& l3,
     for (;;) {
         if ((c1 | c3) == 0) return -1;
         u32 cs = c1, cl = c3;
+        #if A2_P
+        #define KEEP(sb, lb) { const u32 a_ = cs & (sb); if ((a_ | (cl & (lb))) != 0) { cs = a_; cl &= (lb); } }
+        #else
         #define KEEP(sb, lb) { const u32 a_ = cs & (sb), b_ = cl & (lb); const bool any_ = (a_ | b_) != 0; cs = any_ ? a_ : cs; cl = any_ ? b_ : cl; }
+        #endif
         KEEP(St64, Lt64)
         KEEP(St56, Lt56)
         KEEP(St47, Lt47)
         KEEP(St34, Lt34)
+#if !VK_L3
         KEEP(St21, Lt21)
+#endif
+#if !VK_L2
         KEEP(St9, Lt9)
+#endif
+#if !VK_L1
         KEEP(St1, Lt1)
+#endif
         #undef KEEP
         const u32 r2 = r0 >> 16;
-        const u32 rot = ((r2 & 0xFFFFu) * (u32)len) >> 16;
+        const u32 rot = VK_ROT == 1 ? 0u : VK_ROT == 2 ? (r2 & 31u) : (((r2 & 0xFFFFu) * (u32)len) >> 16);
         const bool leap = cl != 0;
         const u32 mm = leap ? cl : cs;
         const int x = (int)((rot + __ffs(__funnelshift_r(mm, mm, rot)) - 1) & 31);
@@ -2049,10 +2593,18 @@ extern "C" __global__ void __launch_bounds__(BLOCK, 768 / BLOCK) attempts_split(
         u32 C[3] = {0, 0, 0};
         u32 u = 0, used = 0, z = 0;        // this position's moves left to try, and those asleep: slides | leaps << 16
         bool all_done = false;
+        int len2 = 0;
         u32 mv = 0;                        // the move tested and waiting to be played: bits 0-4 which, 5-10 the covered card, 11-16 the card out of P, bit 17 set
         bool win = false;
         #if RECON
         u32 rec[5] = {0, 0, 0, 0, 0};
+        #endif
+        #if A2_K
+        // Read at run time (every thread of a warp is here), so that these stay in registers through the search loop instead of being
+        // rematerialised each turn: 0xFFFFFFFF on every thread, whatever the compiler assumes.
+        const u32 ALLT = __ballot_sync(FULL, true), K1 = ALLT >> 31, K2 = K1 + K1, KFE = ~K1, K10001 = K1 * 0x10001u, K10516 = K1 * 0x10516u, KFC = K1 * 0xFFFC0000u;
+        #else
+        const u32 K1 = 1u, K2 = 2u, KFE = 0xFFFFFFFEu, K10001 = 0x10001u, K10516 = 0x10516u, KFC = 0xFFFC0000u;
         #endif
         for (;;) {
             u32 need = __ballot_sync(FULL, phase == TAKE || phase == FINISH);
@@ -2090,6 +2642,9 @@ extern "C" __global__ void __launch_bounds__(BLOCK, 768 / BLOCK) attempts_split(
                         u32 info = (u32)(qhi >> 32);
                         u64 p = q_present[slot];
                         left = info & 0x3F; len = info >> 6 & 0x1F; moves = info >> 11;
+                        #if SA_L
+                        len = (int)(0xFFFFFFFFu << len);
+                        #endif
                         P0 = (u32)p; P1 = (u32)(p >> 32);
                     }
                     a = q_a[slot]; deal = q_moves[slot];
@@ -2117,8 +2672,14 @@ extern "C" __global__ void __launch_bounds__(BLOCK, 768 / BLOCK) attempts_split(
             // One pass: the edit, then every thread's masks, then a test. A move that passes its test waits for the next
             // pass's edit, and a thread out of moves takes one back there, so all threads changing their rows run one
             // piece of code in a turn, where two blocks each ran for a third of them.
+            #if A2_T
+            const bool srch_ = phase == SEARCH, nz_ = (mv | u | depth) != 0;
+            if (srch_ && !nz_) phase = FINISH;   // the residual is lost
+            if (srch_ && nz_ && (mv != 0 || u == 0)) {
+            #else
             if ((mv | u | depth) == 0 && phase == SEARCH) phase = FINISH;   // the residual is lost
             if (phase == SEARCH && (mv != 0 || u == 0)) {
+            #endif
                 const bool fwd = mv != 0;
                 u32 v = mv;
                 if (!fwd) {
@@ -2126,6 +2687,56 @@ extern "C" __global__ void __launch_bounds__(BLOCK, 768 / BLOCK) attempts_split(
                     z = ASLEEP(depth);
                     v = VIAS(depth);
                 }
+#if SA_E | SA_P | SA_L | SA_Z
+                #if A2_D
+                u32 pile = v & 15, vs3 = v >> 3, dd, y, cov = v >> 20 & 63, out = v >> 26;
+                asm("lop3.b32 %0, %1, 2, %2, 0xEA;" : "=r"(dd) : "r"(vs3), "r"(K1));     // (v >> 3 & 2) | 1
+                y = pile - dd;
+                #else
+                u32 b = v & 31, pile = b & 15, x1 = b >> 4, dd = x1 * 2u + 1u, y = pile - dd, cov = v >> 20 & 63, out = v >> 26;
+                #endif
+                u32 Y = K10001 << y;
+                if (fwd) {
+                    ASLEEP(depth) = z;
+                    VIAS(depth) = v;
+                    depth++;
+                    u32 past = K2 << pile;
+                    #if SA_Z
+                    const u32 before = z;      // bit b is cleared by the masks below: it sits at or above pile in its half
+                    #else
+                    const u32 before = z ^ (1u << b);
+                    #endif
+                    #if A2_D
+                    u32 t3 = (u | z) & (Y >> (v & 16u));
+                    #else
+                    u32 t3 = (u | z) & (Y >> (x1 << 4));
+                    #endif
+                    #if VS_Z == 3
+                    z = 0;
+                    #else
+                    z = sa_mux(Y - 0x10001u, before, VS_Z == 1 ? 0u : t3) | (VS_Z == 2 ? 0u : ((before >> 1) & 0x7FFF7FFFu & ~(past - 1) & (past * KFC + 0xFFFFu)));
+                    #endif
+                }
+                #if SA_E
+                sa_edit(C, fwd, y, dd, cov, Y, K1);
+                #else
+                bp_edit(C, fwd, pile, y, dd, cov);
+                #endif
+                u32 cb = K1 << (out & 31);
+                #if SA_P
+                const u32 um = (u32)((int)v >> 31);
+                P0 ^= cb & ~um;
+                P1 ^= cb & um;
+                #else
+                bool up = (int)v < 0;
+                P0 ^= up ? 0u : cb;
+                P1 ^= up ? cb : 0u;
+                #endif
+                left = y == 0 ? (fwd ? out : cov) : left;
+                #if !SA_L
+                len += fwd ? -1 : 1;
+                #endif
+#else
                 u32 b = v & 31, pile = b & 15, dd = 1 + (b >> 3 & 2), y = pile - dd, cov = v >> 20 & 63, out = v >> 26;
                 if (fwd) {
                     ASLEEP(depth) = z;
@@ -2142,33 +2753,68 @@ extern "C" __global__ void __launch_bounds__(BLOCK, 768 / BLOCK) attempts_split(
                 P1 ^= up ? cb : 0u;
                 left = y == 0 ? (fwd ? out : cov) : left;
                 len += fwd ? -1 : 1;
+#endif
                 mv = 0;
             }
             {
                 u32 ms, ml;
-                bp_masks(C, len, ms, ml);
+                #if SA_L
+                const u32 E = (u32)(len >> depth);        // the row-end mask: len holds E0 = -1 << L0, as an int
+                #define SA_E_ALSO E
+                #else
+                const int E = len;
+                #endif
+                #if SA_M
+                u = sa_andn(sa_u(sa_nor1(E, bp_mis(C, 1)), sa_nor7(E, bp_mis(C, 3))), z);
+                ms = ml = 0;
+                #else
+                bp_masks(C, (int)E, ms, ml);
+                #endif
+                #if !SA_M
                 u = (ms | ml << 16) & ~z;
+                #endif
+                #if SA_L
+                len2 = (int)E;
+                #endif
             }
             if (phase == SEARCH && u != 0) {
                 {
                     // Leaps first, then slides, the highest pile first: most searches run out of moves within their
                     // budget, so the order hardly matters to what they find, and a fixed one needs no random numbers.
                     u32 b = 31 - __clz(u), pile = b & 15, dd = 1 + (b >> 3 & 2), y = pile - dd;
-                    u ^= 1u << b;
-                    z |= 1u << b;
+                    u ^= K1 << b;
+                    z |= K1 << b;
                     used++;
-                    u32 out = bp_card(C, y == 0 ? pile : y);    // the card leaving P: the covered one, or the mover when it lands on pile 0
+                    #if SA_T
+                    u32 out = sa_card(C, y == 0 ? pile : y);    // the card leaving P
+                    #else
+                    u32 out = bp_card(C, y == 0 ? pile : y);    // the card leaving P
+                    #endif: the covered one, or the mover when it lands on pile 0
                     u32 cov = y == 0 ? left : out;
+                    #if SA_L
+                    if ((u32)len2 == 0xFFFFFFFCu) {
+                    #else
                     if (len == 2) {
+                    #endif
                         VIAS(depth) = b;
                         win = true;
                         depth++;
                         phase = FINISH;
                     } else {
+                        #if SA_T
+                        u32 nb = __funnelshift_l(KFE, KFE, out), um = (u32)((int)(out << 26) >> 31);   // rotation by out: only its low 5 bits count
+                        #if A2_A
+                        if (VS_NOTEST(depth) || a2_alive(sa_andor(P0, nb, um), sa_andorn(P1, nb, um), y == 0 ? out : left, K10001, K10516))
+                        #else
+                        if (sa_alive(sa_andor(P0, nb, um), sa_andorn(P1, nb, um), y == 0 ? out : left))
+                        #endif
+                            mv = b | cov << 20 | out << 26;
+                        #else
                         u32 nb = ~(1u << (out & 31));
                         bool up = out & 32;
                         if (alive_rest(P0 & (up ? 0xFFFFFFFFu : nb), P1 & (up ? nb : 0xFFFFFFFFu), y == 0 ? out : left))
                             mv = b | cov << 20 | out << 26;
+                        #endif
                     }
                 }
             }
