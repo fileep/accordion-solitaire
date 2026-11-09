@@ -1,0 +1,24 @@
+﻿idle: True
+{"seed": 3417058778, "status": "closed", "n_cuts_tried": 43, "n_window_proofs": 0, "best": null, "false_barriers": []}
+{"seed": 13313622150, "status": "closed", "n_cuts_tried": 27, "n_window_proofs": 0, "best": null, "false_barriers": []}
+{"seed": 17436063346, "status": "closed", "n_cuts_tried": 31, "n_window_proofs": 0, "best": null, "false_barriers": []}
+{"seed": 7311711652, "status": "closed", "n_cuts_tried": 23, "n_window_proofs": 0, "best": null, "false_barriers": []}
+{"seed": 13060247781, "status": "closed", "n_cuts_tried": 20, "n_window_proofs": 0, "best": null, "false_barriers": []}
+{"seed": 20677695248, "status": "closed", "n_cuts_tried": 28, "n_window_proofs": 0, "best": null, "false_barriers": []}
+{"seed": 7812820073, "status": "closed", "n_cuts_tried": 27, "n_window_proofs": 0, "best": null, "false_barriers": []}
+{"seed": 21018945683, "status": "closed", "n_cuts_tried": 26, "n_window_proofs": 0, "best": null, "false_barriers": []}
+{"seed": 20456660150, "status": "closed", "n_cuts_tried": 25, "n_window_proofs": 0, "best": null, "false_barriers": []}
+{"seed": 4959093869, "status": "closed", "n_cuts_tried": 22, "n_window_proofs": 0, "best": null, "false_barriers": []}
+{"seed": 202346720, "status": "closed", "n_cuts_tried": 19, "n_window_proofs": 0, "best": null, "false_barriers": []}
+{"seed": 12929752010, "status": "closed", "n_cuts_tried": 0, "n_window_proofs": 0, "best": null, "false_barriers": []}
+{"seed": 10345199754, "status": "closed", "n_cuts_tried": 19, "n_window_proofs": 0, "best": null, "false_barriers": []}
+{"seed": 7548976414, "status": "closed", "n_cuts_tried": 18, "n_window_proofs": 0, "best": null, "false_barriers": []}
+{"seed": 18238151902, "status": "closed", "n_cuts_tried": 0, "n_window_proofs": 0, "best": null, "false_barriers": []}
+{"seed": 17480567423, "status": "closed", "n_cuts_tried": 19, "n_window_proofs": 0, "best": null, "false_barriers": []}
+{"seed": 19010792488, "status": "closed", "n_cuts_tried": 19, "n_window_proofs": 0, "best": null, "false_barriers": []}
+{"seed": 6885997408, "status": "closed", "n_cuts_tried": 22, "n_window_proofs": 0, "best": null, "false_barriers": []}
+{"seed": 7615968364, "status": "closed", "n_cuts_tried": 0, "n_window_proofs": 0, "best": null, "false_barriers": []}
+{"seed": 14204616047, "status": "closed", "n_cuts_tried": 26, "n_window_proofs": 0, "best": null, "false_barriers": []}
+{"seed": 5895817790, "status": "closed", "n_cuts_tried": 0, "n_window_proofs": 0, "best": null, "false_barriers": []}
+{"seed": 1005616798, "status": "capped", "n_cuts_tried": 47, "n_window_proofs": 0, "best": null, "false_barriers": []}
+{"seed": 112249515, "status": "capped", "n_cuts_tried": 47, "n_window_proofs": 0, "best": null, "false_barriers": []}

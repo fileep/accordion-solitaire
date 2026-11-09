@@ -1,0 +1,26 @@
+brute 3417058778 words 128 explicit 128 equal True illegal-closure 0
+brute 13313622150 words 5148 explicit 5148 equal True illegal-closure 0
+brute 17436063346 words 7344 explicit 7344 equal True illegal-closure 0
+brute 7311711652 words 12696 explicit 12696 equal True illegal-closure 0
+brute 13060247781 words 15750 explicit 15750 equal True illegal-closure 0
+brute 20677695248 words 15840 explicit 15840 equal True illegal-closure 0
+brute 7812820073 words 30608 explicit 30608 equal True illegal-closure 0
+brute 21018945683 words 32256 explicit 32256 equal True illegal-closure 0
+brute 20456660150 words 33600 explicit 33600 equal True illegal-closure 0
+brute 4959093869 words 63720 explicit 63720 equal True illegal-closure 0
+brute 202346720 words 74970 explicit 74970 equal True illegal-closure 0
+brute 12929752010 words 79426 explicit 79426 equal True illegal-closure 0
+brute 10345199754 words 107325 explicit 107325 equal True illegal-closure 0
+brute 7548976414 words 130240 explicit 130240 equal True illegal-closure 0
+brute 18238151902 words 168098 explicit 168098 equal True illegal-closure 0
+near 12929752010 samples 20000 moves 56537 not-in-S 0 | delete-word: rejected 30 accepted 0 | drop-edge: rejected 20 accepted 10 same 0 minp 2 secs 5.1
+Traceback (most recent call last):
+  File "C:\Users\Filip\AppData\Local\Temp\claude\C--Users-Filip-Documents-Accordion-Solitaire\2d8fbaee-89f4-4073-a2f7-1bc93a04a06d\scratchpad\ov\lean2\falsify.py", line 223, in <module>
+    main()
+  File "C:\Users\Filip\AppData\Local\Temp\claude\C--Users-Filip-Documents-Accordion-Solitaire\2d8fbaee-89f4-4073-a2f7-1bc93a04a06d\scratchpad\ov\lean2\falsify.py", line 167, in main
+    v = verify(dd, m, 1e9)
+        ^^^^^^^^^^^^^^^^^^
+  File "C:\Users\Filip\AppData\Local\Temp\claude\C--Users-Filip-Documents-Accordion-Solitaire\2d8fbaee-89f4-4073-a2f7-1bc93a04a06d\scratchpad\ov\lean2\dawg.py", line 289, in verify
+    for i in range(0, len(t), 2):
+                      ^^^^^^
+TypeError: object of type 'NoneType' has no len()

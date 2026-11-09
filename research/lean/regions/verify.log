@@ -1,0 +1,18 @@
+﻿idle: True
+{"seed": 3417058778, "parts": 44, "tracked_states": 128, "tops_states": 128, "moves": 416, "crossing_moves": 0, "product": 128, "rec": 128, "literal_product_equal": true, "secs": 0.0}
+{"seed": 13313622150, "parts": 28, "tracked_states": 5445, "tops_states": 5148, "moves": 18105, "crossing_moves": 0, "product": 5148, "rec": 5148, "literal_product_equal": true, "secs": 0.0}
+{"seed": 17436063346, "parts": 32, "tracked_states": 7392, "tops_states": 7344, "moves": 39536, "crossing_moves": 0, "product": 7344, "rec": 7344, "literal_product_equal": true, "secs": 0.1}
+{"seed": 7311711652, "parts": 24, "tracked_states": 13440, "tops_states": 12696, "moves": 53960, "crossing_moves": 0, "product": 12696, "rec": 12696, "literal_product_equal": true, "secs": 0.1}
+{"seed": 13060247781, "parts": 21, "tracked_states": 17370, "tops_states": 15750, "moves": 80085, "crossing_moves": 0, "product": 15750, "rec": 15750, "literal_product_equal": true, "secs": 0.1}
+{"seed": 20677695248, "parts": 29, "tracked_states": 18288, "tops_states": 15840, "moves": 82836, "crossing_moves": 0, "product": 15840, "rec": 15840, "literal_product_equal": true, "secs": 0.1}
+{"seed": 7812820073, "parts": 28, "tracked_states": 37168, "tops_states": 30608, "moves": 170064, "crossing_moves": 0, "product": 30608, "rec": 30608, "literal_product_equal": true, "secs": 0.3}
+{"seed": 21018945683, "parts": 27, "tracked_states": 32256, "tops_states": 32256, "moves": 195456, "crossing_moves": 0, "product": 32256, "rec": 32256, "literal_product_equal": true, "secs": 0.3}
+{"seed": 20456660150, "parts": 26, "tracked_states": 33600, "tops_states": 33600, "moves": 187640, "crossing_moves": 0, "product": 33600, "rec": 33600, "literal_product_equal": true, "secs": 0.3}
+{"seed": 4959093869, "parts": 23, "tracked_states": 63720, "tops_states": 63720, "moves": 331164, "crossing_moves": 0, "product": 63720, "rec": 63720, "secs": 0.5}
+{"seed": 202346720, "parts": 20, "tracked_states": 74970, "tops_states": 74970, "moves": 379939, "crossing_moves": 0, "product": 74970, "rec": 74970, "secs": 0.6}
+{"seed": 10345199754, "parts": 20, "tracked_states": 174375, "tops_states": 107325, "moves": 825045, "crossing_moves": 0, "product": 107325, "rec": 107325, "secs": 1.4}
+{"seed": 7548976414, "parts": 19, "tracked_states": 136160, "tops_states": 130240, "moves": 689600, "crossing_moves": 0, "product": 130240, "rec": 130240, "secs": 1.1}
+{"seed": 17480567423, "parts": 20, "tracked_states": 267840, "tops_states": 219072, "moves": 1098963, "crossing_moves": 0, "product": 219072, "rec": 219072, "secs": 2.2}
+{"seed": 19010792488, "parts": 20, "tracked_states": 297216, "tops_states": 271728, "moves": 1569024, "crossing_moves": 0, "product": 271728, "rec": 271728, "secs": 2.6}
+{"seed": 6885997408, "skipped": "over cap"}
+{"seed": 14204616047, "skipped": "over cap"}

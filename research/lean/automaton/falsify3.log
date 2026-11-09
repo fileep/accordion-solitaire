@@ -1,0 +1,6 @@
+[machine: waited 68 s for the lock]
+near 18238151902 samples 20000 moves 68006 not-in-S 0 | delete-word: rejected 30 accepted 0 | drop-edge: rejected 16 accepted 0 deal-word-gone-or-unchanged 14 minp 3 secs 4.7
+near 7615968364 samples 20000 moves 70691 not-in-S 0 | delete-word: rejected 30 accepted 0 | drop-edge: rejected 20 accepted 0 deal-word-gone-or-unchanged 10 minp 2 secs 11.5
+near 5895817790 samples 20000 moves 90808 not-in-S 0 | delete-word: rejected 30 accepted 0 | drop-edge: rejected 27 accepted 0 deal-word-gone-or-unchanged 3 minp 3 secs 4.0
+near 1005616798 samples 20000 moves 94617 not-in-S 0 | delete-word: rejected 30 accepted 0 | drop-edge: rejected 23 accepted 0 deal-word-gone-or-unchanged 7 minp 2 secs 11.8
+near 112249515 samples 20000 moves 114792 not-in-S 0 | delete-word: rejected 30 accepted 0 | drop-edge: rejected 30 accepted 0 deal-word-gone-or-unchanged 0 minp 2 secs 3.9

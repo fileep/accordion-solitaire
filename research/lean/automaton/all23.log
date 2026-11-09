@@ -1,0 +1,24 @@
+idle True
+  3417058778 pos=      128 mov=       416 match=True minp=45  layernodes=     636 edges=      692 | S nodes=      55 edges=       64 wins=0 | R=55 I=53 look=133 ok=True | 0.0s+0.0s
+ 13313622150 pos=     5148 mov=     17502 match=True minp=35  layernodes=    2693 edges=     4190 | S nodes=     154 edges=      359 wins=0 | R=154 I=228 look=1569 ok=True | 0.0s+0.0s
+ 17436063346 pos=     7344 mov=     39432 match=True minp=39  layernodes=    2514 edges=     3236 | S nodes=      74 edges=      121 wins=0 | R=74 I=84 look=372 ok=True | 0.0s+0.0s
+  7311711652 pos=    12696 mov=     51436 match=True minp=35  layernodes=    3701 edges=     5158 | S nodes=     150 edges=      329 wins=0 | R=150 I=200 look=1359 ok=True | 0.0s+0.0s
+ 13060247781 pos=    15750 mov=     73650 match=True minp=32  layernodes=    4321 edges=     5355 | S nodes=      90 edges=      140 wins=0 | R=90 I=99 look=417 ok=True | 0.0s+0.0s
+ 20677695248 pos=    15840 mov=     72648 match=True minp=36  layernodes=    3061 edges=     4011 | S nodes=      88 edges=      151 wins=0 | R=88 I=104 look=529 ok=True | 0.0s+0.0s
+  7812820073 pos=    30608 mov=    141456 match=True minp=31  layernodes=    4897 edges=     8014 | S nodes=     202 edges=      501 wins=0 | R=202 I=284 look=2484 ok=True | 0.1s+0.0s
+ 21018945683 pos=    32256 mov=    195456 match=True minp=35  layernodes=    3582 edges=     4528 | S nodes=      70 edges=      101 wins=0 | R=70 I=80 look=264 ok=True | 0.0s+0.0s
+ 20456660150 pos=    33600 mov=    187640 match=True minp=36  layernodes=    3410 edges=     4462 | S nodes=      85 edges=      124 wins=0 | R=85 I=73 look=345 ok=True | 0.0s+0.0s
+  4959093869 pos=    63720 mov=    331164 match=True minp=32  layernodes=    6195 edges=     8108 | S nodes=      92 edges=      146 wins=0 | R=92 I=103 look=415 ok=True | 0.1s+0.0s
+   202346720 pos=    74970 mov=    379939 match=True minp=32  layernodes=    5518 edges=     7560 | S nodes=     100 edges=      163 wins=0 | R=100 I=110 look=531 ok=True | 0.1s+0.0s
+ 12929752010 pos=    79426 mov=    223841 match=True minp= 2  layernodes=   18162 edges=    53191 | S nodes=    2689 edges=    13631 wins=0 | R=2689 I=5934 look=76871 ok=True | 0.4s+0.1s
+ 10345199754 pos=   107325 mov=    549000 match=True minp=29  layernodes=    5261 edges=     9296 | S nodes=     198 edges=      516 wins=0 | R=198 I=338 look=2675 ok=True | 0.1s+0.0s
+  7548976414 pos=   130240 mov=    665760 match=True minp=28  layernodes=    9573 edges=    15358 | S nodes=     206 edges=      495 wins=0 | R=206 I=268 look=2382 ok=True | 0.1s+0.0s
+ 18238151902 pos=   168098 mov=    568832 match=True minp= 3  layernodes=   16993 edges=    55220 | S nodes=    2413 edges=    11766 wins=0 | R=2413 I=6705 look=84220 ok=True | 0.5s+0.1s
+ 17480567423 pos=   219072 mov=    929402 match=True minp=27  layernodes=   12181 edges=    25973 | S nodes=     517 edges=     1912 wins=0 | R=517 I=1092 look=11233 ok=True | 0.2s+0.0s
+ 19010792488 pos=   271728 mov=   1452708 match=True minp=29  layernodes=    7518 edges=    12215 | S nodes=     208 edges=      561 wins=0 | R=208 I=323 look=2378 ok=True | 0.1s+0.0s
+  6885997408 pos=   281440 mov=   1377392 match=True minp=27  layernodes=    9574 edges=    21454 | S nodes=     385 edges=     1480 wins=0 | R=385 I=765 look=7593 ok=True | 0.1s+0.0s
+  7615968364 pos=   726019 mov=   2553071 match=True minp= 2  layernodes=   60548 edges=   258508 | S nodes=    8772 edges=    53345 wins=0 | R=8772 I=30377 look=394642 ok=True | 2.1s+0.4s
+ 14204616047 pos=   923520 mov=   4642496 match=True minp=31  layernodes=    9745 edges=    19452 | S nodes=     290 edges=      868 wins=0 | R=290 I=576 look=5094 ok=True | 0.2s+0.0s
+  5895817790 pos=   957502 mov=   4359712 match=True minp= 3  layernodes=   34421 edges=   129285 | S nodes=    1734 edges=     9362 wins=0 | R=1734 I=6444 look=79130 ok=True | 1.1s+0.1s
+  1005616798 pos=  3405471 mov=  16141582 match=True minp= 2  layernodes=   93027 edges=   539143 | S nodes=    9464 edges=    71565 wins=0 | R=9464 I=46565 look=762846 ok=True | 5.2s+0.7s
+   112249515 pos= 19386305 mov= 110959471 match=True minp= 2  layernodes=   31986 edges=    97007 | S nodes=    1135 edges=     5558 wins=0 | R=1135 I=3085 look=41651 ok=True | 0.8s+0.0s

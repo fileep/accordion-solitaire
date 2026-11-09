@@ -1,0 +1,4 @@
+[machine: waited 42 s for the lock]
+subrows agree 150 disagree 0 with-wins 49
+won-deal ery\seed-12793295.json timeout at piles 34 peak nodes 238723
+won-deal ery\seed-12793295.json win seen False positions 2812359502 peak layer nodes 238723 secs 146.9

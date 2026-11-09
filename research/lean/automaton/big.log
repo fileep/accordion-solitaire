@@ -1,0 +1,6 @@
+[machine: waited 2 s for the lock]
+idle True
+  7615968364 pos=   726019 mov=   2553071 match=True minp= 2  layernodes=   60548 edges=   258508 | S nodes=    8772 edges=    53345 wins=0 | R=8772 I=30377 look=394642 ok=True | 7.0s+0.7s
+  5895817790 pos=   957502 mov=   4359712 match=True minp= 3  layernodes=   34421 edges=   129285 | S nodes=    1734 edges=     9362 wins=0 | R=1734 I=6444 look=79130 ok=True | 1.7s+0.1s
+  1005616798 pos=  3405471 mov=  16141582 match=True minp= 2  layernodes=   93027 edges=   539143 | S nodes=    9464 edges=    71565 wins=0 | R=9464 I=46565 look=762846 ok=True | 6.7s+0.8s
+   112249515 pos= 19386305 mov= 110959471 match=True minp= 2  layernodes=   31986 edges=    97007 | S nodes=    1135 edges=     5558 wins=0 | R=1135 I=3085 look=41651 ok=True | 0.8s+0.0s
