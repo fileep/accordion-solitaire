@@ -2,10 +2,16 @@
 
 use crate::card::Card;
 use crate::deck_input::{self, DeckError};
-use crate::rng::Xoshiro256StarStar;
+#[cfg(feature = "second-generator")]
+use crate::rng::ChaCha20 as DealRng;
+#[cfg(not(feature = "second-generator"))]
+use crate::rng::Xoshiro256StarStar as DealRng;
 use std::fmt;
 
 pub const DECK_SIZE: usize = 52;
+
+/// The generator behind [`Deal::from_seed`]. Deals of the same seed differ between the two, so their results mustn't be mixed.
+pub const DEAL_GENERATOR: &str = if cfg!(feature = "second-generator") { "ChaCha20" } else { "xoshiro256**" };
 
 /// A full deck in deal order. Always exactly the 52 distinct cards.
 #[derive(Clone, PartialEq, Eq, Hash)]
@@ -13,9 +19,10 @@ pub struct Deal([Card; DECK_SIZE]);
 
 impl Deal {
     /// The deal for `seed`: canonical order (see [`Card::from_index`]) shuffled by Fisher–Yates, from the last
-    /// position down, with xoshiro256** seeded through SplitMix64 (docs/FORMATS.md).
+    /// position down, with xoshiro256** seeded through SplitMix64 (docs/FORMATS.md). The `second-generator` feature
+    /// deals from ChaCha20 instead, to test that the win rate doesn't depend on the generator.
     pub fn from_seed(seed: u64) -> Deal {
-        let mut rng = Xoshiro256StarStar::from_seed(seed);
+        let mut rng = DealRng::from_seed(seed);
         let mut cards: [Card; DECK_SIZE] = std::array::from_fn(|i| Card::from_index(i as u8));
         for i in (1..DECK_SIZE).rev() {
             let j = rng.below(i as u64 + 1) as usize;
