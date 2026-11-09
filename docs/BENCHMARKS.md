@@ -2371,3 +2371,18 @@ New over base: pair 1 x1.116 last half and x1.095 whole, pair 2 x1.141 and x1.08
 **Considered, not tried:** a mux of class-specific counts in `pat_move` (-30 to -40 LOP3 a move, about +0.8% after the real-cut discount); incremental links in the search's alive test (about 30 ALU against about 32 now); a lazy, undo-free edit (shared memory is full, 63.7 KB); FMA constants hoisted out of the search loop (registers are at 80).
 
 **What binds.** The GPU: 99.7-100% busy through the hot check, at its power cap on a cool desk and at its thermal limit on this one. The CPU does not bind (the misses are 5.9 in 100,000). What is left is structural (fewer search turns, fewer own moves, the search's 23% idle lane slots) and the own move's tail and common block, each estimated under x1.05.
+
+## Holding the battery level instead of pausing (the 2 trillion run, Nov 9)
+
+From `checkpoints/guard.log`, Balanced, on AC, nothing changed by hand between the two stretches:
+
+| Stretch | Deals/s by the hour | Battery |
+|---|---|---|
+| 00:09-07:10 | 6.40-6.74M | -5.5 to -6.8 Wh/h |
+| 11:12-13:12 | 5.39M, 5.01M | -0.8, +1.3 Wh/h |
+
+In the second stretch, sampled once for 30 s near 13:35: CPU package 11.0 W, `acc` on 7.4 cores, GPU 100% busy at 29.4 W and 1,380 MHz, nothing else using the machine. The CPU went to its low-power state by itself; what set it off isn't known.
+
+Full speed with the guard's pauses: 25 Wh down at about 6.3 Wh/h is 4 h of running, 25 Wh back at 30 Wh/h is 50 min, so 83% of the time at 6.6M, about 5.4M deals/s on average. Level battery, no pauses: about 5.2M. The two are within this comparison's noise: a slowdown that only breaks even with the battery costs about what the pauses cost.
+
+**Considered, not tried:** capping the CPU live with the process's affinity (the GPU binds and the CPU is already at 11 W, so little to save); `--threads` on a resume to hold the CPU at that level for good (`-ResumeExtra` in the guard; not measured); a GPU duty cycle in the run (a new build, a stop and a start, for no expected gain); a GPU power limit (a system setting, the user's to make).
