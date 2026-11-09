@@ -48,6 +48,7 @@ def source(seed):
     sup = superset_claims(edges, acc)
     lines = ["import Certificate", "open Accordion", "",
              f'certificate_table t{seed} "{table(edges, acc, sup)}"', "",
+             "set_option maxHeartbeats 0 in",
              f"theorem lost_{seed} : DealLost (deal {seed}) :=",
              f"  dealLost_of_lost (Aut.lost_of_check (A := Aut.ofTree {len(edges)} t{seed}) (root := 0) (by decide +kernel) (by decide +kernel))", "",
              f"#print axioms lost_{seed}", ""]
