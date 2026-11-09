@@ -56,7 +56,7 @@ example : {refused("good")}.accepts 0 (deal {LOST + 1}) = false := by decide +ke
 example : ({refused("missingEdge")}.check 0 && {refused("missingEdge")}.accepts 0 (deal {LOST})) = false := by decide +kernel
 example : {refused("falseClaim")}.check 0 = false := by decide +kernel
 example : {refused("wonRow", len(won_edges))}.check 0 = false := by decide +kernel
-example : (Aut.mk 0 (fun _ => [(1, 5)]) (fun _ => false) (fun _ => [])).check 0 = false := by decide +kernel
+example : (Aut.mk 0 (fun _ => [(1, 5)]) (fun _ => false) (fun _ => .none)).check 0 = false := by decide +kernel
 
 #print axioms won_{seed}
 """

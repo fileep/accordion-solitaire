@@ -1,51 +1,76 @@
-# Lean proofs of the lost deals: studies so far
+# Lean proofs of the lost deals
 
-Nothing here has been run in Lean. Lean is not installed, `automaton/Accordion.lean` has never been compiled and its proofs are mostly outlines with `sorry`. In the reports, [M] means measured and [E] means estimated; every Lean speed is [E].
+A lost deal is proved in the Lean 4 kernel from a small automaton of its reachable positions. Everything is in `automaton/`, on
+Lean 4.35.0 (`lean-toolchain`). The checker is proved correct for any certificate, with no `sorry`; each theorem depends only on
+`propext` and `Quot.sound`.
 
-Read them in this order. Each later study overrides the one before it where they differ.
+## The files
 
-| File | Date | What it says | Standing |
-|---|---|---|---|
-| `leanproof.md` | 2026-11-08 | Trust model, what the theorem can and can't say, wins vs losses, staged plan | Current on trust and wins. Its "kernel-only is impractical for all losses" is overtaken |
-| `regions.md` | 2026-11-08 | A closed split of the row into blocks proves a jammed deal lost; 17 of 23 split | Correct as far as tested, but no longer needed. A hand argument, not machine-checked |
-| `lean2.md` | 2026-11-09 | The whole reachable set fits a small automaton over the row of top cards; the check is one pass over its nodes | Latest. This is the route to follow |
+| File | What it is |
+|---|---|
+| `automaton/Accordion.lean` | Rules on piles, the deal generator, the theorem that a passing certificate proves the loss, a replayed win |
+| `automaton/Certificate.lean` | Loads a certificate table straight into the kernel, for speed. Needs no trust: a wrong table fails |
+| `automaton/dawg.py` | Builds the automaton by forward reachability on automata |
+| `automaton/lean_certificates.py` | Writes the Lean text for a seed |
+| `automaton/prove_all.py` | Proves every loss in batches, with a memory cap |
+| `automaton/lean_tests.py` | Writes the tests: a real win, and bad certificates the kernel must refuse |
+| `automaton/check_certificates.py` | A second checker in Python that shares no code with `dawg.py`; results in `certificates.csv` |
 
-## The main result
+To build and prove:
 
-Write a position as the word of its top cards. A lost deal's reachable set is a small minimal automaton: 26.9M positions across the 23 recorded losses become 29,171 nodes, and the 19.4M-position deal becomes 1,135. The proof is three checks: the deal's word is accepted, no one-card word is accepted, and every slide or leap from an accepted word stays accepted. Kernel-only is estimated at 2-36 core-hours for about 1,040 losses.
+```bash
+lean -R research/lean/automaton -o build/Accordion.olean research/lean/automaton/Accordion.lean
+```
+
+```bash
+LEAN_PATH=build lean -R research/lean/automaton -o build/Certificate.olean research/lean/automaton/Certificate.lean
+```
+
+```bash
+python research/lean/automaton/prove_all.py hard-deals/proofs research/lean/automaton/lean_results.csv build
+```
 
 ## What has been checked
 
-- **The agent's tests** are in `lean2.md` section 2: counts match the records on 23 of 23 losses, and mutated automatons are rejected.
-- **A separate check** (`automaton/spot_check.py`, written without reading `dawg.py`) enumerated three near-wins, built the automaton and ran the three checks:
+- With the current checker, these losses are proved in the kernel: seeds 3,417,058,778, 7,311,711,652, 112,249,515, 202,346,720,
+  1,005,616,798 and 124,280,819,596. The full list of losses has not been run: that waits for the end of the 2 trillion deal run.
+- `lean_tests.py` compiles: a 51-move win of seed 0 replays under the same rules, and a dropped edge, a false inclusion claim, a
+  winnable row and an empty table are all refused.
+- `check_certificates.py` passes all 138 losses it was run on, and agrees with an explicit search on 400 random rows.
 
-| Seed | Words = record | Moves = record | Nodes (claimed) | Check | One-word deletions caught |
-|---|---|---|---|---|---|
-| 12929752010 | 79,426 | 223,841 | 2,689 (2,689) | pass | 5 of 5 |
-| 18238151902 | 168,098 | 568,832 | 2,413 (2,413) | pass | 5 of 5 |
-| 5895817790 | 957,502 | 4,359,712 | 1,734 (1,734) | pass | 5 of 5 |
+## Cost
 
-- **A second checker on every loss so far** (`automaton/check_certificates.py`, results in `automaton/certificates.csv`, 2026-11-09). It shares no code with `dawg.py`: the rules and generator are `testdata/tools/make_golden.py`'s, and the check is the one `check` states in `Accordion.lean`. All 138 losses found up to seed 187 billion pass, and each position count equals its record, the 19.4M deal's 1,135 nodes included. The check agreed with an explicit search on 400 random short rows (52 with a win) and rejected all 165 damaged certificates.
-- **How certificates are made:** `dawg.py` computes the reachable set layer by layer on automata, never position by position, so its cost follows the nodes (about a second for the 19.4M deal). It is still a full forward search of the deal, done symbolically. What needs no search is the check: the three conditions prove the loss whichever program found the automaton.
-- **The draft, reviewed but still not compiled:** the generator matches `crates/core/src/rng.rs` and `deal.rs`, and the rules match `make_golden.py`. `check` had a hole: it never required the root and edge targets to be nodes it had looked at, so a table with `size = 0` passed and would have proved any deal lost. `inBounds` closes it. `DealLost` now states the result on real piles, with the step down to top cards left as an outline.
+One core of the laptop, at idle priority beside the main run, in user CPU time. Start-up is about 1.5 s and 2 GB, as Lean's own
+library is loaded; a batch of deals pays that once.
 
-## Limits for any claim
+| Deal | Positions | Nodes | CPU | Peak memory |
+|---|---|---|---|---|
+| Seed 112,249,515 | 19,386,305 | 1,135 | 7.6 s | 2.3 GB |
+| Seed 1,005,616,798, the most work of the first 138 | 3,405,471 | 9,464 | 168 s | 2.6 GB |
 
-- It covers named losses only. It says nothing about the count of wins, so "exactly N losses in M deals" also depends on the win verification in `acc`.
-- A misread rule would pass through every route. The rules text in Lean is the part to review.
-- Certificates exist for the 138 losses so far: at most 10,468 nodes and 676,119 lookups [M]. The rest of the run may hold larger ones. A real won deal blew up (238,723 nodes in one layer by 34 piles), so there is no claim about wins.
-- The estimates in `lean2.md` assume about 1,040 losses. The run in progress is 2 trillion deals, about 1,480 losses at its rate so far. The 138 took 4.06M lookups, 29,423 each [M], so about 44M in all and 1-24 core-hours at `lean2.md`'s 0.1-2 ms a lookup [E]. `check_certificates.py` counts a lookup a little differently from `dawg.py`: 35,042 against 41,651 on the 19.4M deal.
+Across the first 138 losses the check does 4.06 million table reads, so about 17 minutes of CPU, and about 3 hours for 1,450 losses
+(an estimate from the two deals above).
 
-## Next steps (from `lean2.md` section 5)
+How the checker got here, so nobody repeats it. The first version took 34 s on seed 112,249,515 and ran out of its time limit on
+seed 1,005,616,798; a batch reached 40 GB and pushed the 2 trillion run into paging.
 
-1. Stage 0 in Lean: rules, generator tested on the recorded seed/card pairs, the checker, then seeds 3,417,058,778 and 112,249,515. This replaces the timing estimates with real ones. It needs Lean installed (`elan`), which is the user's to do.
-2. Generate a certificate for every loss and recheck each in a second language.
-3. Kernel-check them all, using `native_decide` only for a deal whose automaton is too big.
+- **Inclusion claims as a search tree instead of a list** was the largest gain, 5.5 times on the hardest deal. A node can have 2,697
+  claims, and scanning them was 55 million steps.
+- **Many small theorems per deal** caps memory, as the kernel frees its caches after each declaration. A theorem must also stay
+  under about 1,000 nodes, because the kernel recurses once per node of the run (`MAX_RUN`).
+- **Recursors instead of compiled recursion and `match`, and small loop bodies** gave about a factor of 2.5, and one Lean start-up per batch saves 1.5 s a deal.
+- **Tried and dropped:** one packed `Nat` table of all edges, read with shifts. It was 4 times slower, as every read copies a large number.
 
-## Other files
+## Limits
 
-- `automaton/`: `Accordion.lean` (draft), `dawg.py` (builds and checks automatons), `check_certificates.py` and `certificates.csv` (second checker and its results), `anatomy.py`, `falsify.py`, `spot_check.py`, logs and results.
-- `regions/`: scripts and per-deal results for `regions.md`.
-- `first-study/`: Python used for `leanproof.md`.
+- It covers named losses only. The count of wins rests on the replay in `acc`.
+- A misread rule would pass every check, so the text of the rules is the part to review.
+- Won deals don't compress this way: one reached 238,723 nodes in a single layer at 34 piles.
+
+## The earlier studies
+
+Later studies override earlier ones. `leanproof.md` set out the trust model and the plan, `regions.md` found the closed splits of
+jammed deals, and `lean2.md` found the automaton route. Their Lean timings are estimates made before Lean was installed, and
+`lean2.md` assumes about 1,040 losses.
 
 Scripts were written for one machine and may have absolute paths in them.

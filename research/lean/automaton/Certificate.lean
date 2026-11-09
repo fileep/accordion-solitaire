@@ -27,16 +27,28 @@ private def pairsE : List Nat → List Expr
     mkApp4 (mkConst ``Prod.mk [.zero, .zero]) natTy natTy (mkRawNatLit a) (mkRawNatLit t) :: pairsE rest
   | _ => []
 
+private partial def firstSet (xs : Array Nat) (bit i hi : Nat) : Nat :=
+  if i < hi && !(xs[i]!).testBit bit then firstSet xs bit (i + 1) hi else i
+
+/-- `NatSet` of the sorted numbers `xs[lo]` to `xs[hi - 1]`, split on the highest bit where they differ. -/
+private partial def setE (xs : Array Nat) (lo hi : Nat) : Expr :=
+  if lo ≥ hi then mkConst ``NatSet.none
+  else if lo + 1 == hi then mkApp (mkConst ``NatSet.leaf) (mkRawNatLit xs[lo]!)
+  else
+    let bit := Nat.log2 (xs[lo]! ^^^ xs[hi - 1]!)
+    let mid := firstSet xs bit lo hi
+    mkApp3 (mkConst ``NatSet.node) (mkRawNatLit bit) (setE xs lo mid) (setE xs mid hi)
+
 private def nodeE (record : String) : Expr :=
   match record.splitOn "|" with
   | [es, a, ss] =>
     mkApp3 (mkConst ``NodeData.mk) (listE pairTy (pairsE (numbers es)))
       (mkConst (if a == "1" then ``Bool.true else ``Bool.false))
-      (listE natTy ((numbers ss).map mkRawNatLit))
+      (setE (numbers ss).toArray 0 (numbers ss).length)
   | _ => panic! "bad certificate record"
 
 private def emptyLeaf : Expr :=
-  mkApp (mkConst ``Tree.leaf) (mkApp3 (mkConst ``NodeData.mk) (listE pairTy []) (mkConst ``Bool.false) (listE natTy []))
+  mkApp (mkConst ``Tree.leaf) (mkApp3 (mkConst ``NodeData.mk) (listE pairTy []) (mkConst ``Bool.false) (mkConst ``NatSet.none))
 
 /-- The binary trie that `Tree.get` reads: this subtree holds the numbers `lo` to `lo + 2 ^ k - 1`. -/
 private partial def treeE (nodes : Array Expr) (lo k : Nat) : Expr :=
