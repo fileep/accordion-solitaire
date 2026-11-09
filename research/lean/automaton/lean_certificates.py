@@ -42,24 +42,31 @@ def table(edges, acc, sup):
                     for out, a, s in zip(edges, acc, sup))
 
 
+HEADER = "import Certificate
+open Accordion
+
+"
+
+
 def source(seed):
-    """The Lean file proving `seed` lost, with the size of its certificate as (nodes, edges, claims)."""
+    """The Lean text proving `seed` lost, for a file that starts with HEADER, and the size of its certificate as (nodes, edges, claims)."""
     edges, acc = build(deal_from_seed(seed))
     sup = superset_claims(edges, acc)
-    lines = ["import Certificate", "open Accordion", "",
-             f'certificate_table t{seed} "{table(edges, acc, sup)}"', "",
+    lines = [f'certificate_table t{seed} "{table(edges, acc, sup)}"', "",
              "set_option maxHeartbeats 0 in",
              f"theorem lost_{seed} : DealLost (deal {seed}) :=",
              f"  dealLost_of_lost (Aut.lost_of_check (A := Aut.ofTree {len(edges)} t{seed}) (root := 0) (by decide +kernel) (by decide +kernel))", "",
-             f"#print axioms lost_{seed}", ""]
-    return "\n".join(lines), (len(edges), sum(map(len, edges)), sum(map(len, sup)))
+             f"#print axioms lost_{seed}", "", ""]
+    return "
+".join(lines), (len(edges), sum(map(len, edges)), sum(map(len, sup)))
 
 
 def main():
     text, size = source(int(sys.argv[2]))
     print("nodes, edges, claims:", size)
-    with open(sys.argv[1], "w", encoding="utf-8", newline="\n") as f:
-        f.write(text)
+    with open(sys.argv[1], "w", encoding="utf-8", newline="
+") as f:
+        f.write(HEADER + text)
 
 
 if __name__ == "__main__":

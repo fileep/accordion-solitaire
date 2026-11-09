@@ -164,6 +164,8 @@ theorem lost_of_invariant {d : List Card} (S : List Card → Prop)
     (h0 : S d) (hc : ∀ w w', S w → Step w w' → S w') (hw : ∀ c, ¬ S [c]) : Lost d :=
   fun c hr => hw c (reach_inv hc h0 hr)
 
+noncomputable section
+
 /-! ## Part 4. The automaton certificate
 
 The set of positions is the language of a deterministic automaton over cards, given as an untrusted table from outside
@@ -177,13 +179,16 @@ structure Aut where
   acc   : Nat → Bool                -- a word may end here
   sup   : Nat → List Nat
 
-def lookup (a : Nat) : List (Nat × Nat) → Option Nat
-  | [] => none
-  | e :: rest => bif Nat.beq a e.1 then some e.2 else lookup a rest
+/-- Everything the kernel runs is written with the recursors directly: structural recursion compiles to `brecOn`, which
+    costs the kernel several times as many reduction steps. -/
+def allB {α : Type} (p : α → Bool) (l : List α) : Bool :=
+  List.rec (motive := fun _ => Bool) true (fun h _ ih => p h && ih) l
 
-def memNat (s : Nat) : List Nat → Bool
-  | [] => false
-  | x :: xs => Nat.beq s x || memNat s xs
+def lookup (a : Nat) (es : List (Nat × Nat)) : Option Nat :=
+  List.rec (motive := fun _ => Option Nat) none (fun e _ ih => bif Nat.beq a e.1 then some e.2 else ih) es
+
+def memNat (s : Nat) (xs : List Nat) : Bool :=
+  List.rec (motive := fun _ => Bool) false (fun x _ ih => Nat.beq s x || ih) xs
 
 namespace Aut
 
@@ -191,27 +196,23 @@ variable (A : Aut)
 
 def next (q a : Nat) : Option Nat := lookup a (A.edges q)
 
-def run : Nat → List Nat → Option Nat
-  | q, [] => some q
-  | q, a :: w => match A.next q a with
-    | some q' => run q' w
-    | none => none
+def run (q : Nat) (w : List Nat) : Option Nat :=
+  List.rec (motive := fun _ => Nat → Option Nat) (fun q => some q)
+    (fun a _ ih q => match A.next q a with | some q' => ih q' | none => none) w q
 
-def accepts : Nat → List Nat → Bool
-  | q, [] => A.acc q
-  | q, a :: w => match A.next q a with
-    | some q' => accepts q' w
-    | none => false
+def accepts (q : Nat) (w : List Nat) : Bool :=
+  List.rec (motive := fun _ => Nat → Bool) (fun q => A.acc q)
+    (fun a _ ih q => match A.next q a with | some q' => ih q' | none => false) w q
 
 /-- Is everything `r` accepts claimed to be accepted by `s`? -/
 def sub (r s : Nat) : Bool := Nat.beq r s || memNat s (A.sup r)
 
 def inclAt (r s : Nat) : Bool :=
   (!(A.acc r) || A.acc s) &&
-  (A.edges r).all fun e =>
+  allB (fun e =>
     match A.next s e.1 with
     | some s' => A.sub e.2 s'
-    | none => false
+    | none => false) (A.edges r)
 
 def covered (p : Nat) (path : List Nat) (r : Nat) : Bool :=
   match A.run p path with
@@ -220,34 +221,40 @@ def covered (p : Nat) (path : List Nat) (r : Nat) : Bool :=
 
 /-- The local rule at node `p`: whatever a slide or a leap onto letter `a` produces is back in the language of `p`. -/
 def nodeOK (p : Nat) : Bool :=
-  (A.edges p).all fun e =>
-    (A.edges e.2).all fun f =>
-      (!(sameSuitOrRank e.1 f.1) || A.covered p [f.1] f.2) &&
-      (A.edges f.2).all fun g =>
-        (A.edges g.2).all fun h =>
-          !(sameSuitOrRank e.1 h.1) || A.covered p [h.1, f.1, g.1] h.2
+  allB (fun e => Prod.rec (motive := fun _ => Bool) (fun a c =>
+    allB (fun f => Prod.rec (motive := fun _ => Bool) (fun x c1 =>
+      (!(sameSuitOrRank a x) || A.covered p [x] c1) &&
+      allB (fun g => Prod.rec (motive := fun _ => Bool) (fun y c2 =>
+        allB (fun h => Prod.rec (motive := fun _ => Bool) (fun b r =>
+          !(sameSuitOrRank a b) || A.covered p [b, x, y] r) h) (A.edges c2)) g) (A.edges c1)) f) (A.edges c)) e) (A.edges p)
 
 /-- Reading a word can't leave the nodes that `check` looks at. Without this, a table with `size = 0` would pass. -/
 def inBounds (root : Nat) : Bool :=
   Nat.ble (root + 1) A.size &&
-  (List.range A.size).all fun q => (A.edges q).all fun e => Nat.ble (e.2 + 1) A.size
+  allB (fun q => allB (fun e => Nat.ble (e.2 + 1) A.size) (A.edges q)) (List.range A.size)
 
-def inclOK : Bool := (List.range A.size).all fun r => (A.sup r).all fun s => A.inclAt r s
+def inclOK : Bool := allB (fun r => allB (fun s => A.inclAt r s) (A.sup r)) (List.range A.size)
 
-def nodesOK : Bool := (List.range A.size).all A.nodeOK
+def nodesOK : Bool := allB A.nodeOK (List.range A.size)
 
 /-- All of it: no word of one letter is accepted, so no position in the language is a win. -/
 def check (root : Nat) : Bool :=
-  A.inBounds root && A.inclOK && A.nodesOK && (A.edges root).all fun e => !(A.acc e.2)
+  A.inBounds root && A.inclOK && A.nodesOK && allB (fun e => !(A.acc e.2)) (A.edges root)
 
 end Aut
 
 theorem and_left {a b : Bool} (h : (a && b) = true) : a = true := by cases a <;> simp_all
 theorem and_right {a b : Bool} (h : (a && b) = true) : b = true := by cases a <;> simp_all
 theorem of_not_or {a b : Bool} (h : (!a || b) = true) (ha : a = true) : b = true := by cases a <;> simp_all
-theorem all_mem {α : Type} {l : List α} {p : α → Bool} {x : α} (h : l.all p = true) (hx : x ∈ l) : p x = true :=
-  List.all_eq_true.mp h x hx
-theorem all_range {n : Nat} {p : Nat → Bool} {x : Nat} (h : (List.range n).all p = true) (hx : x < n) : p x = true :=
+theorem all_mem {α : Type} {p : α → Bool} {x : α} : ∀ {l : List α}, allB p l = true → x ∈ l → p x = true
+  | [], _, hx => by cases hx
+  | y :: t, h, hx => by
+    have e : allB p (y :: t) = (p y && allB p t) := rfl
+    rw [e] at h
+    cases hx with
+    | head => exact and_left h
+    | tail _ hm => exact all_mem (and_right h) hm
+theorem all_range {n : Nat} {p : Nat → Bool} {x : Nat} (h : allB p (List.range n) = true) (hx : x < n) : p x = true :=
   all_mem h (List.mem_range.mpr hx)
 
 theorem lookup_mem {a q : Nat} : ∀ {es : List (Nat × Nat)}, lookup a es = some q → (a, q) ∈ es
@@ -405,7 +412,7 @@ theorem closed (hb : A.Bounded) (hi : A.inclOK = true) (hn : A.nodesOK = true) {
     have h0 := all_range hn hplt
     unfold Aut.nodeOK at h0
     have h1' := all_mem h0 hcm
-    have h1 : (A.edges c).all _ = true := h1'
+    have h1 : allB _ (A.edges c) = true := h1'
     have h2' := all_mem h1 hrm
     have h2 := and_left h2'
     have h3 : A.covered p [b] r = true := of_not_or h2 hm
@@ -428,12 +435,12 @@ theorem closed (hb : A.Bounded) (hi : A.inclOK = true) (hn : A.nodesOK = true) {
     have h0 := all_range hn hplt
     unfold Aut.nodeOK at h0
     have h1' := all_mem h0 hcm
-    have h1 : (A.edges c).all _ = true := h1'
+    have h1 : allB _ (A.edges c) = true := h1'
     have h1c := all_mem h1 hc1m
     have h2' := and_right h1c
-    have h2'' : (A.edges c1).all _ = true := h2'
+    have h2'' : allB _ (A.edges c1) = true := h2'
     have h2a := all_mem h2'' hc2m
-    have h2 : (A.edges c2).all _ = true := h2a
+    have h2 : allB _ (A.edges c2) = true := h2a
     have h3' := all_mem h2 hrm
     have h3 : A.covered p [b, x, y] r = true := of_not_or h3' hm
     exact accepts_of_run (covered_accepts hb hi h3 hrlt hp) pre root hrun
@@ -448,7 +455,7 @@ theorem lost_of_check {root : Nat} {d : List Card} (hc : A.check root = true) (h
   have hb : A.Bounded := by
     intro q hq e he
     have h1 := all_range (and_right hbd) hq
-    have h2 := all_mem (show (A.edges q).all _ = true from h1) he
+    have h2 := all_mem (show allB _ (A.edges q) = true from h1) he
     exact Nat.le_of_ble_eq_true h2
   have hi := and_right h12
   have hn := and_right h123
@@ -467,7 +474,7 @@ end Aut
 /-! ## Part 5. A table for the kernel
 
 `Aut` takes any functions, so this is only about speed: if the table says something else, the check fails or proves the
-loss for the automaton that the table does describe. Nodes sit in a Braun tree, found by the bits of their number. -/
+loss for the automaton that the table does describe. Nodes are the leaves of a binary trie on the bits of their number. -/
 
 structure NodeData where
   edges : List (Nat × Nat)
@@ -475,17 +482,17 @@ structure NodeData where
   sup   : List Nat
 
 inductive Tree where
-  | leaf
-  | node (data : NodeData) (l r : Tree)
+  | leaf (data : NodeData)
+  | node (bit : Nat) (l r : Tree)
 
-def Tree.get : Tree → Nat → NodeData
-  | .leaf, _ => ⟨[], false, []⟩
-  | .node d l r, i =>
-    bif Nat.beq i 0 then d
-    else bif Nat.beq (i % 2) 1 then l.get (i / 2) else r.get (i / 2 - 1)
+def Tree.get (t : Tree) (i : Nat) : NodeData :=
+  Tree.rec (motive := fun _ => NodeData) (fun d => d)
+    (fun bit _ _ l r => bif Nat.beq (Nat.land (Nat.shiftRight i bit) 1) 0 then l else r) t
 
 def Aut.ofTree (size : Nat) (t : Tree) : Aut :=
   ⟨size, fun q => (t.get q).edges, fun q => (t.get q).acc, fun q => (t.get q).sup⟩
+
+end
 
 /-! ## Part 6. A deal can be won
 
