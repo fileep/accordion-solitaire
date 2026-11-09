@@ -127,8 +127,9 @@ a deal) is refused on `--resume` with a message saying so. Room for 5 bytes a de
 in `--games-disk` asks for the full check on disk instead, two more passes over the deals at the end. `--no-games-check` skips
 the check. See "pausing, and tens of billions of deals" and "a trillion deals" in [docs/BENCHMARKS.md](docs/BENCHMARKS.md).
 
-Prove a deal or position lost by two independent exhaustive searches, each with an exact (lossless) set of dead
-positions. A typical winnable deal is far out of reach, but lost deals tend to be small: the three found in two billion
+Prove a deal or position lost by two exhaustive searches, each with an exact (lossless) set of dead positions: one with
+the rules alone, in a fixed order, and one with everything the solver uses, in a random order. They guard against the
+solver's pruning, not its move generator, which both use: `research/lean` checks the losses with code that shares none of it. A typical winnable deal is far out of reach, but lost deals tend to be small: the three found in two billion
 deals took 75 thousand, 3.4 million and 19 million positions. A proven loss is written as a `loss` record, and the deal's dossier
 says `loss (proven)`:
 

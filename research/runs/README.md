@@ -61,7 +61,7 @@ deal, so its results go in folders of their own, and its report has a `generator
 200 billion deals should give about 140 losses, in about 10 hours:
 
 ```bash
-cargo build --release -p accordion-cli --features second-generator
+cargo build --release -p accordion-cli --features second-generator --target-dir target/chacha
 ```
 
 ```powershell
