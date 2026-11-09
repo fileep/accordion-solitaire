@@ -68,4 +68,6 @@ cargo build --release -p accordion-cli --features second-generator
 powershell -ExecutionPolicy Bypass -File C:\runs\guard.ps1 -Acc C:\runs\acc-chacha.exe -Count 200000000000 -Checkpoint checkpoints\chacha-0-200000000000.json -StartExtra "--dossiers hard-deals-chacha"
 ```
 
-Its losses are compared by count only: Lean's `deal` is the main generator, so they have no proofs in Lean.
+Its losses are compared by count only: Lean's `deal` is the main generator, so they have no proofs in Lean. The paper reports this
+run, which follows the 2 trillion run. Copy its report here as `chacha-0-200000000000.report.txt`, and `paper_numbers.py` compares it
+with the main run.

@@ -15,6 +15,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
 REPORT = ROOT / "research/runs/batch-0-2000000000000.report.txt"
+SECOND = ROOT / "research/runs/chacha-0-200000000000.report.txt"  # the run with the second generator
 STATUS = ROOT / "checkpoints/batch-0-2000000000000.status.json"
 CERTIFICATES = ROOT / "research/lean/automaton/certificates.csv"
 LEAN = ROOT / "research/lean/automaton/lean_results.csv"
@@ -122,6 +123,18 @@ def lean(losses):
         print("nanoda              no results yet: run replay.py")
 
 
+def second_generator(lost, deals):
+    """The run under ChaCha20 against the main run: given the losses of both, each falls in the second in proportion to its deals."""
+    if not SECOND.exists():
+        print("second generator    no results yet")
+        return
+    other = from_report(SECOND)
+    low, high = wilson(other["lost"], other["deals"])
+    print(f"second generator    {other['lost']} lost of {other['deals']:,}, {other['undecided']} undecided, {other['unverified']} wins failed verification")
+    print(f"  losses per billion  {other['lost'] / other['deals'] * 1e9:.2f} observed, {low * 1e9:.2f} to {high * 1e9:.2f} (95%), against {lost / deals * 1e9:.2f}")
+    print(f"  same rate?          exact two-sided p = {binomial_two_sided(other['lost'], other['lost'] + lost, other['deals'] / (other['deals'] + deals)):.3g}")
+
+
 def main():
     sys.stdout.reconfigure(encoding="utf-8")
     args = sys.argv[1:]
@@ -151,6 +164,7 @@ def main():
         print(f"first 22 billion    {early} lost, {early / (EARLY / 1e9):.2f} per billion; later {(len(seeds) - early) / ((deals - EARLY) / 1e9):.2f}; "
               f"exact two-sided p = {binomial_two_sided(early, len(seeds), EARLY / deals):.3g}")
         print(f"uniform placement   Kolmogorov-Smirnov p = {uniform_placement(seeds, deals):.3g}")
+    second_generator(lost, deals)
     certificates(set(seeds))
     lean(set(seeds))
 
