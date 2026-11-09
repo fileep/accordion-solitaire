@@ -30,9 +30,9 @@ structure Pile where
 /-- One legal move on piles: a whole pile goes onto the pile 1 or 3 places to its left, if the two top cards match.
     Moving pile `p` onto `t` gives a pile whose top is p's top; what lay in `t` stays under it. -/
 inductive PileStep : List Pile → List Pile → Prop
-  | slide (pre : List Pile) (t p : Pile) (post : List Pile) (h : matches p.top t.top = true) :
+  | slide (pre : List Pile) (t p : Pile) (post : List Pile) (h : matches t.top p.top = true) :
       PileStep (pre ++ t :: p :: post) (pre ++ ⟨p.top, p.below ++ t.top :: t.below⟩ :: post)
-  | leap (pre : List Pile) (t x y p : Pile) (post : List Pile) (h : matches p.top t.top = true) :
+  | leap (pre : List Pile) (t x y p : Pile) (post : List Pile) (h : matches t.top p.top = true) :
       PileStep (pre ++ t :: x :: y :: p :: post)
                (pre ++ ⟨p.top, p.below ++ t.top :: t.below⟩ :: x :: y :: post)
 
@@ -55,6 +55,21 @@ inductive Reach : List Card → List Card → Prop
 
 /-- A deal is lost if no line of play leaves a single pile. -/
 def Lost (deal : List Card) : Prop := ∀ c, ¬ Reach deal [c]
+
+/-- Zero or more steps on piles. -/
+inductive PileReach : List Pile → List Pile → Prop
+  | refl (s) : PileReach s s
+  | tail {s t u} : PileReach s t → PileStep t u → PileReach s u
+
+/-- The game as it starts: one card to a pile. -/
+def start (deal : List Card) : List Pile := deal.map fun c => ⟨c, []⟩
+
+/-- The statement to read: no line of play from the deal leaves a single pile. -/
+def DealLost (deal : List Card) : Prop := ∀ p, ¬ PileReach (start deal) [p]
+
+theorem dealLost_of_lost {deal : List Card} (h : Lost deal) : DealLost deal := by
+  sorry -- induction on PileReach with tops_step gives Reach ((start deal).map Pile.top) (map top of the end),
+        -- and (start deal).map Pile.top = deal by List.map_map and List.map_id.
 
 /-! ## Part 2. The generator (crates/core/src/rng.rs, deal.rs)
 
@@ -138,8 +153,10 @@ theorem lost_of_invariant {d : List Card} (S : List Card → Prop)
 /-! ## Part 4. The automaton certificate (recommended)
 
 `S` is the language of a small deterministic automaton over cards, given as an untrusted table that comes from
-outside Lean. The checker needs one pass over the nodes (measured: the relation is the identity on nodes, so no
-pair-of-nodes search is needed) plus one pass over a table of inclusion pairs.  Nothing is enumerated. -/
+outside Lean. The checker needs one pass over the nodes (the automaton is deterministic, so the pairs dawg.py's
+`verify` walks from (root, root) are always (p, p), and no pair-of-nodes search is needed) plus one pass over a table
+of inclusion pairs.  Nothing is enumerated. Letters are card numbers as in `matches`, suit * 13 + rank; dawg.py numbers
+them rank * 4 + suit, so check_certificates.py converts them. -/
 
 structure Aut where
   size  : Nat
@@ -186,7 +203,14 @@ def nodeOK (A : Aut) (I : List (Nat × Nat)) (p : Nat) : Bool :=
       (A.edges c1).all fun (y, c2) =>
         (A.edges c2).all fun (b, r) => !(matches a b) || covered A I p [b, x, y] r)
 
+/-- Reading a word can't leave the nodes that `check` looks at. Without this, a table with `size = 0` passes `check`
+    whatever its edges are, and would prove any deal lost. -/
+def inBounds (A : Aut) (root : Nat) : Bool :=
+  Nat.blt root A.size &&
+  (List.range A.size).all fun q => (A.edges q).all fun (_, c) => Nat.blt c A.size
+
 def check (A : Aut) (I : List (Nat × Nat)) (root : Nat) : Bool :=
+  inBounds A root &&
   inclOK A I &&
   (List.range A.size).all (nodeOK A I) &&
   (A.edges root).all fun (_, c) => !(A.acc c)     -- no word of one letter: no win
@@ -203,7 +227,7 @@ theorem accepts_append {A : Aut} {q} (pre rest : List Nat) (h : A.accepts q (pre
 theorem check_closed {A I root} (h : check A I root = true) :
     ∀ w w', A.accepts root w = true → Step w w' → A.accepts root w' = true := by
   /- Outline, slide case, w = pre ++ a :: b :: post:
-     1. accepts_append gives p = run root pre, and `a :: b :: post` accepted from p.
+     1. accepts_append gives p = run root pre, and `a :: b :: post` accepted from p; p < A.size by inBounds and induction on pre.
      2. So p has edge (a, c), c has edge (b, r), and post is accepted from r.
      3. nodeOK at p with (a, c) and (b, r) gives (r, s) ∈ I where s = next p b.
      4. accepts_mono: post is accepted from s, so `b :: post` from p, so pre ++ b :: post from root.

@@ -25,14 +25,16 @@ Write a position as the word of its top cards. A lost deal's reachable set is a 
 | 18238151902 | 168,098 | 568,832 | 2,413 (2,413) | pass | 5 of 5 |
 | 5895817790 | 957,502 | 4,359,712 | 1,734 (1,734) | pass | 5 of 5 |
 
-- **Not checked separately:** the 19.4M deal's 1,135 nodes, which rest on the agent's run alone. `dawg.py` has not been reviewed.
+- **A second checker on every loss so far** (`automaton/check_certificates.py`, results in `automaton/certificates.csv`, 2026-11-09). It shares no code with `dawg.py`: the rules and generator are `testdata/tools/make_golden.py`'s, and the check is the one `check` states in `Accordion.lean`. All 138 losses found up to seed 187 billion pass, and each position count equals its record, the 19.4M deal's 1,135 nodes included. The check agreed with an explicit search on 400 random short rows (52 with a win) and rejected all 165 damaged certificates.
+- **How certificates are made:** `dawg.py` computes the reachable set layer by layer on automata, never position by position, so its cost follows the nodes (about a second for the 19.4M deal). It is still a full forward search of the deal, done symbolically. What needs no search is the check: the three conditions prove the loss whichever program found the automaton.
+- **The draft, reviewed but still not compiled:** the generator matches `crates/core/src/rng.rs` and `deal.rs`, and the rules match `make_golden.py`. `check` had a hole: it never required the root and edge targets to be nodes it had looked at, so a table with `size = 0` passed and would have proved any deal lost. `inBounds` closes it. `DealLost` now states the result on real piles, with the step down to top cards left as an outline.
 
 ## Limits for any claim
 
 - It covers named losses only. It says nothing about the count of wins, so "exactly N losses in M deals" also depends on the win verification in `acc`.
 - A misread rule would pass through every route. The rules text in Lean is the part to review.
-- Only 6 near-wins have been studied, so the size of the largest automaton is unknown. A real won deal blew up (238,723 nodes in one layer by 34 piles), so there is no claim about wins.
-- The estimates in `lean2.md` assume about 1,040 losses. The run in progress is 2 trillion deals, not the 1 trillion it mentions.
+- Certificates exist for the 138 losses so far: at most 10,468 nodes and 676,119 lookups [M]. The rest of the run may hold larger ones. A real won deal blew up (238,723 nodes in one layer by 34 piles), so there is no claim about wins.
+- The estimates in `lean2.md` assume about 1,040 losses. The run in progress is 2 trillion deals, about 1,480 losses at its rate so far. The 138 took 4.06M lookups, 29,423 each [M], so about 44M in all and 1-24 core-hours at `lean2.md`'s 0.1-2 ms a lookup [E]. `check_certificates.py` counts a lookup a little differently from `dawg.py`: 35,042 against 41,651 on the 19.4M deal.
 
 ## Next steps (from `lean2.md` section 5)
 
@@ -42,7 +44,7 @@ Write a position as the word of its top cards. A lost deal's reachable set is a 
 
 ## Other files
 
-- `automaton/`: `Accordion.lean` (draft), `dawg.py` (builds and checks automatons), `anatomy.py`, `falsify.py`, `spot_check.py`, logs and results.
+- `automaton/`: `Accordion.lean` (draft), `dawg.py` (builds and checks automatons), `check_certificates.py` and `certificates.csv` (second checker and its results), `anatomy.py`, `falsify.py`, `spot_check.py`, logs and results.
 - `regions/`: scripts and per-deal results for `regions.md`.
 - `first-study/`: Python used for `leanproof.md`.
 
