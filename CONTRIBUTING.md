@@ -59,8 +59,9 @@ make a binary for others).
 
 ## What needs the most care
 
-- **Results.** Nothing counts as a win until the reference rules in `crates/core` have replayed it, and a loss counts
-  only when two exhaustive searches agree (`acc prove`). A change to the rules, the engines, verification or proving
+- **Results.** Nothing counts as a win until a replay separate from the search that found it has passed it (the
+  reference rules in `crates/core`, or `quick::line_wins` for the GPU's lines: "How results are checked" in
+  docs/ARCHITECTURE.md), and a loss counts only when two exhaustive searches agree (`acc prove`). A change to the rules, the engines, verification or proving
   needs tests that show it changes no verdict: the golden deals in `testdata/`, `acc selftest`, and the solver's gates.
 - **Checkpoints.** A long run must be able to carry on with a newer build. Keep the checkpoint's `VERSION`, never
   rename or remove a field of the saved arguments, and give a new field `#[serde(default)]`. The test against
