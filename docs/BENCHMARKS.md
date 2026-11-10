@@ -1,5 +1,7 @@
 # Benchmarks
 
+> Historical record of how this was built, with numbers as of their dates. For how to use it, see [docs/GETTING_STARTED.md](GETTING_STARTED.md).
+
 Numbers are recorded with the machine, toolchain and code they came from. Rerun the commands to compare.
 
 ## Phase 2 — fast engine and first-win search
@@ -1931,7 +1933,7 @@ reboot (nothing does this unless a logon task is added); keeping the laptop plug
 that stays put and using that copy for the whole run, without rebuilding in place:
 
 ```powershell
-powershell -ExecutionPolicy Bypass -File tools\long-run.ps1 -Acc C:\runs\acc.exe -From 22000000000 -Count 1000000000000
+powershell -ExecutionPolicy Bypass -File tools\long-run.ps1 -Acc path\to\acc.exe -From 22000000000 -Count 1000000000000 -Gpu on
 ```
 
 **Considered, not tried** (for the repeat check):
@@ -2386,3 +2388,28 @@ In the second stretch, sampled once for 30 s near 13:35: CPU package 11.0 W, `ac
 Full speed with the guard's pauses: 25 Wh down at about 6.3 Wh/h is 4 h of running, 25 Wh back at 30 Wh/h is 50 min, so 83% of the time at 6.6M, about 5.4M deals/s on average. Level battery, no pauses: about 5.2M. The two are within this comparison's noise: a slowdown that only breaks even with the battery costs about what the pauses cost.
 
 **Considered, not tried:** capping the CPU live with the process's affinity (the GPU binds and the CPU is already at 11 W, so little to save); `--threads` on a resume to hold the CPU at that level for good (`-ResumeExtra` in the guard; not measured); a GPU duty cycle in the run (a new build, a stop and a start, for no expected gain); a GPU power limit (a system setting, the user's to make).
+
+## Making it ready for other people (Nov 9)
+
+The work that made the program usable by others (the `acc run` front end and its commands, friendlier numbers and
+help, per-deal costs capped so that runs of 100 trillion deals fit in memory, the build and NVRTC changes for other
+machines) changes no solving, proving or verification. Nothing here was timed: the 2 trillion run had the machine.
+What changed is in [CHANGELOG.md](../CHANGELOG.md).
+
+**Considered, not tried:**
+
+- **PTX built in, so that NVRTC isn't needed.** The unchanged `kernel.cu`, compiled once for the default settings, could
+  ship as PTX that the driver loads by itself (cudarc's `Ptx::from_src`), with NVRTC kept for `--gpu-kernel`,
+  `--gpu-define` and changed settings. That would take away the one download a GPU user needs. Not tried: it needs the GPU
+  to test, which the live run ruled out; PTX for `compute_75` running on newer cards relies on CUDA's forward
+  compatibility, which is unproven here; and cards older than 7.5 would still need NVRTC. `tools/get-nvrtc.ps1` and
+  `tools/get-nvrtc.sh` make the download one command instead.
+- **Histograms in place of the capped costs.** A fixed-size histogram of each CPU-solved deal's positions and time would
+  give percentiles over every deal in constant memory, where the cap keeps the first 125 million deals' costs (2 GB).
+  Not tried: the percentiles would come from buckets, not exact values, and every report's lines would change, while
+  under the cap the report stays byte for byte what it was. Deals are random, so the first 125 million are a fair
+  sample, and the means, totals and maxima stay exact over all of them.
+- **A `--data-dir` flag** (or `ACC_DATA_DIR`) putting checkpoints, logs, endgame tables and output under one folder, so
+  that acc could be run from anywhere. Not tried: every default path is relative to the current folder, a checkpoint
+  records that folder and a resume refuses any other, and a new field in the checkpoint's arguments needs care while a
+  long run's checkpoint is live. `acc status` and the documentation say to run acc from one folder instead.

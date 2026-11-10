@@ -13,7 +13,8 @@ Results go to --out (default ov/tools/results/). Nothing is dropped: every run i
 """
 import argparse, csv, ctypes, glob, hashlib, json, os, re, shlex, shutil, statistics, subprocess, sys, tempfile, threading, time
 
-S = os.environ.get("ACC_SCRATCH", "C:/Users/Filip/AppData/Local/Temp/claude/C--Users-Filip-Documents-Accordion-Solitaire/2d8fbaee-89f4-4073-a2f7-1bc93a04a06d/scratchpad")
+# The private harness these run in (machine.py, ov/): not published, so this must be named (README.md beside this file).
+S = os.environ.get("ACC_SCRATCH") or sys.exit("ab.py: set ACC_SCRATCH to the folder holding machine.py and ov/ (see README.md beside this file)")
 HERE = os.path.dirname(os.path.abspath(__file__))
 TOOLS = os.environ.get("ACC_TOOLS", S + "/ov/tools")
 SECONDS_A_LINE = 60e-6  # the reference verification in accgpu, thread time

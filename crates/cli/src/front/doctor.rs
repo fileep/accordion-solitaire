@@ -204,21 +204,24 @@ fn tables(r: &mut Report) {
 /// How to add NVRTC, the step a fresh copy of the project lacks for the GPU.
 #[cfg(windows)]
 const NVRTC_STEPS: &str = "\
-To add it (NVIDIA's own software, under NVIDIA's licence; about 75 MB):
+To add it (NVIDIA's own software, under NVIDIA's licence; a 76 MB download), in the project's folder run:
+   powershell -ExecutionPolicy Bypass -File tools\\get-nvrtc.ps1
+It downloads it from PyPI, checks it and unpacks it into .tools\\cuda-nvrtc-12.9.86, where acc finds it.
+By hand instead:
 1. Download nvidia_cuda_nvrtc_cu12-12.9.86-py3-none-win_amd64.whl from
    https://pypi.org/project/nvidia-cuda-nvrtc-cu12/12.9.86/#files
 2. It is a zip file: rename it to end in .zip, and unpack it into a folder named .tools\\cuda-nvrtc-12.9.86
    in the folder you run acc from, so that .tools\\cuda-nvrtc-12.9.86\\nvidia\\cuda_nvrtc\\bin holds nvrtc64_120_0.dll.
-3. Run acc doctor again. docs/GPU_SETUP.md says more.";
+Or, with the CUDA Toolkit 12 installed, set ACC_NVRTC_DIR to the folder holding its nvrtc64_120_0.dll.
+Then run acc doctor again. docs/GPU_SETUP.md says more.";
 
 #[cfg(not(windows))]
 const NVRTC_STEPS: &str = "\
-To add it (NVIDIA's own software, under NVIDIA's licence), not yet tried off Windows:
-1. Download the manylinux x86_64 file of nvidia-cuda-nvrtc-cu12 version 12.9.86 from
-   https://pypi.org/project/nvidia-cuda-nvrtc-cu12/12.9.86/#files and unpack it (it is a zip file).
-2. In its nvidia/cuda_nvrtc/lib folder: ln -s libnvrtc.so.12 libnvrtc.so
-3. export LD_LIBRARY_PATH=\"<that lib folder>:$LD_LIBRARY_PATH\" in the shell you run acc from.
-4. Run acc doctor again. docs/GPU_SETUP.md says more.";
+To add it (NVIDIA's own software, under NVIDIA's licence), not yet tried off Windows, in the project's folder run:
+   sh tools/get-nvrtc.sh
+It downloads it from PyPI, checks it and unpacks it into .tools/cuda-nvrtc-12.9.86, where acc finds it.
+Or, with the CUDA Toolkit 12 installed, set ACC_NVRTC_DIR to the folder holding its libnvrtc.so.12.
+Then run acc doctor again. docs/GPU_SETUP.md says more.";
 
 fn gpu_libraries(r: &mut Report) {
     match accordion_gpu::diagnose() {

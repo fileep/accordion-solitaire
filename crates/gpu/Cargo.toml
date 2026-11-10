@@ -1,9 +1,10 @@
 [package]
 name = "accordion-gpu"
-description = "GPU ladder attempts (CUDA via NVRTC), run by `acc batch --gpu` next to the CPU solver"
+description = "NVIDIA GPU attempts (CUDA, compiled by NVRTC when a run starts) that `acc batch` runs beside the CPU solver; `accgpu` times the GPU alone"
 version.workspace = true
 edition.workspace = true
 publish.workspace = true
+readme.workspace = true
 
 [[bin]]
 name = "accgpu"

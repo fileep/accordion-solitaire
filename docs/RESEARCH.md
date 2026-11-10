@@ -1,6 +1,8 @@
 # Accordion Solitaire — Research Findings
 
-Research behind [PLAN.md](../PLAN.md). The probes cited here are in
+> Historical record of how this was built, with numbers as of their dates. For how to use it, see [docs/GETTING_STARTED.md](GETTING_STARTED.md).
+
+Research behind [PLAN.md](PLAN.md). The probes cited here are in
 [research/probes/](../research/probes/) and can be re-run with Python 3 (`python probe.py ...`).
 All probe numbers come from a deliberately naive Python engine (~220k nodes/s). They show
 **shape and orders of magnitude**; Rust timings will be about 100× faster.

@@ -381,7 +381,10 @@ fn exit_code(result: Result<u8, String>) -> ExitCode {
 }
 
 fn main() -> ExitCode {
-    let Some(command) = Cli::parse().command else {
+    let cli = Cli::parse();
+    // On Linux, this may start acc again with a copy of NVRTC on the loader's path; before anything else is done.
+    accordion_gpu::restart_with_bundled_nvrtc();
+    let Some(command) = cli.command else {
         println!(
             "acc {}: Accordion solitaire, played and counted deal by deal.\n",
             env!("CARGO_PKG_VERSION")

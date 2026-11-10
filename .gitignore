@@ -2,7 +2,7 @@
 /viz/node_modules
 /viz/dist
 /viz/src/wasm
-# Downloaded tools (CUDA's NVRTC compiler), see PLAN.md Phase 5 track F
+# Downloaded tools (NVIDIA's NVRTC compiler, from tools/get-nvrtc.ps1 or .sh; PLAN.md Phase 5 track F)
 /.tools
 __pycache__/
 *.pyc
@@ -15,3 +15,11 @@ __pycache__/
 /logs
 # Checkpoints of `acc batch` runs in progress, and their reports
 /checkpoints
+# Where runs write their dossiers and experiments by default (hard-deals/ is the published record)
+/output
+# Pictures for a blog post, kept out of the repository
+/blog-images
+# What the `acc batch --out results.jsonl` examples write
+/results.jsonl
+# Local editor and assistant settings
+/.claude/

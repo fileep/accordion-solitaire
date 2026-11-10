@@ -1,0 +1,55 @@
+# Formatting, lints and tests on Windows, Linux and macOS, and the visualizer's tests on Linux. These machines have no
+# NVIDIA GPU, so the GPU kernel's tests skip themselves; everything else, the solver's tests included, runs in full.
+name: CI
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+  # The tests run optimised code (unoptimised, the solver is many times slower), but without the release profile's
+  # whole-program optimisation, which makes the build several times longer for a few percent of speed.
+  CARGO_PROFILE_RELEASE_LTO: "off"
+  CARGO_PROFILE_RELEASE_CODEGEN_UNITS: "16"
+
+jobs:
+  rust:
+    name: Rust on ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Rust (stable, as rust-toolchain.toml says)
+        run: rustup toolchain install stable --profile minimal --component rustfmt,clippy
+      - name: Formatting
+        run: cargo fmt --all --check
+      - name: Lints
+        run: cargo clippy --workspace --all-targets --locked -- -D warnings
+      - name: Tests
+        run: cargo test --workspace --locked --release
+
+  viz:
+    name: Visualizer on ubuntu-latest
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Rust (stable), with the WebAssembly target
+        run: |
+          rustup toolchain install stable --profile minimal --component rustfmt,clippy
+          rustup target add wasm32-unknown-unknown --toolchain stable
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - name: Install
+        working-directory: viz
+        run: npm ci
+      - name: Tests (they build the WebAssembly engine first)
+        working-directory: viz
+        run: npm test

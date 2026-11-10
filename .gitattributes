@@ -1,0 +1,11 @@
+# Text files are stored with LF line endings, whatever the computer that commits them uses.
+* text=auto
+# Shell scripts must keep LF where they are checked out too, or sh can't run them.
+*.sh text eol=lf
+# Binary test data (the per-deal costs of a checkpoint).
+*.costs binary
+
+# For GitHub's language statistics: the research record and the generated results are not the program's code.
+research/** linguist-documentation
+hard-deals/** linguist-generated
+*.cu linguist-language=C++

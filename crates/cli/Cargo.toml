@@ -1,9 +1,10 @@
 [package]
 name = "accordion-cli"
-description = "acc: command-line front end for dealing, verifying, solving and batch runs"
+description = "acc, the command-line program: long runs of deals and their results, single deals, proofs and checks"
 version.workspace = true
 edition.workspace = true
 publish.workspace = true
+readme.workspace = true
 
 [[bin]]
 name = "acc"

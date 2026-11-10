@@ -3,7 +3,7 @@
 //! (the thorough fallback, so every deal still gets the full search); reports each part. `acc batch --gpu` runs
 //! the two side by side instead.
 //!
-//! NVRTC must be on PATH, or in `.tools/` (PLAN.md Phase 0 notes).
+//! NVRTC must be where the system finds libraries, in `ACC_NVRTC_DIR`, or in `.tools/` (tools/get-nvrtc.ps1 or .sh).
 
 use accordion_core::fast::Position;
 use accordion_core::game::Game;
@@ -70,7 +70,10 @@ struct Args {
 }
 
 fn main() -> ExitCode {
-    match run(&Args::parse()) {
+    let args = Args::parse();
+    // On Linux, this may start accgpu again with a copy of NVRTC on the loader's path; before anything else is done.
+    accordion_gpu::restart_with_bundled_nvrtc();
+    match run(&args) {
         Ok(true) => ExitCode::SUCCESS,
         Ok(false) => ExitCode::FAILURE,
         Err(e) => {

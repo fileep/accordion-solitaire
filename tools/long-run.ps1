@@ -1,22 +1,32 @@
 <#
 .SYNOPSIS
+For most people `acc run` does what this script does, and more (it also pauses a laptop's run while the battery is
+low): see docs/LONG_RUNS.md. This script is for seeing a long `acc batch` through with a binary of your choosing.
+
 Sees a long `acc batch` through: starts it, or carries on with it if its checkpoint is there, and carries on again
 whenever it stops for a reason that a new process may get past. Run it from the repository's directory, as the run's
 paths are relative to where it started. Press Ctrl+C once to pause the run; this script stops with it.
 
 .EXAMPLE
-powershell -ExecutionPolicy Bypass -File tools\long-run.ps1 -Acc C:\runs\acc.exe -From 22000000000 -Count 200000000000
+powershell -ExecutionPolicy Bypass -File tools\long-run.ps1 -Acc .\target\release\acc.exe -From 0 -Count 1000000000
 
 .EXAMPLE
-# Eight hours, then the laptop is yours. The same command carries on from there.
-powershell -ExecutionPolicy Bypass -File tools\long-run.ps1 -Acc C:\runs\acc.exe -From 22000000000 -Count 200000000000 -StopAfterHours 8
+# Eight hours, then the computer is yours. The same command carries on from there.
+powershell -ExecutionPolicy Bypass -File tools\long-run.ps1 -Acc .\target\release\acc.exe -From 0 -Count 1000000000 -StopAfterHours 8
+
+.EXAMPLE
+# Refuse to start without the GPU, rather than go on at the CPU's speed.
+powershell -ExecutionPolicy Bypass -File tools\long-run.ps1 -Acc .\target\release\acc.exe -From 0 -Count 1000000000 -Gpu on
 #>
 param(
-    # A copy of acc.exe that has been seen to start, not one in target/ that the next build replaces: Smart App Control
-    # can block a rebuilt binary, which would stop a run that wants to carry on.
+    # The acc.exe to run. For a run of days, give it a copy that has been seen to start, not the one in target\ that
+    # the next build replaces: Smart App Control can block a rebuilt binary, which would stop a run that wants to carry on.
     [Parameter(Mandatory)][string]$Acc,
     [Parameter(Mandatory)][uint64]$From,
     [Parameter(Mandatory)][uint64]$Count,
+    # `acc batch --gpu` when the run starts: auto uses an NVIDIA card if it can and the CPU alone if not; on refuses
+    # to start without the card, which suits a run sized for it; off never uses it.
+    [ValidateSet('auto', 'on', 'off')][string]$Gpu = 'auto',
     # Pause after this many hours of each session (each new process counts from its own start).
     [double]$StopAfterHours = 0,
     # Pause once this many of the run's deals are done.
@@ -53,7 +63,7 @@ while ($true) {
     if (Test-Path $checkpoint) {
         $acting = @('batch', '--resume', $checkpoint) + $sessionArgs
     } else {
-        $acting = @('batch', '--from', "$From", '--count', "$Count", '--gpu', 'on') + $StartArgs + $sessionArgs
+        $acting = @('batch', '--from', "$From", '--count', "$Count", '--gpu', $Gpu) + $StartArgs + $sessionArgs
     }
     Write-Host "$(Get-Date -Format s) acc $($acting -join ' ')"
     try {

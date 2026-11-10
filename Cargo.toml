@@ -6,6 +6,8 @@ members = ["crates/core", "crates/solver", "crates/cli", "crates/wasm", "crates/
 version = "0.1.0"
 edition = "2024"
 publish = false
+readme = "README.md"
+# No `license` or `repository` yet: the licence is the owner's to choose, and the project has no public home yet.
 
 [workspace.dependencies]
 accordion-core = { path = "crates/core" }
@@ -25,7 +27,7 @@ unsafe_op_in_unsafe_fn = "deny"
 all = { level = "warn", priority = -1 }
 
 # Native runs and benchmarks; wasm-pack builds the browser engine with this profile too.
-# target-cpu=native is set per target in .cargo/config.toml, so the WASM build stays portable.
+# target-cpu=native is set in .cargo/config.toml for every target but wasm32, so the WASM build stays portable.
 [profile.release]
 lto = "fat"
 codegen-units = 1

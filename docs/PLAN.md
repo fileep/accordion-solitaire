@@ -1,6 +1,8 @@
 # Accordion Solitaire Solver — Implementation Plan
 
-Companion to [docs/RESEARCH.md](docs/RESEARCH.md), which holds the rules, prior results,
+> Historical record of how this was built, with numbers as of their dates. For how to use it, see [docs/GETTING_STARTED.md](GETTING_STARTED.md).
+
+Companion to [RESEARCH.md](RESEARCH.md), which holds the rules, prior results,
 measurements and design rationale. This file covers what we build, in what order, and how
 we know each piece is done.
 

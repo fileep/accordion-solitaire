@@ -423,8 +423,12 @@ pub struct Gpu {
     pub settings: Settings,
 }
 
+/// A driver error as the driver words it, with its name: `out of memory (CUDA_ERROR_OUT_OF_MEMORY)`.
 fn err(e: DriverError) -> String {
-    format!("{e:?}")
+    match (e.error_string(), e.error_name()) {
+        (Ok(text), Ok(name)) => format!("{} ({})", text.to_string_lossy(), name.to_string_lossy()),
+        _ => format!("CUDA error {:?}", e.0),
+    }
 }
 
 /// A deal's position for the kernel.
@@ -556,8 +560,13 @@ impl Libraries {
     }
 }
 
-/// Looks for the NVIDIA driver and NVRTC as opening the GPU does first, adding the copy of NVRTC in `.tools/` to PATH
-/// when NVRTC isn't on it. It opens no CUDA context and runs nothing on the GPU, so it is safe beside a run using it.
+/// What opening the GPU says when NVRTC is missing. `acc batch --gpu auto` adds that it carries on on the CPU.
+pub const NO_NVRTC: &str = "Your NVIDIA card could be used, but one free component (NVRTC) is missing. Run acc doctor \
+                            for how to add it.";
+
+/// Looks for the NVIDIA driver and NVRTC as opening the GPU does first, adding a copy of NVRTC ([`bundled_nvrtc`]) to
+/// PATH on Windows when NVRTC isn't on it. It opens no CUDA context and runs nothing on the GPU, so it is safe beside
+/// a run using it.
 pub fn diagnose() -> Result<Libraries, String> {
     // SAFETY: loads and unloads the NVIDIA driver library, which cudarc would load anyway.
     if !unsafe { cudarc::driver::sys::is_culib_present() } {
@@ -588,29 +597,40 @@ fn find_libraries() -> Result<(), String> {
             "the NVIDIA driver supports CUDA {}; the kernel needs 12.9 or later",
             Libraries::cuda(version)
         )),
-        Libraries::NoNvrtc(_) => {
-            Err("NVRTC, the CUDA runtime compiler, not found: put its bin folder on PATH".into())
-        }
+        Libraries::NoNvrtc(_) => Err(NO_NVRTC.into()),
         Libraries::Found(_) => Ok(()),
     }
 }
 
-/// `.tools/cuda-nvrtc-*/nvidia/cuda_nvrtc/bin` in the current directory or the executable's, or above them.
-#[cfg(windows)]
-fn add_bundled_nvrtc() {
+/// A copy of NVRTC where the system doesn't look: the folder `ACC_NVRTC_DIR` names (the one holding the library, or
+/// one a wheel was unpacked into), or else the newest `.tools/cuda-nvrtc-*/nvidia/cuda_nvrtc/bin` (`lib` off Windows)
+/// in the current directory or the executable's, or above them, where `tools/get-nvrtc` puts it.
+#[cfg(any(windows, target_os = "linux"))]
+fn bundled_nvrtc() -> Option<std::path::PathBuf> {
+    let inner = if cfg!(windows) { "nvidia/cuda_nvrtc/bin" } else { "nvidia/cuda_nvrtc/lib" };
+    let named = std::env::var_os("ACC_NVRTC_DIR").map(std::path::PathBuf::from).filter(|dir| dir.is_dir());
+    if let Some(dir) = named {
+        let unpacked = dir.join(inner);
+        return Some(if unpacked.is_dir() { unpacked } else { dir });
+    }
     let starts = [std::env::current_dir().ok(), std::env::current_exe().ok()];
-    let found = starts.iter().flatten().flat_map(|p| p.ancestors()).find_map(|dir| {
+    starts.iter().flatten().flat_map(|p| p.ancestors()).find_map(|dir| {
         let mut copies: Vec<_> = std::fs::read_dir(dir.join(".tools"))
             .ok()?
             .flatten()
             .filter(|e| e.file_name().to_string_lossy().starts_with("cuda-nvrtc"))
-            .map(|e| e.path().join("nvidia/cuda_nvrtc/bin"))
+            .map(|e| e.path().join(inner))
             .filter(|bin| bin.is_dir())
             .collect();
         copies.sort();
         copies.pop()
-    });
-    if let Some(bin) = found {
+    })
+}
+
+/// Puts [`bundled_nvrtc`] first on PATH, which Windows reads each time a library is loaded.
+#[cfg(windows)]
+fn add_bundled_nvrtc() {
+    if let Some(bin) = bundled_nvrtc() {
         let mut paths = vec![bin];
         paths.extend(std::env::split_paths(&std::env::var_os("PATH").unwrap_or_default()));
         if let Ok(path) = std::env::join_paths(paths) {
@@ -620,8 +640,47 @@ fn add_bundled_nvrtc() {
     }
 }
 
+/// Elsewhere the loader reads its path only when a program starts: see [`restart_with_bundled_nvrtc`].
 #[cfg(not(windows))]
 fn add_bundled_nvrtc() {}
+
+/// On Linux, starts this program again, once, with [`bundled_nvrtc`] first on `LD_LIBRARY_PATH`, when NVRTC can't be
+/// loaded as things stand: the loader reads that variable only when a program starts. Call it first thing in `main`,
+/// before anything is written, as it replaces the process (the same process ID, arguments and output). It does nothing
+/// when there is no such copy, when it has started the program again already (`ACC_NVRTC_RESTARTED`), and off Linux.
+pub fn restart_with_bundled_nvrtc() {
+    #[cfg(target_os = "linux")]
+    {
+        use std::os::unix::process::CommandExt;
+        const AGAIN: &str = "ACC_NVRTC_RESTARTED";
+        if std::env::var_os(AGAIN).is_some() {
+            return;
+        }
+        let Some(dir) = bundled_nvrtc() else { return };
+        let old = std::env::var_os("LD_LIBRARY_PATH").unwrap_or_default();
+        if std::env::split_paths(&old).any(|p| p == dir) {
+            return;
+        }
+        // SAFETY: loads and unloads NVRTC if it can be found, as `diagnose` does.
+        if unsafe { cudarc::nvrtc::sys::is_culib_present() } {
+            return;
+        }
+        // An empty entry would mean the current directory.
+        let kept = std::env::split_paths(&old).filter(|p| !p.as_os_str().is_empty());
+        let (Ok(path), Ok(exe)) =
+            (std::env::join_paths(std::iter::once(dir.clone()).chain(kept)), std::env::current_exe())
+        else {
+            return;
+        };
+        let mut args = std::env::args_os();
+        let mut command = std::process::Command::new(exe);
+        if let Some(name) = args.next() {
+            command.arg0(name);
+        }
+        let e = command.args(args).env("LD_LIBRARY_PATH", path).env(AGAIN, "1").exec();
+        eprintln!("note: couldn't start again with NVRTC from {} on LD_LIBRARY_PATH: {e}", dir.display());
+    }
+}
 
 /// The built-in kernel's source (kernel.cu), for tools that look at the source a run would compile.
 pub fn builtin_source() -> &'static str {
@@ -697,7 +756,26 @@ fn compile(
             ..Default::default()
         },
     )
-    .map_err(|e| format!("compiling the kernel: {e:?}"))
+    .map_err(|e| compile_error(e, arch))
+}
+
+/// What NVRTC said when the kernel didn't compile, in its own words where it has them.
+fn compile_error(e: cudarc::nvrtc::CompileError, arch: &str) -> String {
+    match e {
+        cudarc::nvrtc::CompileError::CompileError { log, .. } => {
+            let log = log.to_string_lossy();
+            if log.contains("gpu-architecture") {
+                format!(
+                    "the NVRTC found doesn't know this NVIDIA card ({arch}), which is newer than it: a newer CUDA 12 \
+                     NVRTC may. NVRTC said: {}",
+                    log.trim()
+                )
+            } else {
+                format!("the kernel didn't compile. NVRTC said:\n{}", log.trim())
+            }
+        }
+        other => format!("compiling the kernel, NVRTC failed: {other:?}"),
+    }
 }
 
 impl Gpu {
@@ -716,14 +794,14 @@ impl Gpu {
         use cudarc::driver::sys::CUdevice_attribute as A;
         settings.check()?;
         find_libraries()?;
-        let ctx = CudaContext::new(0).map_err(|e| format!("no CUDA device: {e:?}"))?;
+        let ctx = CudaContext::new(0).map_err(|e| format!("no CUDA device: {}", err(e)))?;
         // Wait for the GPU by sleeping, not spinning, so the CPU core stays free for the CPU solver.
         ctx.set_blocking_synchronize().map_err(err)?;
         let name = ctx.name().unwrap_or_default();
         let sms = ctx.attribute(A::CU_DEVICE_ATTRIBUTE_MULTIPROCESSOR_COUNT).map_err(err)? as u32;
         check_defines(source, defines)?;
         let ptx = compile(&ctx, &settings, source, defines)?;
-        let module = ctx.load_module(ptx).map_err(|e| format!("loading the kernel: {e:?}"))?;
+        let module = ctx.load_module(ptx).map_err(|e| format!("loading the kernel: {}", err(e)))?;
         let attempts = module.load_function("attempts_split").map_err(err)?;
         let write_lines = module.load_function("write_lines").map_err(err)?;
         let playouts = module.load_function("playouts").map_err(err)?;
@@ -748,7 +826,7 @@ impl Gpu {
     ) -> Result<String, String> {
         check_defines(source.unwrap_or(SOURCE), defines)?;
         find_libraries()?;
-        let ctx = CudaContext::new(0).map_err(|e| format!("no CUDA device: {e:?}"))?;
+        let ctx = CudaContext::new(0).map_err(|e| format!("no CUDA device: {}", err(e)))?;
         Ok(compile(&ctx, settings, source.unwrap_or(SOURCE), defines)?.to_src())
     }
 

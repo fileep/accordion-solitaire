@@ -350,6 +350,10 @@ pub fn open_gpu_kernel(
             Ok(Some(Arc::new(gpu)))
         }
         Err(e) if required => Err(format!("--gpu on: {e}")),
+        Err(e) if e == accordion_gpu::NO_NVRTC => {
+            eprintln!("{e} Continuing on the CPU, which is much slower.");
+            Ok(None)
+        }
         Err(e) => {
             eprintln!("no GPU ({e}); solving on the CPU only");
             Ok(None)

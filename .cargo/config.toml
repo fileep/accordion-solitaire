@@ -1,7 +1,11 @@
-# Native builds use every instruction this CPU has (AVX2, BMI2, POPCNT on the i7-1260P).
-# Binaries built this way are not portable to older CPUs; WASM is unaffected.
-[target.x86_64-pc-windows-gnu]
-rustflags = ["-C", "target-cpu=native"]
-
-[target.x86_64-pc-windows-msvc]
+# Builds use every instruction the building computer's CPU has (on x86-64: AVX2, BMI2 and POPCNT where it has them),
+# which makes the solver faster. So a binary built this way must not be copied to another kind of CPU: it can stop
+# there at once with an "illegal instruction" error. For a binary to give to others, set RUSTFLAGS, which replaces
+# this setting:
+#   RUSTFLAGS="-C target-cpu=x86-64-v3" cargo build --release        (bash)
+#   $env:RUSTFLAGS="-C target-cpu=x86-64-v3"; cargo build --release  (PowerShell)
+# x86-64-v3 needs AVX2: Intel Core from Haswell (2013) on and AMD from Zen (2017) on have it, some Pentium, Celeron
+# and Atom chips don't. "-C target-cpu=x86-64" runs on any x86-64 CPU, more slowly. The browser engine (wasm32) is
+# left as it is, so that it runs in any browser.
+[target.'cfg(not(target_arch = "wasm32"))']
 rustflags = ["-C", "target-cpu=native"]
