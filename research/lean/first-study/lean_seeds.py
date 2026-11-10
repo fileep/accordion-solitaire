@@ -1,4 +1,5 @@
-root = r'C:/Users/Filip/Documents/Accordion Solitaire/crates/cli/src/'
+from pathlib import Path
+root = str(Path(__file__).resolve().parents[3] / 'crates/cli/src') + '/'
 def edit(path, pairs):
     p = root + path
     s = open(p, encoding='utf-8', newline='').read()

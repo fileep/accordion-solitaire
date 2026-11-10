@@ -7,6 +7,7 @@ memoised recursion over the automaton, and never looks at the positions one by o
 usage: dawg.py [limit_positions] [node_cap] [seed ...]
 """
 import json, glob, sys, time, ctypes
+from pathlib import Path
 
 try:
     k = ctypes.windll.kernel32
@@ -16,7 +17,7 @@ try:
 except Exception:
     PRIO = False
 
-PROOFS = r"C:/Users/Filip/Documents/Accordion Solitaire/hard-deals/proofs"
+PROOFS = str(Path(__file__).resolve().parents[3] / "hard-deals/proofs")
 RANKS = "A23456789TJQK"
 SUITS = "CDHS"
 END = 52

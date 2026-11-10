@@ -180,9 +180,10 @@ are each won in 0.04–0.06 s.
 
 ## Losses
 
-The solver never claims a loss from its lossy table. `acc prove` proves a loss with two independent exhaustive searches,
-each with an exact set of dead positions: a plain one (the rules only, in a fixed order) and one with everything the
-solver uses (random order, dead-end tests, sleep sets, endgame tables). It proves all three constructed unwinnable golden
+The solver never claims a loss from its lossy table. `acc prove` proves a loss with two exhaustive searches, each
+with an exact set of dead positions: a plain one (the rules only, in a fixed order) and one with everything the solver
+uses (random order, dead-end tests, sleep sets, endgame tables). Both use the solver's move generator, so they guard
+against its pruning, not against that: the Python search below and the certificates and Lean proofs in `research/lean` do. It proves all three constructed unwinnable golden
 cases lost: the deal with no legal moves, the frozen 44-pile dead end, and a 16-pile dead end reached from seed 42. The
 plain run's dead sets match the independent Python reference's reachable-position counts exactly (1, 353 and 71).
 
@@ -278,9 +279,13 @@ moves that some line can play, but no single line plays enough of them, and play
 - **By run.** Up to the first billion, the reference engine replayed every line. The second billion and the 20 billion replayed
   every line by the reference rules on the top cards alone (`replay_tops`, below), and sent 1 deal in 256 through the reference
   engine as well. The runs keep no lines (1.1 TB for 22 billion deals at 51 bytes each), so to check a win independently, solve
-  that deal again and replay its line; a deal once won stays won, whatever path the search took.
-- The solver searches with the fast engine, but nothing counts until the deliberately simple **reference rules** replay
-  the whole line. That covers legality of every move, the card set, and one pile after exactly 51 moves (PLAN.md §6.1).
+  that deal again and replay its line; a deal once won stays won, whatever path the search took. The 2 trillion run (fbbff00)
+  checks 255 of 256 GPU lines with `quick::line_wins` instead, a third implementation of the rules on the card codes the GPU
+  had, which says yes only to a legal win of a full deck (tests compare it with the reference engine on legal and illegal
+  moves) and sends anything else to the reference rules. 1 deal in 256 goes through the reference engine, which also checks
+  that the GPU had that seed's deal, and so does every line won on the CPU.
+- The solver searches with the fast engine, but nothing counts until a check separate from the search replays the
+  whole line: the deliberately simple **reference rules**, or for most GPU lines of the 2 trillion run `quick::line_wins`. That covers legality of every move, the card set, and one pile after exactly 51 moves (PLAN.md §6.1).
 - The reference engine's rules agree with an independent Python implementation on every golden file. The fast engine
   agrees with the reference engine over 10M lockstep random playouts.
 - The GPU's lines are replayed the same way: 81.8M of them in the 100M run and 786.2M in the billion run, none failing.

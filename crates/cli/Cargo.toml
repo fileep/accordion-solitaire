@@ -10,6 +10,9 @@ readme.workspace = true
 name = "acc"
 path = "src/main.rs"
 
+[features]
+second-generator = ["accordion-core/second-generator"]
+
 [dependencies]
 accordion-core.workspace = true
 accordion-gpu.workspace = true

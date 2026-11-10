@@ -23,8 +23,51 @@ Each speed log has a row a second: time, deals done and left, deals/s, GPU wins/
 ## After the 2 trillion run
 
 Copy its speed log, its report (`checkpoints/batch-0-2000000000000.report.txt`) and `.events.log` here, and fill in the table.
-Then bring the record of losses up to date:
+Then, in this order, with nothing else running, bring the record of losses up to date:
 
 ```bash
 python testdata/tools/classify_losses.py hard-deals/proofs research/runs/losses.csv
 ```
+
+Check every loss's certificate in Python, with no code shared with the program that built it:
+
+```bash
+python research/lean/automaton/check_certificates.py hard-deals/proofs research/lean/automaton/certificates.csv
+```
+
+Prove them in Lean's kernel (`build` as in [research/lean/README.md](../lean/README.md); 12 jobs need about 36 GB):
+
+```bash
+python research/lean/automaton/prove_all.py hard-deals/proofs research/lean/automaton/lean_results.csv build 12
+```
+
+Check those proofs again in nanoda, a separate kernel:
+
+```bash
+python research/lean/automaton/replay.py research/lean/automaton/lean_results.csv research/lean/automaton/replay_results.csv build 12
+```
+
+Then this prints every figure the paper takes from the run, and says if any loss is missing from the steps above:
+
+```bash
+python research/paper/paper_numbers.py
+```
+
+## A second generator
+
+The win rate treats deals as uniform draws, which rests on the generator. To test that, the `second-generator` feature deals from
+ChaCha20 with mask-and-redraw instead of xoshiro256\*\* with Lemire's method, sharing no code or method. The same seed gives another
+deal, so its results go in folders of their own, and its report has a `generator` line. At the 0.7 losses per billion of the main run,
+200 billion deals should give about 140 losses, in about 10 hours:
+
+```bash
+cargo build --release -p accordion-cli --features second-generator --target-dir target/chacha
+```
+
+```powershell
+powershell -ExecutionPolicy Bypass -File C:\runs\guard.ps1 -Acc C:\runs\acc-chacha.exe -Count 200000000000 -Checkpoint checkpoints\chacha-0-200000000000.json -StartExtra "--dossiers hard-deals-chacha"
+```
+
+Its losses are compared by count only: Lean's `deal` is the main generator, so they have no proofs in Lean. The paper reports this
+run, which follows the 2 trillion run. Copy its report here as `chacha-0-200000000000.report.txt`, and `paper_numbers.py` compares it
+with the main run.

@@ -1446,8 +1446,11 @@ pub fn run(given: &BatchArgs) -> Result<bool, String> {
     micros.sort_unstable();
     let by_stage: Vec<_> = stages.into_iter().collect();
     say!("deals            {n} (seeds {}..{last_seed})", args.from);
+    if cfg!(feature = "second-generator") {
+        say!("generator        {}: not the deals of the main runs", accordion_core::deal::DEAL_GENERATOR);
+    }
     say!(
-        "won              {won} (every one verified by the reference rules){}",
+        "won              {won} (every line replayed: by the reference rules, or a GPU line by the quick check and 1 in 256 by the reference engine too){}",
         if by_stage.len() > 1 || by_stage.first().is_some_and(|(s, _)| s != "thorough") {
             format!(
                 "; by stage: {}",

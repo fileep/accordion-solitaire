@@ -103,9 +103,13 @@ const DECK_CODES: [u8; 52] = {
     codes
 };
 
-/// The bytes of `Deal::from_seed(seed)`, each card's code.
+/// The bytes of `Deal::from_seed(seed)`, each card's code. The GPU's deals come from here, so it must follow the
+/// `second-generator` feature as [`Deal::from_seed`] does.
 #[inline]
 pub fn deal_codes(seed: u64) -> [u8; 52] {
+    if cfg!(feature = "second-generator") {
+        return Deal::from_seed(seed).cards().map(|c| c.code());
+    }
     let mut sm = SplitMix64::new(seed);
     let state = std::array::from_fn(|_| sm.next_u64());
     shuffled(state).unwrap_or_else(|| Deal::from_seed(seed).cards().map(|c| c.code()))

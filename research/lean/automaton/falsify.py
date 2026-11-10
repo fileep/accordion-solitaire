@@ -9,7 +9,7 @@
 4. Wins must be seen: exhaustive small sub-rows (20-26 cards of random deals) compared with explicit search, including
    whether a one-pile word exists.  And full winnable deals, up to a node cap.
 """
-import json, random, sys, time, glob
+import json, os, random, sys, time, glob
 from dawg import DD, Too, chain, child, verify, load, M, END, card
 
 
@@ -191,7 +191,7 @@ def main():
         disagree += not ok
     print("subrows agree", agree, "disagree", disagree, "with-wins", wins, flush=True)
     # 4b full winnable deals, up to a cap
-    for f in sorted(glob.glob(r"C:/Users/Filip/Documents/Accordion Solitaire/hard-deals/gallery/*.json"))[:1]:
+    for f in sorted(glob.glob(os.path.join(os.path.dirname(__file__), "..", "..", "..", "hard-deals", "gallery", "*.json")))[:1]:
         d = json.load(open(f))
         cards = [card(t) for t in d["deal"]["cards"].split()]
         t0 = time.time()

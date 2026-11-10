@@ -13,6 +13,7 @@ Lean 4.35.0 (`lean-toolchain`). The checker is proved correct for any certificat
 | `automaton/dawg.py` | Builds the automaton by forward reachability on automata |
 | `automaton/lean_certificates.py` | Writes the Lean text for a seed |
 | `automaton/prove_all.py` | Proves every loss in batches, with a memory cap |
+| `automaton/replay.py` | Checks those proofs again in nanoda, a second kernel |
 | `automaton/lean_tests.py` | Writes the tests: a real win, and bad certificates the kernel must refuse |
 | `automaton/check_certificates.py` | A second checker in Python that shares no code with `dawg.py`; results in `certificates.csv` |
 
@@ -30,10 +31,22 @@ LEAN_PATH=build lean -R research/lean/automaton -o build/Certificate.olean resea
 python research/lean/automaton/prove_all.py hard-deals/proofs research/lean/automaton/lean_results.csv build
 ```
 
+`prove_all.py` takes a number of jobs as a fourth argument, for when nothing else is running. Each Lean takes up to about 3 GB.
+
+To check the proofs in a second kernel, `nanoda_bin`, which is in the Lean toolchain and written in Rust, sharing no code with Lean's:
+
+```bash
+python research/lean/automaton/replay.py research/lean/automaton/lean_results.csv research/lean/automaton/replay_results.csv build
+```
+
 ## What has been checked
 
 - With the current checker, these losses are proved in the kernel: seeds 3,417,058,778, 7,311,711,652, 112,249,515, 202,346,720,
   1,005,616,798 and 124,280,819,596. The full list of losses has not been run: that waits for the end of the 2 trillion deal run.
+- nanoda accepts the five smaller of those proofs, checking about 1,750 declarations a batch with only `propext` and `Quot.sound` allowed.
+  Changing one number in an exported proof, by pointing an application at a different number, was refused by its type checker 6 times
+  out of 6. A batch costs about the same CPU as Lean's check (for the five deals: 7-12 s, plus about 4 s to export), and 0.14 GB against
+  Lean's 2.3 GB, though the export itself needs 2.3 GB. `lean4lean`, also in the toolchain, can't read this toolchain's files here.
 - `lean_tests.py` compiles: a 51-move win of seed 0 replays under the same rules, and a dropped edge, a false inclusion claim, a
   winnable row and an empty table are all refused.
 - `check_certificates.py` passes all 138 losses it was run on, and agrees with an explicit search on 400 random rows.
