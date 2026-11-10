@@ -28,7 +28,8 @@ version. The speeds are the test laptop's (Intel i7-1260P, 16 threads, NVIDIA T5
 | 100 trillion | 7.5 months | not practical | 55 GB | 20 GB, at the end | about 100,000 |
 
 The disk and memory are the most a run needs at any time, on the processor alone and with the endgame tables to 11
-piles built; with the GPU, or without the tables, a little less. Where they go:
+piles built; with the GPU, or without the tables, a little less. The memory leaves out a rare long proof: one that is
+still going at the end, beside the check for repeated games, can take up to `--prove-memory` (8 GB) more. Where they go:
 
 - **The check for repeated games** ([READING_RESULTS.md](READING_RESULTS.md#the-report-line-by-line)). Up to about 2.1 billion
   deals it checks every deal at the end, in memory: 8 bytes a deal, so 8 GB for a billion. Past that, or past half the
@@ -42,10 +43,11 @@ piles built; with the GPU, or without the tables, a little less. Where they go:
   their two searches. About 1 deal in 960 million is proven impossible (23 in the project's 22 billion), and each gets a
   dossier and a loss record of a few KB in `output/hard-deals`: under 1 GB at 100 trillion.
 - **The speed log** grows by about 6 MB a day.
-- `--save-wins` (`acc batch --out`) adds about 350 bytes a deal: 350 GB a billion. It is refused with `--hours` alone.
+- `--save-wins` (`acc batch --out`) adds about 475 bytes a deal: 475 GB a billion. It is refused with `--hours` alone.
 
 At the end of a run of billions of deals, the check for repeated games and the last proofs add some minutes. The largest
-run the check can take is 281 trillion deals (2^48); a longer one needs `--no-games-check`, or to be split in two.
+run the check can take is 281 trillion deals (2^48), and `acc run` takes no more; a longer one has to be split into runs
+of their own (`--from`), or made with `acc batch --no-games-check`.
 
 ## Choosing the deals
 
@@ -65,7 +67,8 @@ acc run --from 10t --deals 1b
 
 - `acc run --deals 5b` plays 5 billion deals and is done when they are.
 - `acc run --hours 8` plays for 8 hours and pauses; `acc run --overnight` is the same. Without `--deals`, a run with hours
-  has 100 trillion deals, so it is the hours that end each session. The same command, or `acc resume`, carries on.
+  has 100 trillion deals, so it is the hours that end each session. The same command carries on for another 8 hours, as
+  does `acc resume --hours 8`; `acc resume` alone carries on with no time limit, until it is paused.
 - `acc run --deals 100b --hours 8` plays 100 billion deals, 8 hours at a time.
 - `--gentle` leaves the computer usable meanwhile: half the threads, a lower priority, and the GPU left alone.
 - `--dry-run` shows the `acc batch` command it would run, and stops.
@@ -103,6 +106,13 @@ files, renamed).
 A run carries on only from the folder it started in, as its files' paths are relative to it. If you moved the folder, move
 it back.
 
+A run started by an older acc, from before runs took a lock, is a special case: nothing can tell for sure that it isn't
+still going (in its last checks it can write nothing for hours), or that a script seeing it through, such as
+`tools/long-run.ps1`, isn't about to start it again. Two processes on one checkpoint would spoil the run, so `acc resume`
+and `acc run` refuse such a run until you add `--force`, which you should do only once you are sure nothing is running
+it. Once this version has carried on a run whose file of costs holds more than 125 million deals, finish it with this
+version too: an older one would report the percentiles' sample as if it were all of them.
+
 ## Crashes, power cuts and reboots
 
 A run saves its checkpoint every minute, writing it whole or not at all, so a crash, a power cut, a closed window or a
@@ -126,7 +136,9 @@ A laptop can run for days if it is set up for it. What acc does by itself:
   they pause the run, and once the charger is in and the battery is back to 60% they carry on with it. If the battery falls
   under 10% while the pause is still finishing, after a minute they stop the run at once; its last checkpoint stands.
   `--battery-pause` and `--battery-resume` change the two figures, and `--no-battery-guard` turns this off. It never
-  changes a setting of the computer.
+  changes a setting of the computer. A battery that is under 30% when a run starts makes it wait the same way first, with
+  a line that says so (Ctrl+C stops waiting). A run of 10,000 deals or fewer, such as `--quick`, is over in moments, and
+  the guard leaves it alone unless the battery is under 10%.
 
 Why a run can drain a battery on the charger: a laptop under full load can use more power than its charger gives. On the
 test laptop, the 2 trillion run took the battery down 5.5 to 6.8 Wh an hour with the processor and the GPU at

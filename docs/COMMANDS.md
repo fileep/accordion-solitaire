@@ -54,17 +54,18 @@ acc run --from 1m --deals 1m
 
 | Flag | Default | What it does |
 |---|---|---|
-| `--deals N` | a million (with `--hours`, as many as the hours allow) | How many deals to play. |
-| `--hours H` | none | Pause after H hours (`0.5` is half an hour). With `--deals` too, whichever comes first. The same command, or `acc resume`, carries on. |
+| `--deals N` | a million (with `--hours`, as many as the hours allow) | How many deals to play: at most 281,474,976,710,656 (2^48), the most the check for repeated games can take. |
+| `--hours H` | none | Pause after H hours (`0.5` is half an hour). With `--deals` too, whichever comes first. The same command carries on for another H hours, as does `acc resume --hours H`; `acc resume` alone has no time limit. |
 | `--overnight` | off | The same as `--hours 8`. |
 | `--quick` | off | 10,000 deals, to try it out. |
 | `--from S` | 0 | The first deal's seed. Runs that start where the last one ended never repeat a deal. |
 | `--gpu auto\|on\|off` | auto (off with `--gentle`) | Use an NVIDIA card: if there is one that works, always (refuse to start without it), or never. |
-| `--save-wins FILE` | none | Save every winning line in FILE (about 350 bytes a deal), to check with `acc verify`. Refused with `--hours` alone, as the file could fill the disk; with `--deals` the size is said first. |
+| `--save-wins FILE` | none | Save every winning line in FILE (about 475 bytes a deal), to check with `acc verify`. Refused with `--hours` alone, as the file could fill the disk; with `--deals` the size is said first. |
 | `--settings FILE` | none | Solver settings from a file ([settings files](#settings-files)); `acc settings --out FILE` writes one to edit. |
 | `--gpu-settings FILE` | none | GPU settings from a file; `acc settings --gpu --out FILE` writes one. |
 | `--no-proofs` | off | Don't try to prove that the deals not won can't be won. |
-| `--new` | off | Play these deals again although a run of them is paused or finished here. The old run's files are kept, renamed `<name>.old-1.*` (then `.old-2`, and so on). |
+| `--new` | off | Play these deals again although a run of them is paused or finished here. The old run's files are kept, renamed `<name>.old-1.*` (then `.old-2`, and so on), and are no longer listed as a run. |
+| `--force` | off | Go ahead with a run of these deals that an older acc started, which takes no lock, once you are sure nothing is running it (see `acc resume`). |
 | `--dry-run` | off | Print the `acc batch` command this stands for, and stop. |
 | `--threads N` | every thread (with `--gentle`, half) | Processor threads to use. |
 | `--gentle` | off | Leave the computer usable: half the threads, a lower priority, and no GPU unless `--gpu` asks for it. |
@@ -92,8 +93,10 @@ How it behaves:
 - **The battery guard**, on a computer with a battery (Windows; Linux too, not tested there yet; not on macOS): every 30 seconds it reads
   the battery. Under `--battery-pause` it asks the run to pause; once the charger is in and the battery is back to
   `--battery-resume`, it carries on with it. If the pause takes more than 60 seconds while the battery is under 10%, it
-  stops the run at once (the last checkpoint stands). A battery that can no longer be read counts as low. It changes no
-  setting of the computer. Without a battery it does nothing.
+  stops the run at once (the last checkpoint stands). A battery that can no longer be read counts as low. A battery under
+  `--battery-pause` when the run starts makes it wait in the same way first, and it says so. A run of 10,000 deals or
+  fewer is left alone unless the battery is under 10%. It changes no setting of the computer. Without a battery it does
+  nothing.
 
 ### `acc status`
 
@@ -110,15 +113,21 @@ acc status batch-0-1000000
 |---|---|
 | `NAME` | Which run, as the list names it (`batch-0-1000000`, or `0-1000000`, or one of its files). Default: all of them. |
 
-A run is **going** while it holds its lock file, or, for runs from an acc older than the lock, while its status says
-running and was written in the last 5 minutes. A run that is neither going nor paused, but has a checkpoint, **stopped
-unexpectedly** (a crash, a power cut, a closed window): `acc resume` carries on with it. If nothing is found, it says which
-folder it looked in: acc must be run from the folder where the run started.
+A run is **going** while it holds its lock file. A run from an acc older than the lock is judged by the times in its
+files: going while its status says running or finishing and was written in the last 5 minutes, or while a session it has
+started (as its log of events says) has yet to save for the first time, within 5 minutes; **finishing when last seen** if
+its status says finishing but is older, as such an acc can go for hours in its last checks without writing it. A run that
+is neither going nor paused, but has a checkpoint, **stopped unexpectedly** (a crash, a power cut, a closed window): `acc
+resume` carries on with it. The files `acc run --new` kept (`.old-1`) aren't listed. If nothing is found, it says which
+folder it looked in: acc must be run from the folder where the run started, and a run that took under a minute keeps no
+files.
 
 ### `acc pause`
 
 Pauses a run that is going in another window, by creating the file it watches for (`<checkpoint>.pause`), and waits up to
-30 seconds for it to take the request. Ctrl+C in the run's own window does the same.
+30 seconds for it to take the request, saying when it has paused. A run that may be going (one of an older acc, finishing
+when last seen) is asked too; if it doesn't take the request in time, the file is removed again. Ctrl+C in the run's own
+window does the same.
 
 ```
 acc pause
@@ -133,7 +142,9 @@ acc pause batch-0-1000000
 
 Carries on with a paused run, or one that stopped unexpectedly, with the same supervision as `acc run`. With one such run
 here it is used; with several it lists them and asks for a name. It refuses a run that is going, and one that started in
-another folder.
+another folder. It also refuses a run that an older acc started, as that acc takes no lock: nothing can be sure that it,
+or a script that starts it again (such as `tools/long-run.ps1`), isn't going, and two processes on one checkpoint would
+spoil the run. `--force` carries it on all the same, once you are sure.
 
 ```
 acc resume
@@ -144,8 +155,9 @@ acc resume --hours 2 --gentle
 | Flag | Default | What it does |
 |---|---|---|
 | `NAME` | the one paused run | Which run, when several are paused here. |
-| `--hours H` | none | Pause again after H hours. |
+| `--hours H` | none | Pause again after H hours. Without it there is no time limit, even for a run started with `--hours`. |
 | `--overnight` | off | The same as `--hours 8`. |
+| `--force` | off | Carry on with a run that an older acc started, once you are sure nothing is running it. |
 | `--dry-run` | off | Print the `acc batch` command this stands for, and stop. |
 | `--threads N` | every thread (with `--gentle`, half) | Processor threads to use. |
 | `--gentle` | off | Half the threads and a lower priority. A run that uses the GPU keeps using it. |
@@ -210,7 +222,7 @@ acc show --cards "2S 2C KS TH 6H 4C 6D 9D 4S QH 8C 8D 8S 7C AC 4D 6S 2D 5S 3S AH
 | Flag | Default | What it does |
 |---|---|---|
 | `FILE` | | A solve file (the line in it is checked, then shown), a dossier (its deal), or a file holding a deck. |
-| `--seed N` | | Deal number N. |
+| `--seed N` | | Deal number N. Seeds take the short forms of counts too: `--seed 1m` is deal 1,000,000. |
 | `--cards "..."` | | A deck as text, as for `acc deal`. |
 | `--solve` | off | Find a winning line first, as `acc solve` does. |
 | `--threads N` | 0 (every thread) | Threads for `--solve`. |
@@ -234,7 +246,7 @@ acc solve --file deck.txt --escalate
 | `--position "..."` | | A game in progress: piles separated by `\|`, each listed bottom to top (all 52 cards). |
 | `--max-nodes N` | 200m | Positions to search in all, across the threads, before giving up. |
 | `--threads N` | 0 (every thread) | Threads to use. |
-| `--rng-seed N` | 1 | Seed for the order in which the search tries moves, so that a search can be repeated exactly (with the same threads). |
+| `--rng-seed N` | 1 | Seed for the order in which the search tries moves, so that a search can be repeated exactly, with `--threads 1` (threads race each other to a win, so with more the positions counted vary from run to run). |
 | `--out FILE` | standard output | Write the solve file here. |
 | `--escalate` | off | If not won, try again with 10 times and then 100 times the limit, with fresh random orders, before giving up. |
 | `--dossiers DIR` | `output/hard-deals` | Where a deal that isn't won gets its dossier. |
@@ -278,7 +290,8 @@ acc prove --seed 1005616798 --max-positions 2b --memory 4
 Checks solve files by replaying every move under the reference rules ([FORMATS.md](FORMATS.md#verification-acc-verify)):
 that each move is legal, that the cards are the deal's, and that a win ends in one pile. A loss record's moves are checked
 the same way, but a loss can't be confirmed by replaying it; `acc verify` says how to prove it again. Given a dossier, it
-says what that is and where its loss record is.
+says what that is and where its loss record is. (`acc batch` writes a loss record for each deal it proves lost; `acc prove`
+only marks the dossier `loss (proven)`, and writes a record with `--out FILE`.)
 
 ```
 acc verify win.json
@@ -338,14 +351,15 @@ acc batch --resume checkpoints/batch-0-2000000000000.json
 | `--keep-free GB` | 5 | Pause, with exit code 74, when less than this is free on the checkpoint's disk. |
 
 Ctrl+C pauses the run; a second Ctrl+C stops it at once. Creating a file named like the checkpoint but ending `.pause`
-pauses it too. Starting a run whose checkpoint is still there is refused, so that a paused run can't be overwritten by
-mistake, and so is starting one that is going in another window (the `.lock` file).
+pauses it too (one made before the run started is taken to be left from an earlier session, and deleted). Starting a run
+whose checkpoint is still there is refused, so that a paused run can't be overwritten by mistake, and so is starting one
+that is going in another window (the `.lock` file).
 
 #### Output
 
 | Flag | Default | What it does |
 |---|---|---|
-| `--out FILE` | | Write one checked solve record per deal here (JSON Lines, compact moves), in seed order: about 350 bytes a deal. |
+| `--out FILE` | | Write one checked solve record per deal here (JSON Lines, compact moves), in seed order: about 475 bytes a deal. |
 | `--dossiers DIR` | `output/hard-deals` | Where deals that aren't won get their dossiers, and proven losses their loss records (in `proofs/`). |
 | `--no-dossiers` | off | Don't write dossiers. |
 | `--gallery N` | 0 | Keep the run's N hardest deals (most positions) as checked solve files in `<dossiers>/gallery/`, replacing the gallery there, and list them in its `INDEX.md`. With the GPU, only deals solved on the processor are ranked. |
@@ -445,6 +459,11 @@ With the default counts it takes some minutes on every thread; `acc doctor --ful
 These two are hidden from `acc help`'s list. They measure and tune the solver; their results are in
 [BENCHMARKS.md](BENCHMARKS.md) and [research/experiments/](../research/experiments/README.md). A third program, `accgpu`,
 runs the GPU's part alone, for measuring the kernel: `cargo run --release -p accordion-gpu -- --help` lists its flags.
+
+A build with `cargo install --locked --path crates/cli --features second-generator` makes its deals with a second
+generator (ChaCha20 in place of xoshiro256**): a different set of deals for the same seeds, to check that the win rate
+doesn't depend on the generator. Its reports say so on a `generator` line. Its results are not those of the main runs, so
+keep such a build apart from the usual one.
 
 ### `acc bench`
 
@@ -562,7 +581,7 @@ What acc gives back when it ends, which scripts can test (`$LASTEXITCODE` in Pow
 | 0 | Done. For `acc batch`, `acc run` and `acc resume`: the run finished **or paused**. It paused if its checkpoint is still there (or `.status.json` says `"state": "paused"`). | Paused: `acc resume`. |
 | 1 | An error, said on the line starting `acc:`. Or a run finished with a winning line that failed its check or a failed proof (the report says), `acc verify` found a bad record, `acc doctor` a FAIL, or `acc selftest` a disagreement. | Read the message ([TROUBLESHOOTING.md](TROUBLESHOOTING.md)). The last four would be bugs: please report them. |
 | 2 | The command line couldn't be read: a misspelt flag, a missing value. It says which. | `acc help <command>`. |
-| 74 | The run paused because the disk is nearly full (under `--keep-free`), saving the checkpoint failed five times in a row, or a file the run writes as it goes couldn't be written. Nothing is lost. | Make room, then `acc resume`. |
+| 74 | The run paused because the disk is nearly full (under `--keep-free`), saving the checkpoint failed five times in a row, or the log of the repeated-game check's sample couldn't be written. Nothing is lost. (A dossier or `--out` that can't be written is an error, exit code 1.) | Make room, then `acc resume`. |
 | 75 | The run paused because the GPU failed, or no deal finished for 15 minutes with the GPU. Nothing is lost. | `acc resume`: a new process usually gets the GPU back. `acc run` and `acc resume` do this by themselves. |
 | 130 | The run stopped at once, on a second Ctrl+C. Its last checkpoint, at most a minute old, stands. | `acc resume`. |
 

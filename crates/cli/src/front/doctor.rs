@@ -1,7 +1,7 @@
 //! `acc doctor`: whether this computer is ready, a line for each thing a run needs, each with what to do about it. It
 //! only looks, but for a few seconds of solving on the CPU; the GPU is only used when asked (`--gpu`).
 
-use super::machine::{self, Battery};
+use super::machine::{self, BATTERY_PAUSE, BATTERY_RESUME, Battery};
 use super::{State, figures, runs_here};
 use crate::progress::thousands;
 use accordion_gpu::Libraries;
@@ -89,7 +89,7 @@ fn build(r: &mut Report) {
             Level::Warn,
             "build",
             &format!("acc {}, a debug build{commit}", env!("CARGO_PKG_VERSION")),
-            "A debug build is many times slower. From the project folder: cargo install --path crates/cli --force",
+            "A debug build is many times slower. From the project folder: cargo install --locked --path crates/cli --force",
         );
     } else {
         r.say(Level::Pass, "build", &format!("acc {}, release build{commit}", env!("CARGO_PKG_VERSION")), "");
@@ -132,7 +132,7 @@ fn cpu(r: &mut Report) {
                 "{threads} threads; not built for this CPU: slower than it could be (it has {})",
                 unused.join(" and ")
             ),
-            "Build acc on this computer, from the project folder: cargo install --path crates/cli --force",
+            "Build acc on this computer, from the project folder: cargo install --locked --path crates/cli --force",
         );
     }
 }
@@ -261,12 +261,17 @@ fn runs(r: &mut Report) {
     let count = |state: fn(&State) -> bool| runs.iter().filter(|run| state(&run.state())).count();
     let (live, paused) = (count(|s| *s == State::Live), count(|s| *s == State::Paused));
     let stopped = count(|s| matches!(s, State::Stopped(_)));
-    let text = match (live, paused, stopped) {
-        (0, 0, 0) => "none going or paused here".to_string(),
-        _ => format!("{live} going, {paused} paused, {stopped} stopped unexpectedly here"),
+    let unsure = count(|s| matches!(s, State::Unsure(_)));
+    let text = match (live, paused, stopped, unsure) {
+        (0, 0, 0, 0) => "none going or paused here".to_string(),
+        (.., 0) => format!("{live} going, {paused} paused, {stopped} stopped unexpectedly here"),
+        _ => format!(
+            "{live} going, {paused} paused, {stopped} stopped unexpectedly, {unsure} finishing or stopped (by an older \
+             acc) here"
+        ),
     };
-    if stopped > 0 {
-        r.say(Level::Warn, "runs", &text, "acc status shows them; acc resume carries on with one.");
+    if stopped + unsure > 0 {
+        r.say(Level::Warn, "runs", &text, "acc status shows them, and what carries each on.");
     } else {
         r.say(Level::Pass, "runs", &text, if live + paused > 0 { "acc status shows them." } else { "" });
     }
@@ -281,6 +286,15 @@ fn battery(r: &mut Report) {
             "acc run can't pause for a low battery here: keep the charger in during long runs.",
         ),
         Battery::None => r.say(Level::Pass, "battery", "none", ""),
+        b @ Battery::Level { percent, .. } if percent < BATTERY_PAUSE => r.say(
+            Level::Warn,
+            "battery",
+            &machine::describe(b),
+            &format!(
+                "Under {BATTERY_PAUSE}%: acc run waits for the charger and {BATTERY_RESUME}% before it starts a run of \
+                 more than 10,000 deals (--no-battery-guard starts it at once)."
+            ),
+        ),
         Battery::Level { charger: true, percent } => {
             r.say(Level::Pass, "battery", &format!("{percent}%, on the charger"), "")
         }
@@ -288,7 +302,7 @@ fn battery(r: &mut Report) {
             Level::Warn,
             "battery",
             &machine::describe(b),
-            "Plug the charger in before a long run; acc run pauses its run when the battery is under 30%.",
+            &format!("Plug the charger in before a long run; acc run pauses its run when the battery is under {BATTERY_PAUSE}%."),
         ),
         Battery::Unreadable => r.say(Level::Warn, "battery", "there is one, but it can't be read", ""),
     }
@@ -333,7 +347,7 @@ fn smoke_test(r: &mut Report) {
 const A_BUG: &str = "This is a bug, please report it with this output.";
 
 fn gpu_test(r: &mut Report) {
-    if runs_here().iter().any(|run| run.state() == State::Live) {
+    if runs_here().iter().any(|run| matches!(run.state(), State::Live | State::Unsure(_))) {
         r.say(
             Level::Warn,
             "GPU test",

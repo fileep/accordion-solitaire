@@ -12,13 +12,15 @@ pub mod status;
 
 use crate::progress::thousands;
 use serde_json::Value;
-use std::fs::{OpenOptions, TryLockError};
+use std::fs::{File, OpenOptions, TryLockError};
+use std::io::{Read, Seek, SeekFrom};
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 /// The folder of the runs started here: `acc batch`'s default for its checkpoints.
 pub const FOLDER: &str = "checkpoints";
-/// A status file this old, from an acc that takes no lock, means the run has stopped: it is written at every save.
+/// A status file this old, from an acc that takes no lock, means the run has stopped going through its deals: it is
+/// written at every save while it does.
 const STALE_AFTER_S: u64 = 5 * 60;
 
 /// A run started in this folder, as its files show it.
@@ -36,6 +38,9 @@ pub enum State {
     Paused,
     /// Its status says it was going, but it isn't: a crash, a power cut, a window closed. Seconds since it was last seen.
     Stopped(Option<u64>),
+    /// Started by an older acc, which takes no lock, and last seen in its last checks, in which it can go for hours without
+    /// a word: it may be going still, or have stopped. Seconds since it was last seen.
+    Unsure(Option<u64>),
     Finished,
     /// Neither a checkpoint nor a report: nothing to carry on with or show.
     Gone,
@@ -76,18 +81,59 @@ impl Run {
         }
         let has_checkpoint = self.file("json").exists();
         let age = self.age_s();
-        // An acc that takes the lock says how often it saves; for one, the lock alone tells. For an older one, a status
-        // file written lately does, as it is written at every save.
-        let takes_lock = self.status.get("save_every_s").is_some();
-        let fresh = age.is_some_and(|a| a < STALE_AFTER_S);
         match self.word() {
             "finished" => State::Finished,
             "" if self.status.is_null() && self.file("report.txt").exists() => State::Finished,
-            "running" | "finishing" if fresh && !takes_lock => State::Live,
+            // An acc that takes the lock says how often it saves, and for one the lock alone tells.
+            w if has_checkpoint && self.by_older_acc() => self.older_state(w, age),
             w if w.starts_with("paused") && has_checkpoint => State::Paused,
             _ if has_checkpoint => State::Stopped(age),
             _ => State::Gone,
         }
+    }
+
+    /// Whether its status file was written by an older acc, which takes no lock, so that a second process could take up
+    /// its checkpoint while it goes: what is said of it, and what is done with it, can go only by the times in its files.
+    pub fn by_older_acc(&self) -> bool {
+        !self.status.is_null() && self.status.get("save_every_s").is_none()
+    }
+
+    /// The state of a run of an older acc. It writes its status file at every save while it goes through its deals; in
+    /// its last checks only when something has changed, which can be hours apart; and when it carries on, not before its
+    /// first save, a minute in, though its log of events says at once that it has started.
+    fn older_state(&self, word: &str, age: Option<u64>) -> State {
+        let fresh = |age: Option<u64>| age.is_some_and(|a| a < STALE_AFTER_S);
+        match word {
+            "running" | "finishing" if fresh(age) => State::Live,
+            "finishing" => State::Unsure(age),
+            w if w.starts_with("paused") => match self.started_since() {
+                Some(since) if age.is_none_or(|age| since < age) => {
+                    if fresh(Some(since)) {
+                        State::Live
+                    } else {
+                        State::Stopped(Some(since))
+                    }
+                }
+                _ => State::Paused,
+            },
+            _ => State::Stopped(age),
+        }
+    }
+
+    /// Seconds since the last session of the run started, as its log of events says. A session that started after the
+    /// status file was last written has not saved yet: nearly every way a session ends, but a crash, writes it.
+    fn started_since(&self) -> Option<u64> {
+        let mut log = File::open(self.file("events.log")).ok()?;
+        let length = log.metadata().ok()?.len();
+        log.seek(SeekFrom::Start(length.saturating_sub(16 << 10))).ok()?;
+        let mut tail = Vec::new();
+        log.read_to_end(&mut tail).ok()?;
+        let tail = String::from_utf8_lossy(&tail);
+        let started = tail.lines().rev().find_map(|line| {
+            let (when, what) = line.split_once(' ')?;
+            (what.starts_with("session ") && what.contains(" started at ")).then_some(when)
+        })?;
+        parse_utc(started).map(|t| now_s().saturating_sub(t))
     }
 
     /// The deals won so far: the status file's count, or for one written before it had that, worked out as `acc batch`
@@ -150,7 +196,7 @@ fn file(name: &str, ending: &str) -> PathBuf {
 fn percent(p: f64) -> String {
     match p {
         p if p > 99.9 && p < 100.0 => "99.9".into(),
-        p if p > 0.0 && p < 0.1 => "0.1".into(),
+        p if p > 0.0 && p < 0.1 => "under 0.1".into(),
         p => format!("{p:.1}"),
     }
 }
@@ -175,6 +221,10 @@ pub fn runs_here() -> Vec<Run> {
                 .find_map(|ending| file.strip_suffix(ending))
                 .or_else(|| file.strip_suffix(".json"))?
                 .to_string();
+            // The files of a run started again with acc run --new are kept, but are not a run here any more.
+            if is_kept(&name) {
+                return None;
+            }
             // A lock file says nothing unless it is held: in a run's first minute, before there is a status file.
             (!file.ends_with(".lock") || locked(&name)).then_some(name)
         })
@@ -182,6 +232,11 @@ pub fn runs_here() -> Vec<Run> {
     names.sort();
     names.dedup();
     names.iter().map(|n| Run::new(n)).collect()
+}
+
+/// Whether a name is that of a run's files kept by `acc run --new`: `batch-0-1000.old-1`.
+pub fn is_kept(name: &str) -> bool {
+    name.rsplit_once(".old-").is_some_and(|(_, n)| !n.is_empty() && n.bytes().all(|b| b.is_ascii_digit()))
 }
 
 /// The run that `name` names among `runs`: its name (`batch-0-1000000`), that without `batch-`, or one of its files.
@@ -206,7 +261,8 @@ pub fn find<'a>(runs: &'a [Run], name: &str) -> Result<&'a Run, String> {
 pub fn nothing_here() -> String {
     let here = std::env::current_dir().map_or_else(|_| ".".into(), |d| d.display().to_string());
     format!(
-        "no runs found in {}. A run keeps its files where it was started, so acc must be run from that same folder",
+        "no runs found in {}. A run keeps its files where it was started, so acc must be run from that same folder; and \
+         a run that took under a minute keeps none: what it printed is all there is",
         Path::new(&here).join(FOLDER).display()
     )
 }
@@ -373,9 +429,20 @@ mod tests {
         }
     }
 
+    #[test]
+    fn small_parts_are_not_shown_as_more_and_kept_runs_are_known() {
+        assert_eq!(percent(100.0 * 3_556.0 / 1e14), "under 0.1");
+        assert_eq!(
+            (percent(0.0), percent(0.1), percent(50.0), percent(99.95)),
+            ("0.0".into(), "0.1".into(), "50.0".into(), "99.9".into())
+        );
+        assert!(is_kept("batch-0-1000.old-1") && is_kept("batch-0-1000.old-12"));
+        assert!(!is_kept("batch-0-1000") && !is_kept("my.old-run") && !is_kept("x.old-"));
+    }
+
     const REPORT: &str = "\
 deals            1000000 (seeds 0..999999)
-won              999998 (every one verified by the reference rules); by stage: ladder 999000, thorough 998
+won              999998 (every line replayed: by the reference rules, or a GPU line by the quick check and 1 in 256 by the reference engine too); by stage: ladder 999000, thorough 998
 not won          2 by the solver (2 exhausted, 0 hit the limit of 50000000 positions)
 proofs           1 proven lost, 0 won, 1 undecided (two exhaustive runs of up to 10000000000 positions each)
 failed to verify 0

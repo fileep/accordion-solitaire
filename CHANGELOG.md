@@ -19,7 +19,8 @@ Making the program usable by other people. None of this changes how a deal is so
 - `acc` alone prints a start page, and `acc help` a grouped list of the commands. Each command's help has examples.
 - Counts can be written as `5000`, `2m`, `1.5b`, `100t` or `1e12`.
 - `--config`, `--gpu-config` and `experiment --config` take the name of a JSON file as well as JSON itself.
-- A run's lock: two windows can't run the same checkpoint at once.
+- A run's lock: two windows can't run the same checkpoint at once. A run that an older acc started, which takes no
+  lock, is judged by when its files were written, and `acc resume` and `acc run` touch it only with `--force`.
 - `.status.json` also says what has been won, where the dossiers go, how often it saves, and the checkpoint's name.
 - `verify` takes several files and folders.
 - `tools/get-nvrtc.ps1` and `tools/get-nvrtc.sh` (not tested on Linux yet) download NVIDIA's NVRTC, check it and
@@ -58,3 +59,5 @@ Making the program usable by other people. None of this changes how a deal is so
 - The card example in `acc solve --help`, `acc deal --help` and the visualizer (`A♣`, not `♣A`, which couldn't be read).
 - `acc selftest --help`'s example now has the counts `acc doctor --full` uses.
 - `--keep-free` and the disk warnings work off Windows too, through `df` (not tested there yet).
+- A pause file made while a run is starting up is kept for it, where it used to be deleted as left from before; only one
+  made before the run's process began is.

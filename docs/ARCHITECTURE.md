@@ -25,7 +25,9 @@ accordion-core ──► accordion-solver ──► accordion-cli (acc)
 ## The life of a deal in a run
 
 1. **The deal.** Seed `s` becomes 52 cards by SplitMix64, xoshiro256\*\* and a Fisher-Yates shuffle
-   ([FORMATS.md](FORMATS.md#deals-from-seeds)), so anyone can make the same deal from the same seed.
+   ([FORMATS.md](FORMATS.md#deals-from-seeds)), so anyone can make the same deal from the same seed. A build with the
+   `second-generator` feature (`crates/core/src/rng.rs`) uses ChaCha20 instead, on the CPU and the GPU alike: other deals
+   for the same seeds, to check that the win rate doesn't depend on the generator.
 2. **The GPU, if there is one.** A feeder thread takes batches of 262,144 deals and launches the kernel on them. For each
    deal the kernel makes up to a few hundred **attempts**: play a prefix of 38 to 40 moves chosen at random (weighted
    towards moves three to the left, and scored by patterns that winning prefixes share), then search what is left, at most

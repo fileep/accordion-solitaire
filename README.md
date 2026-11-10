@@ -14,8 +14,8 @@ with an NVIDIA T550 graphics card, at 934,074 deals a second.
 
 | | |
 |---|---|
-| A 64-bit computer | Windows 10 or 11 is tested. Linux and macOS are expected to work, but are not tested yet (see below). |
-| Rust, the language acc is written in | Free, from [rustup.rs](https://rustup.rs). On Windows also Microsoft's C++ build tools. [docs/GETTING_STARTED.md](docs/GETTING_STARTED.md) has every step. |
+| A 64-bit computer | Windows 11 is tested; Windows 10 is expected to work. Linux and macOS are expected to work, but are not tested yet (see below). |
+| Rust, the language acc is written in | Free, from [rustup.rs](https://rustup.rs): a recent version (`rustup update` gets one). On Windows also Microsoft's C++ build tools. [docs/GETTING_STARTED.md](docs/GETTING_STARTED.md) has every step. |
 | An NVIDIA graphics card | Optional. It makes long runs about a hundred times faster or more: [docs/GPU_SETUP.md](docs/GPU_SETUP.md). |
 | Node.js | Only for the visualizer, which plays and replays deals in a browser: [docs/VISUALIZER.md](docs/VISUALIZER.md). |
 
@@ -24,7 +24,7 @@ with an NVIDIA T550 graphics card, at 934,074 deals a second.
 In a terminal, in the project's folder (the same commands in Windows PowerShell, on Linux and on macOS):
 
 ```
-cargo install --path crates/cli
+cargo install --locked --path crates/cli
 acc doctor
 acc run --quick
 acc show --seed 42 --solve
@@ -63,7 +63,7 @@ The first builds `acc` and puts it where the terminal finds it (a few minutes). 
 
 | System | Status |
 |---|---|
-| Windows 10 and 11, 64-bit (x86-64) | Built and tested, with and without the GPU, on a Windows 11 laptop (Intel i7-1260P, NVIDIA T550). |
+| Windows 11, 64-bit (x86-64) | Built and tested on a Windows 11 laptop (Intel i7-1260P, NVIDIA T550). The GPU engine is the one the big runs used; this version's new GPU paths (finding NVRTC, `acc doctor --gpu`, `acc run` on the card) are compile-checked only so far. Windows 10 is expected to work, not tested. |
 | Linux, 64-bit | Expected to work, not tested yet; CI will show. Not tried: the GPU there (`tools/get-nvrtc.sh`), the shell scripts in `tools/`. acc doesn't keep Linux awake during a run (start it under `systemd-inhibit`). |
 | macOS | Expected to work on the CPU, not tested yet; CI will show. There is no NVIDIA GPU support on macOS, and acc doesn't read the battery or keep the computer awake there (use `caffeinate -i`). |
 

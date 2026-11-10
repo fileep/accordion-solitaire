@@ -249,6 +249,9 @@ pub struct Guard {
 
 /// Under this, a pause that drags on is cut short.
 pub const CRITICAL: u8 = 10;
+/// The marks `acc run` pauses at and carries on from, unless told others.
+pub const BATTERY_PAUSE: u8 = 30;
+pub const BATTERY_RESUME: u8 = 60;
 
 impl Guard {
     pub fn new(pause_below: u8, resume_from: u8) -> Guard {

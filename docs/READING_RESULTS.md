@@ -106,7 +106,7 @@ throughput       934074 deals/s, 7M CPU positions/s on 15 CPU threads + GPU (214
 | Line | Says |
 |---|---|
 | `deals` | How many deals, and their seeds, first to last. |
-| `won` | Deals won, and at which stage. "Verified" means replayed by a check separate from the search: the reference rules, or, for most of the GPU's lines since the second billion, a quicker check of the same rules, with 1 deal in 256 replayed by the reference engine as well ([RESULTS.md](RESULTS.md#how-every-win-is-checked)). |
+| `won` | Deals won, and at which stage. "Verified" means replayed by a check separate from the search: the reference rules, or, for most of the GPU's lines since the second billion, a quicker check of the same rules, with 1 deal in 256 replayed by the reference engine as well ([RESULTS.md](RESULTS.md#how-every-win-is-checked)). This version says so on the line itself: `(every line replayed: by the reference rules, or a GPU line by the quick check and 1 in 256 by the reference engine too)`. |
 | `not won` | Deals the solver gave up on, as exhausted or at the limit. Here 20. |
 | `proofs` | What the prover found of those: proven lost, won after all, undecided; and `FAILED` if any proof failed. Missing with proofs off. |
 | `failed to verify` | Winning lines that failed their check. Anything but 0 is a bug. |
@@ -145,15 +145,23 @@ batch-0-200000 (seeds 0 to 199,999)
 or the GPU), `stopped unexpectedly` (a crash, a power cut or a closed window: `acc resume` carries on), or `finished`. The
 figures are as of the last save, so they can be up to a minute old.
 
-`acc results` on a run that isn't finished gives the win rate so far:
+A run started by an older acc, from before runs took a lock, can only be judged by when its files were written. In its
+last checks such an acc can go for hours without writing, so it shows as `finishing when last seen ..., by an older acc`:
+it may be going still. `acc resume` and `acc run` won't touch a run like that, nor one of its paused runs (a script that
+starts it again may be waiting to), unless you add `--force` once you are sure nothing is running it.
+
+`acc results` on a run that isn't finished gives the win rate so far, here of an `acc run --hours 0.004` that had paused:
 
 ```
-batch-0-200000 isn't finished: it is paused, at 19,473 of 200,000 deals (9.7%). These figures are as of its last save, 2026-11-10 00:39:07 UTC (3 seconds ago).
-  won          19,473 of 19,473 deals
-  win rate     100.000000% so far; with 95% confidence between 99.980277% and 100.000000%
+batch-0-100000000000000 isn't finished: it is paused, at 91,857 of 100,000,000,000,000 deals (under 0.1%). These figures are as of its last save, 2026-11-10 02:46:14 UTC (0 seconds ago).
+  won          91,857 of 91,857 deals
+  win rate     100.0000000000% so far; with 95% confidence between 99.9958181758% and 100.0000000000%
 The deals not decided yet count as lost for the lower figure and as won for the higher. The check that no two deals are the same game is made at the end of the run.
-acc resume batch-0-200000 carries on; acc results batch-0-200000 shows the win rate so far
+acc resume batch-0-100000000000000 carries on; acc results batch-0-100000000000000 shows the win rate so far
 ```
+
+The win rate has as many decimals as the report's (10, or 12 from 10 trillion deals), and when some deals aren't won a
+line under it says about how rare that is: `about 1 deal in 960,000,000 not won so far`.
 
 On a finished run it prints the report, and after either it lists the deals proven impossible, with their loss records.
 
@@ -171,7 +179,7 @@ Everything is in the folder the run was started from.
 | `checkpoints/<name>.events.log` | What has happened to the run: each session, pause, GPU failure and proof, with the time ([FORMATS.md](FORMATS.md#the-log-of-events)). |
 | `checkpoints/<name>.report.txt` | The report, once finished (for runs of more than a minute). |
 | `checkpoints/<name>.lock`, `.pause` | The lock held while the run goes, and the file that asks it to pause. |
-| `checkpoints/<name>.old-1.*` | An earlier run of the same deals, kept by `acc run --new`. |
+| `checkpoints/<name>.old-1.*` | An earlier run of the same deals, kept by `acc run --new`. `acc status` no longer lists it; its report, if it finished, is `<name>.old-1.report.txt`. |
 | `logs/batch-<time>Z.csv` | The speed log of one session ([FORMATS.md](FORMATS.md#the-speed-log)). |
 | `output/hard-deals/seed-<seed>.json` | The dossier of a deal not won at first: what was tried, the best line, and how it ended ([FORMATS.md](FORMATS.md#dossiers)). |
 | `output/hard-deals/proofs/seed-<seed>-loss.json` | The loss record of a deal proven impossible: a solve file with result `loss`. |
@@ -195,7 +203,7 @@ Every result can be checked again, on any computer, from the seeds alone.
 
   `acc verify` replays every move with the reference rules, a deliberately simple version of the rules separate from
   the search: `line 1  seed 42  ok: win in 51 moves`. To keep every line of a run, give it `--save-wins wins.jsonl`
-  (about 350 bytes a deal), then `acc verify wins.jsonl`.
+  (about 475 bytes a deal), then `acc verify wins.jsonl`.
 - **A loss.** `acc verify output/hard-deals/proofs` checks that each loss record's moves are legal; a loss itself can't be
   confirmed by replaying a line, so it says how to prove it again:
 
@@ -204,9 +212,10 @@ Every result can be checked again, on any computer, from the seeds alone.
   line 1  to re-check this, run: acc prove --seed 202346720
   ```
 
-  `acc prove --seed 202346720` makes both exhaustive searches again. With Python 3, an independent program that shares no
-  code with acc searches every reachable position again and must find no win, and exactly as many positions as acc
-  prove's plain search (from the project's folder):
+  `acc prove --seed 202346720` makes both exhaustive searches again. Both use the solver's own code for the moves, so
+  they guard against its shortcuts in the search, not against a mistake in that. With Python 3, an independent program
+  that shares no code with acc searches every reachable position again and must find no win, and exactly as many
+  positions as the `dead` figure of acc prove's plain run (from the project's folder):
 
   ```
   python testdata/tools/check_loss.py 202346720
@@ -215,7 +224,11 @@ Every result can be checked again, on any computer, from the seeds alone.
   ```
   seed 202346720: 3H 5S QH 5C AD 7C ...
     reachable positions 74970, won False, fewest piles 32 (3 s)
+  ...
   ```
+
+  Here 74970, the `dead` figure of acc prove's `plain run: lost after 379939 positions (74970 dead, 16 MB)`: the
+  different positions it found lost.
 
   [research/lean](../research/lean/README.md) has a further check of the project's losses, as proofs for the Lean proof
   assistant.

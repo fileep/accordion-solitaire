@@ -155,7 +155,8 @@ output by every run. Each line is a label padded to 17 characters, then text. Th
 | Label | Text |
 |---|---|
 | `deals` | `<count> (seeds <first>..<last>)` |
-| `won` | `<won> (every one verified by the reference rules)`, then `; by stage: <stage> <count>, ...` unless every win was `thorough`. Stages: `gpu`, `ladder-0` to `ladder-6`, `thorough`, `prove`. |
+| `generator` | Only in a build with `--features second-generator`: `<name>: not the deals of the main runs` |
+| `won` | `<won> (every line replayed: by the reference rules, or a GPU line by the quick check and 1 in 256 by the reference engine too)`, then `; by stage: <stage> <count>, ...` unless every win was `thorough`. Stages: `gpu`, `ladder-0` to `ladder-6`, `thorough`, `prove`. Reports of earlier versions say `(every one verified by the reference rules)`. |
 | `not won` | `<n> by the solver (<e> exhausted, <u> hit the limit of <max-nodes> positions)` |
 | `proofs` | `<lost> proven lost, <won> won, <undecided> undecided (two exhaustive runs of up to <prove> positions each)`, then `; <n> FAILED` if any failed. Absent with `--prove 0`. |
 | `failed to verify` | `<n>` |
@@ -198,7 +199,10 @@ reading while the run goes.
 | `save_every_s` | Seconds between checkpoints. Its presence also says the run takes a lock (`<name>.lock`). |
 | `checkpoint` | The checkpoint's path |
 
-Status files from older versions lack the last four fields and `won`; readers must not need them.
+Status files from older versions lack `won`, `dossiers`, `save_every_s` and `checkpoint`; readers must not need them. Such a
+file was written by an acc that takes no lock, which in its last checks (`finishing`) rewrites it only when something changes,
+and when it carries on, not before its first checkpoint (its log of events says at once that a session has started): `acc
+status` and the rest judge those runs by these times, and `acc resume` and `acc run` touch them only with `--force`.
 
 ### The log of events
 

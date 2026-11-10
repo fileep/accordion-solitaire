@@ -8,7 +8,8 @@ works, more slowly.
 
 What you need:
 
-- An NVIDIA card. Only the T550 (a laptop card, compute capability 7.5) has been tried. acc compiles its GPU code
+- An NVIDIA card. Only the T550 (a laptop card of compute capability 7.5, NVIDIA's number for a card's generation and
+  features) has been tried. acc compiles its GPU code
   for the card it finds each time a run starts, so other NVIDIA cards that NVRTC 12.9 knows should work too; none has been
   tried yet. AMD and Intel graphics can't be used, and macOS has no NVIDIA support.
 - NVIDIA's driver, supporting CUDA 12.9 or later.
@@ -68,7 +69,8 @@ sh tools/get-nvrtc.sh
 ```
 
 It does the same with the Linux file (it needs `curl` or `wget`, and `python3` to read PyPI's answer and unpack the file),
-unpacks it into `.tools/cuda-nvrtc-12.9.86`, and makes the `libnvrtc.so` link acc's CUDA library looks for. acc then
+unpacks it into `.tools/cuda-nvrtc-12.9.86`, and adds a `libnvrtc.so` link beside `libnvrtc.so.12`, one of the names
+acc's CUDA library tries. acc then
 finds it by starting itself again with that folder on `LD_LIBRARY_PATH`. This has only been type-checked, never run on
 Linux: please report how it goes.
 
@@ -77,11 +79,12 @@ to the folder holding `nvrtc64_120_0.dll` (Windows) or `libnvrtc.so.12` (Linux).
 
 ### Where acc looks for NVRTC
 
-In order: where the system looks for libraries (`PATH` on Windows, the loader's path on Linux); the folder
-`ACC_NVRTC_DIR` names (the one holding the library, or one the download was unpacked into); and the newest
-`.tools\cuda-nvrtc-*` in the folder acc is run from, or the folder acc's own program file is in, or any folder above
-either. So if you installed acc with `cargo install`, run it from the project's folder, or set `ACC_NVRTC_DIR` once with
-the `setx` line the script prints (then open a new terminal).
+First where the system looks for libraries (`PATH` on Windows, the loader's path on Linux). If it isn't there: the
+folder `ACC_NVRTC_DIR` names (the one holding the library, or one the download was unpacked into), when that is set to
+a folder that exists, and then nowhere else; otherwise a copy in `.tools\cuda-nvrtc-*` of the folder acc is run from, or
+of the nearest folder above it that has one, and failing that the same from the folder acc's own program file is in
+(where one `.tools` has several, the last by name, which is the newest version). So if you installed acc with `cargo install`, run it from
+the project's folder, or set `ACC_NVRTC_DIR` once with the `setx` line the script prints (then open a new terminal).
 
 ## 3. Check that it works
 
@@ -97,7 +100,8 @@ acc doctor --gpu
 ```
 
 It compiles the GPU code and solves 20,000 deals with the card, and its `GPU test` line says how many it won and how long
-it took. If a run is using the card already, it says so first: the test would share the card with it for a few seconds.
+it took. If a run started in this folder is using the card already, it says so first: the test would share the card with
+it for a few seconds. It can't see a run started from another folder, so check that none is going before you try it.
 
 When a run starts with the GPU it prints a line like `GPU: <the card's name> (<n> multiprocessors), kernel compiled in <s> s`,
 the threads line says `15 CPU threads + GPU` on a 16-thread processor (one thread feeds the card), and the report has a `GPU` line

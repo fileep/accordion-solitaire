@@ -18,6 +18,11 @@ steps for them are the usual ones for any Rust program, not ones checked on this
 - **Seed:** the number of a deal. Deal 42 is always the same 52 cards, on every computer, so anyone can check a result.
 - **Run:** a range of deals played one after another, such as deals 0 to 999,999, and counted.
 - **Checkpoint:** the file in which a run saves where it is, every minute, so that it can pause and carry on later.
+- **Thread:** one strand of work the processor can do at a time. A processor has several (the test laptop's has 16), and
+  acc solves one deal on each; `--threads 2` tells it to use two.
+- **JSON:** a plain-text way of writing settings, such as `{"max_nodes": 1000}`, which acc reads from a file.
+- **Exit code:** a number a program leaves behind when it ends: 0 if all went well. In PowerShell, `$LASTEXITCODE` shows
+  the last one; elsewhere `echo $?`.
 
 ## 1. Open a terminal
 
@@ -68,8 +73,16 @@ Then close the terminal and open a new one.
 cargo --version
 ```
 
-You should see something like `cargo 1.99.1 (5f94df478 2026-08-27)` (the test machine's; a newer version is fine). If
-Windows says `cargo : The term 'cargo' is not recognized`, see [TROUBLESHOOTING.md](TROUBLESHOOTING.md#cargo-or-acc-is-not-recognized).
+You should see something like `cargo 1.99.1 (5f94df478 2026-08-27)` (the test machine's; a newer version is fine). acc
+uses parts of Rust added in 2025, so it needs 1.89 at the very least; it has only been built with 1.99. If yours is older,
+or Rust was installed a while ago, bring it up to date first:
+
+```
+rustup update
+```
+
+If Windows says `cargo : The term 'cargo' is not recognized`, see
+[TROUBLESHOOTING.md](TROUBLESHOOTING.md#cargo-or-acc-is-not-recognized).
 
 ## 3. Get the code
 
@@ -92,17 +105,23 @@ cd ~/Documents/accordion-solitaire
 
 Use your own folder's name if it is different (a ZIP from GitHub adds `-main` to it). To check that you are in the right
 place, type `dir` on Windows or `ls` elsewhere: you should see `Cargo.toml`, `README.md`, `crates` and `docs` among the
-names.
+names. If all you see is one folder with nearly the same name (Windows' **Extract All** often makes a folder inside a
+folder), go into that one too, with `cd` and its name, and look again.
+
+On many Windows computers the Documents folder that Explorer shows is in OneDrive (`$HOME\OneDrive\Documents`). For long
+runs a folder that isn't synced is better, such as `C:\acc` (make it with `mkdir C:\acc`): a run's files grow to many GB,
+and a program that syncs them can hold them open while the run saves.
 
 ## 4. Build acc
 
 ```
-cargo install --path crates/cli
+cargo install --locked --path crates/cli
 ```
 
 This builds acc from its source and puts the program where the terminal finds it (in `.cargo\bin` in your home
-folder). It needs the internet the first time, to fetch the parts that acc is built from. It prints many `Compiling ...`
-lines and ends with a line like:
+folder). It needs the internet the first time, to fetch the parts that acc is built from; `--locked` takes the exact
+versions of them that acc was tested with (listed in `Cargo.lock`). It prints many `Compiling ...` lines and ends with a
+line like:
 
 ```
    Installed package `accordion-cli v0.1.0 (C:\Users\you\Documents\accordion-solitaire\crates\cli)` (executable `acc.exe`)
@@ -126,7 +145,8 @@ What else is worth knowing about the build:
   copy of `acc.exe` may not run on a different computer: build it there. ([`.cargo/config.toml`](../.cargo/config.toml) says
   how to build one copy for many computers.)
 - After you change or update the code, the same command with `--force` builds and installs it again:
-  `cargo install --path crates/cli --force`.
+  `cargo install --locked --path crates/cli --force`. Not while a run is going: on Windows the running `acc.exe` can't
+  be replaced, and it ends with `Access is denied`. Pause the run first (`acc pause`).
 - Without installing: `cargo build --release -p accordion-cli` builds it into the project's folder, as
   `target\release\acc.exe` on Windows and `target/release/acc` elsewhere. Then type `.\target\release\acc.exe` (Windows) or
   `./target/release/acc` instead of `acc` in every command in these documents. Older notes in this project write
@@ -198,11 +218,12 @@ easier to read; in the game it is one row of 52. Now let acc win it:
 acc show --seed 42 --solve
 ```
 
-It searches for a winning line, checks every move of it against the rules, then shows the deal again and the moves:
+It searches for a winning line, checks every move of it against the rules, then shows the deal again and the moves. On
+the test laptop, with `--threads 2` added (yours says how many threads it used, and its figures will differ):
 
 ```
 52 piles, 2 threads, up to 200000000 positions
-won (11641 positions, 72 attempts, 0.01 s)
+won (14694 positions, 95 attempts, 0.01 s)
 verified by the reference engine: 51 moves, 1 pile left
 Deal 42. Rules: ...
    ...
@@ -240,17 +261,19 @@ command, and `acc help solve` (or any other command) says more about one.
 acc run --quick
 ```
 
-This plays deals 0 to 9,999 and counts how many it wins. With 2 threads on the test laptop (while it was busy with
-other work) it printed:
+This plays deals 0 to 9,999 and counts how many it wins. On the test laptop, with `--threads 2 --gpu off` added (it
+was busy with other work), it printed:
 
 ```
 same as: acc batch --from 0 --count 10000 --threads 2 --gpu off
+note: no endgame tables in endgame; `acc endgame build --piles 11` builds them (about 7 minutes, 1.2 GB) and makes solving about 1.2-1.3x faster
 seeds 0..9999 (10000 deals), up to 50000000 positions per deal, 2 threads
-speed log: logs\batch-20261110-003650Z.csv
+speed log: logs\batch-20261110-024027Z.csv
 checkpoint: checkpoints/batch-0-10000.json; to pause, press Ctrl+C or create checkpoints/batch-0-10000.pause
-  ████████████████ 100.0%  10,000 done · 0 left · 1,148 deals/s (avg 1,148) · finished in 9s · 0 lost
+  ████████████████ 100.0%  10,000 done · 0 left · 6,402 deals/s (avg 6,402) · finished in 2s · 0 lost
+
 deals            10000 (seeds 0..9999)
-won              10000 (every one verified by the reference rules); by stage: ladder-0 9739, ladder-1 243, ladder-2 18
+won              10000 (every line replayed: by the reference rules, or a GPU line by the quick check and 1 in 256 by the reference engine too); by stage: ladder-0 9739, ladder-1 243, ladder-2 18
 not won          0 by the solver (0 exhausted, 0 hit the limit of 50000000 positions)
 proofs           0 proven lost, 0 won, 0 undecided (two exhaustive runs of up to 10000000000 positions each)
 failed to verify 0
@@ -258,12 +281,16 @@ repeat odds      9.3e-50 that any two of these deals are the same game (suits an
 distinct games   all 10000 deals differ, even with suits and ranks renamed
 win rate         100.0000000000%   95% CI [99.9616001623%, 100.0000000000%] (Wilson; ...)
 positions/deal   mean 5597  median 2965  p90 12832  p99 37140  p99.9 114901  max 248119
-ms/deal (1 core) mean 1.67  median 0.43  p90 2.40  p99 24.36  p99.9 103.72  max 227.5
-throughput       1148 deals/s, 6M CPU positions/s on 2 threads (8.7 s wall)
+ms/deal (1 core) mean 0.31  median 0.16  p90 0.70  p99 2.18  p99.9 6.47  max 21.5
+throughput       6402 deals/s, 36M CPU positions/s on 2 threads (1.6 s wall)
 
 In short: 10,000 of 10,000 deals won; none proven impossible.
+A run as short as this one keeps no report: the one above is all there is.
 Next: acc run --from 10k --deals 10k plays the next 10,000 deals.
 ```
+
+Typed as above, without `--threads 2 --gpu off`, the first line is `same as: acc batch --from 0 --count 10000`: acc then
+uses every thread, and the GPU if it can.
 
 The first line is the `acc batch` command that `acc run` stands for: `acc batch` is the engine underneath, with every
 setting ([COMMANDS.md](COMMANDS.md#acc-batch)). The line with the bar is the progress line, which updates once a second
@@ -271,8 +298,12 @@ while the run goes. The lines from `deals` to `throughput` are the run's report,
 words. [READING_RESULTS.md](READING_RESULTS.md) explains every line.
 
 On your computer, with every thread (and the GPU, if acc can use it), it takes a few seconds. A run as short as this
-keeps no files: what it printed is its report. A run of more than a minute keeps its report in `checkpoints`, where
-`acc results` finds it again.
+keeps nothing in `checkpoints` (only its speed log, in `logs`): what it printed is its report, and `acc results` has
+nothing to show for it. A run of more than a minute keeps its report in `checkpoints`, where `acc results` finds it
+again.
+
+On a laptop whose battery is under 30%, a run of more than 10,000 deals waits for the charger and 60% before it starts,
+and says so; [LONG_RUNS.md](LONG_RUNS.md#laptops) explains why, and `--no-battery-guard` starts it at once.
 
 ## 9. Optional: the endgame tables
 

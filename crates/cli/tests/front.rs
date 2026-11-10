@@ -236,7 +236,7 @@ fn a_dry_run_says_the_batch_command_and_touches_nothing() {
         "acc batch --from 1500000000 --count 2000000 --threads 3 --gpu off --out w.jsonl --prove 0"
     );
     let output = dir.acc(&["run", "--dry-run", "--deals", "2m", "--save-wins", "w.jsonl"]);
-    assert!(text(&output.stderr).contains("about 700 MB in w.jsonl"), "{}", text(&output.stderr));
+    assert!(text(&output.stderr).contains("about 950 MB in w.jsonl"), "{}", text(&output.stderr));
     let half = (std::thread::available_parallelism().unwrap().get() / 2).max(1);
     assert_eq!(line(&["--gentle"]), format!("acc batch --from 0 --count 1000000 --threads {half} --gpu off"));
     assert_eq!(
@@ -257,12 +257,15 @@ fn a_dry_run_says_the_batch_command_and_touches_nothing() {
     );
     refused(&dir.acc(&["run", "--hours", "0", "--dry-run"]), "--hours");
     refused(&dir.acc(&["run", "--quick", "--deals", "5", "--dry-run"]), "--deals");
+    refused(&dir.acc(&["run", "--deals", "300t", "--dry-run"]), "281,474,976,710,656 deals at most");
     assert!(dir.left().is_empty(), "{:?}", dir.left());
 }
 
 #[test]
 fn a_quick_run_goes_from_start_to_finish() {
     let dir = Dir::new("quick");
+    // A battery under the mark for pausing doesn't hold up a run this short.
+    dir.battery("20 0");
     let output = dir.acc(&["run", "--quick", "--once", "--gpu", "off", "--threads", "2"]);
     let stdout = succeeded(&output);
     contains_all(
@@ -271,6 +274,7 @@ fn a_quick_run_goes_from_start_to_finish() {
             "deals            10000 (seeds 0..9999)",
             "In short: ",
             " of 10,000 deals won",
+            "keeps no report: the one above is all there is",
             "Next: acc run --from 10k --deals 10k",
         ],
     );
@@ -350,8 +354,10 @@ fn a_run_pauses_for_the_battery_and_by_hand_and_carries_on() {
     let (ok, _, said) = dir.finished("again", child);
     assert!(ok && said.contains("kept, as checkpoints/batch-0-30000.old-1.*"), "{said}");
     assert!(dir.file("checkpoints/batch-0-30000.old-1.report.txt").exists());
-    let list = succeeded(&dir.acc(&["status"]));
-    contains_all(&list, &["batch-0-30000 ", "paused", "batch-0-30000.old-1", "finished"]);
+    // The kept files are no longer a run here: the new one is the only one to carry on.
+    let shown = succeeded(&dir.acc(&["status"]));
+    contains_all(&shown, &["batch-0-30000 (seeds 0 to 29,999)", "state       paused"]);
+    assert!(!shown.contains("old-1"), "{shown}");
 }
 
 #[test]
@@ -366,7 +372,8 @@ fn a_run_for_some_hours_pauses_when_they_are_up() {
             "--stop-after 0.002",
             "Leave this window open, keep the charger in and the lid open. Ctrl+C pauses safely.",
             "The 0.002 hours are up: the run is paused at",
-            "acc results shows where it stands; acc resume carries on",
+            "acc results shows where it stands. The same command carries it on for another 0.002 hours, as does acc \
+             resume --hours 0.002; acc resume alone carries on with no time limit.",
         ],
     );
     assert_eq!(state(&dir.file("checkpoints/batch-0-1000000.status.json")), "paused");
@@ -465,10 +472,16 @@ fn status_and_results_read_status_files_from_before_they_had_all_they_say_now() 
     assert!(succeeded(&dir.acc(&["status", "9-100"])).contains("stopped unexpectedly (last seen"));
     refused(&dir.acc(&["resume", "--threads", "2"]), "2 runs are paused here; say which");
     refused(
-        &dir.acc(&["resume", "batch-9-100", "--threads", "2", "--dry-run"]),
+        &dir.acc(&["resume", "batch-9-100", "--threads", "2", "--force", "--dry-run"]),
         "can only carry on from there",
     );
-    let line = succeeded(&dir.acc(&["resume", "batch-5-1000", "--threads", "2", "--dry-run"]));
+    // An older acc takes no lock, so nothing it started is carried on unless the one asking is sure it isn't going.
+    const OLDER: &str = "was started by an older acc, which takes no lock";
+    refused(&dir.acc(&["resume", "batch-5-1000", "--threads", "2", "--dry-run"]), OLDER);
+    refused(&dir.acc(&["run", "--from", "5", "--deals", "1000", "--threads", "2", "--dry-run"]), OLDER);
+    refused(&dir.acc(&["run", "--from", "5", "--deals", "1000", "--new", "--dry-run"]), OLDER);
+    assert!(succeeded(&dir.acc(&["status", "5-1000"])).contains("acc resume batch-5-1000 --force"));
+    let line = succeeded(&dir.acc(&["resume", "batch-5-1000", "--threads", "2", "--force", "--dry-run"]));
     assert_eq!(without_memory(line.trim()), "acc batch --resume checkpoints/batch-5-1000.json --threads 2");
     let results = succeeded(&dir.acc(&["results", "batch-1-10"]));
     contains_all(
@@ -478,6 +491,22 @@ fn status_and_results_read_status_files_from_before_they_had_all_they_say_now() 
     refused(&dir.acc(&["results"]), "say which");
     refused(&dir.acc(&["pause"]), "no run is going here");
     refused(&dir.acc(&["status", "batch-2-2"]), "no run named batch-2-2");
+
+    // An older acc carrying on says so in its log at once, but writes its status file only at its first save: going.
+    write("checkpoints/batch-3-50.status.json", &old_status("paused", "2026-01-01T00:00:00Z", 3, 50, 20));
+    write("checkpoints/batch-3-50.json", "{}");
+    write(
+        "checkpoints/batch-3-50.events.log",
+        "2026-01-01T00:00:00Z paused at 20 deals\n2999-01-01T00:00:00Z session 2 started at 20 deals, on commit x\n",
+    );
+    assert!(succeeded(&dir.acc(&["status", "3-50"])).contains("state       going"));
+    refused(&dir.acc(&["resume", "batch-3-50", "--force", "--dry-run"]), "already going");
+    // In its last checks it can be quiet for hours: it may still be going.
+    write("checkpoints/batch-4-50.status.json", &old_status("finishing", "2026-01-01T00:00:00Z", 4, 50, 50));
+    write("checkpoints/batch-4-50.json", "{}");
+    let shown = succeeded(&dir.acc(&["status", "4-50"]));
+    contains_all(&shown, &["state       finishing when last seen", "by an older acc", "--force"]);
+    refused(&dir.acc(&["resume", "batch-4-50", "--dry-run"]), OLDER);
 }
 
 #[test]

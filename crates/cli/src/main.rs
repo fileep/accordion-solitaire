@@ -183,7 +183,7 @@ mod solve;
 #[group(required = true, multiple = false)]
 struct DeckSource {
     /// Generate the deal for this seed.
-    #[arg(long)]
+    #[arg(long, value_parser = numbers::parse_count)]
     seed: Option<u64>,
     /// A deck as text: 52 cards like "KS 7H 10d A♣", separated by spaces or commas.
     #[arg(long)]
@@ -259,6 +259,8 @@ pub struct DossierDeal {
     pub id: String,
     pub cards: String,
     pub seed: Option<u64>,
+    /// What it says of the deal: `loss (proven)`, say.
+    pub status: Option<String>,
 }
 
 /// The deal in `text`, if it is a dossier.
@@ -271,6 +273,7 @@ pub fn dossier_of(text: &str) -> Option<DossierDeal> {
         id: value["id"].as_str()?.to_string(),
         cards: value["deal"]["cards"].as_str()?.to_string(),
         seed: value["deal"]["seed"].as_u64(),
+        status: value["status"].as_str().map(String::from),
     })
 }
 
@@ -312,6 +315,13 @@ fn verify_command(paths: &[PathBuf], quiet: bool) -> Result<bool, String> {
             println!("this is a dossier: the notes kept on a deal that wasn't won, not a solve file");
             if record.exists() {
                 println!("its loss record is {}: acc verify {0} checks that", record.display());
+            } else if dossier.status.as_deref() == Some("loss (proven)") {
+                // acc prove marks the dossier, and writes a record only when asked to; acc batch writes both.
+                let prove = dossier.seed.map_or("acc prove".to_string(), |s| format!("acc prove --seed {s}"));
+                println!(
+                    "it says the deal is proven lost, but it has no loss record in {}: {prove} --out FILE writes one",
+                    dir.join("proofs").display()
+                );
             } else {
                 println!("it has no loss record in {} (not proven lost there)", dir.join("proofs").display());
             }

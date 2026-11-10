@@ -27,10 +27,15 @@ npm install
 npm run dev
 ```
 
+In Windows PowerShell, type `npm.cmd` for `npm` (`npm.cmd install`, then `npm.cmd run dev`). Plain `npm` there runs
+`npm.ps1`, a script, which Windows' default settings refuse with `npm.ps1 cannot be loaded because running scripts is
+disabled on this system`; `npm.cmd` is the same program without that. In Command Prompt, plain `npm` works.
+
 `npm install` fetches what the page is built with (Vite, TypeScript and wasm-pack) into `viz/node_modules`; it needs the
 internet the first time. `npm run dev` compiles the solver to WebAssembly, then starts a small web server on your computer
 and prints its address, normally `http://localhost:5173/`. Open that address in a browser. The page works while the terminal
-stays open; Ctrl+C in the terminal stops it. Next time, `cd viz` and `npm run dev` are enough.
+stays open; Ctrl+C in the terminal stops it. Next time, `cd viz` and `npm run dev` (in PowerShell, `npm.cmd run dev`) are
+enough.
 
 ## Playing
 

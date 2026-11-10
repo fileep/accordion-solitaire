@@ -35,7 +35,8 @@ pub struct SolveArgs {
     /// Threads to use (0 = every core).
     #[arg(long, default_value_t = 0)]
     threads: usize,
-    /// Seed for the solver's move-order randomness, so a run can be repeated exactly.
+    /// Seed for the solver's move-order randomness, so that a search can be repeated exactly (with --threads 1: threads
+    /// race each other to a win).
     #[arg(long, default_value_t = 1)]
     rng_seed: u64,
     /// Write the solve file here instead of standard output.
@@ -62,7 +63,7 @@ pub struct SolveArgs {
 #[group(required = true, multiple = false)]
 pub struct SolveSource {
     /// The deal for this seed.
-    #[arg(long)]
+    #[arg(long, value_parser = crate::numbers::parse_count)]
     seed: Option<u64>,
     /// A deck as text: 52 cards like "KS 7H 10d A♣", separated by spaces or commas.
     #[arg(long)]

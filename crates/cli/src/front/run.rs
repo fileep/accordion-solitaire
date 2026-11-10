@@ -3,7 +3,7 @@
 //! `tools/long-run.ps1` does, and paused while the battery is low and started again once it has charged, as the battery
 //! guard of the long runs here did. Ctrl+C reaches the run, which pauses, and this process stays to say so.
 
-use super::machine::{self, Guard};
+use super::machine::{self, Battery, Guard};
 use super::{FOLDER, Run, State, figures, in_short, short};
 use crate::numbers::parse_count;
 use crate::progress::thousands;
@@ -30,13 +30,16 @@ Examples:
 
 /// Deals in a run with --hours and no --deals: more than any run gets through, so that the hours decide.
 const OPEN_ENDED: u64 = 100_000_000_000_000;
+/// A run of at most this many deals (that of --quick) takes minutes at most, and the battery guard leaves it alone unless the
+/// battery is all but empty.
+const SHORT_RUN: u64 = 10_000;
 /// A run's tries in a row without getting further, before giving up on it.
 const TRIES: u32 = 6;
 const WAIT_BEFORE_TRYING_AGAIN: Duration = Duration::from_secs(60);
 /// How long a pause for the battery may take, under [`machine::CRITICAL`] percent, before the run is stopped at once.
 const PAUSE_AT_MOST: Duration = Duration::from_secs(60);
 /// How large a winning line is in `--save-wins`, about (`acc batch --out`).
-const RECORD_BYTES: u64 = 350;
+const RECORD_BYTES: u64 = crate::batch::RECORD_BYTES;
 /// `acc batch`'s defaults for its memory, in GB, which `acc run` passes only when the computer has less.
 const GAMES_MEMORY: u64 = 16;
 const PROVE_MEMORY: u64 = 8;
@@ -58,10 +61,10 @@ pub struct MachineArgs {
     #[arg(long)]
     no_battery_guard: bool,
     /// Pause the run when the battery falls under this percentage.
-    #[arg(long, default_value_t = 30, value_name = "PCT", value_parser = clap::value_parser!(u8).range(1..=99))]
+    #[arg(long, default_value_t = machine::BATTERY_PAUSE, value_name = "PCT", value_parser = clap::value_parser!(u8).range(1..=99))]
     battery_pause: u8,
     /// After a pause for the battery, carry on once the charger is in and the battery is back to this percentage.
-    #[arg(long, default_value_t = 60, value_name = "PCT", value_parser = clap::value_parser!(u8).range(1..=100))]
+    #[arg(long, default_value_t = machine::BATTERY_RESUME, value_name = "PCT", value_parser = clap::value_parser!(u8).range(1..=100))]
     battery_resume: u8,
 }
 
@@ -72,7 +75,8 @@ pub struct RunArgs {
     /// allow.
     #[arg(long, value_parser = parse_count, conflicts_with = "quick")]
     deals: Option<u64>,
-    /// Stop after this many hours: the run pauses, and carries on with the same command (or acc resume).
+    /// Stop after this many hours: the run pauses, and the same command carries it on for as long again (as does acc resume
+    /// --hours; acc resume alone carries on with no time limit).
     #[arg(long, conflicts_with = "overnight")]
     hours: Option<f64>,
     /// The same as --hours 8.
@@ -87,7 +91,7 @@ pub struct RunArgs {
     /// Use an NVIDIA card: auto (if there is one that works), on, or off.
     #[arg(long, value_parser = ["auto", "on", "off"])]
     gpu: Option<String>,
-    /// Save every winning line in this file, to check again later with acc verify (about 350 bytes a deal).
+    /// Save every winning line in this file, to check again later with acc verify (about 475 bytes a deal).
     #[arg(long, value_name = "FILE")]
     save_wins: Option<PathBuf>,
     /// Solver settings from a file (acc settings writes one to edit).
@@ -102,6 +106,9 @@ pub struct RunArgs {
     /// Start these deals again, though a run of them is paused or finished here (its files are kept, renamed .old-1).
     #[arg(long)]
     new: bool,
+    /// For a run that an older acc started, which takes no lock: go ahead with it, once you are sure nothing is running it.
+    #[arg(long)]
+    force: bool,
     /// Print the acc batch command this stands for, and stop.
     #[arg(long)]
     dry_run: bool,
@@ -120,6 +127,9 @@ pub struct ResumeArgs {
     /// The same as --hours 8.
     #[arg(long)]
     overnight: bool,
+    /// For a run that an older acc started, which takes no lock: carry on with it, once you are sure nothing is running it.
+    #[arg(long)]
+    force: bool,
     /// Print the acc batch command this stands for, and stop.
     #[arg(long)]
     dry_run: bool,
@@ -209,6 +219,21 @@ fn check_battery_marks(machine: &MachineArgs) -> Result<(), String> {
     Ok(())
 }
 
+/// Refuses to touch a run that an older acc started, unless told to: that acc takes no lock, so nothing here can be sure
+/// that it isn't going, or that a script that starts it again isn't waiting to (a second process on the same checkpoint
+/// would spoil the run).
+fn not_older_unless_forced(run: &Run, force: bool) -> Result<(), String> {
+    if force || !run.by_older_acc() || matches!(run.state(), State::Finished | State::Gone) {
+        return Ok(());
+    }
+    Err(format!(
+        "{} was started by an older acc, which takes no lock, so acc can't be sure that nothing is running it: that acc \
+         may still be going (in its last checks it can say nothing for hours), or a script that starts it again, such \
+         as tools/long-run.ps1, may be waiting to. Once you are sure neither is, add --force",
+        run.name
+    ))
+}
+
 /// Refuses to carry on with a run that started in another folder, whose paths are relative to that one. Only for a run
 /// that isn't going: it reads the checkpoint.
 fn started_here(run: &Run) -> Result<(), String> {
@@ -276,6 +301,13 @@ pub fn run(args: &RunArgs) -> Result<u8, String> {
             u64::MAX
         ));
     }
+    if count > crate::games::MAX_DEALS {
+        return Err(format!(
+            "a run can have {} deals at most (2^48), as the check that no two deals are the same game can't number more: \
+             play them as several runs, each with its own --from",
+            thousands(crate::games::MAX_DEALS)
+        ));
+    }
     if hours.is_some() && args.deals.is_none() && !args.quick && args.save_wins.is_some() {
         return Err(format!(
             "--save-wins can't go with --hours alone: the file grows by about {RECORD_BYTES} bytes a deal for as long as the run goes, and could fill the disk. Say how many deals with --deals"
@@ -290,6 +322,9 @@ pub fn run(args: &RunArgs) -> Result<u8, String> {
         return Err(format!(
             "this run is already going in another window: acc status shows how it is doing, and acc pause {name} pauses it"
         ));
+    }
+    if exists {
+        not_older_unless_forced(&run, args.force)?;
     }
     let mut kept = None;
     if (exists || played) && args.new {
@@ -378,8 +413,10 @@ pub fn resume(args: &ResumeArgs) -> Result<u8, String> {
     let run = match &args.name {
         Some(name) => super::find(&runs, name)?,
         None => {
-            let paused: Vec<&Run> =
-                runs.iter().filter(|r| matches!(r.state(), State::Paused | State::Stopped(_))).collect();
+            let paused: Vec<&Run> = runs
+                .iter()
+                .filter(|r| matches!(r.state(), State::Paused | State::Stopped(_) | State::Unsure(_)))
+                .collect();
             match paused.as_slice() {
                 [run] => *run,
                 [] if runs.iter().any(|r| r.state() == State::Live) => {
@@ -419,14 +456,26 @@ pub fn resume(args: &ResumeArgs) -> Result<u8, String> {
             return Err(format!("{} is finished: acc results {} shows what it found", run.name, run.name));
         }
         State::Gone => return Err(format!("{} has no checkpoint to carry on from", run.name)),
-        State::Stopped(age) => eprintln!(
-            "{} stopped unexpectedly{}: carrying on from its last checkpoint.",
-            run.name,
-            age.map_or(String::new(), |a| format!(" (last seen {})", super::ago(a)))
-        ),
-        State::Paused => eprintln!("Carrying on with {}, at {}.", run.name, run.done_text()),
+        State::Stopped(age) | State::Unsure(age) => {
+            not_older_unless_forced(run, args.force)?;
+            eprintln!(
+                "{} stopped unexpectedly{}: carrying on from its last checkpoint.",
+                run.name,
+                age.map_or(String::new(), |a| format!(" (last seen {})", super::ago(a)))
+            )
+        }
+        State::Paused => {
+            not_older_unless_forced(run, args.force)?;
+            eprintln!("Carrying on with {}, at {}.", run.name, run.done_text())
+        }
     }
     started_here(run)?;
+    if hours.is_none() && run.num("count") == OPEN_ENDED {
+        eprintln!(
+            "note: without --hours this goes on until it is paused (Ctrl+C, or acc pause); acc resume --hours 8 would stop \
+             after 8 hours"
+        );
+    }
     if args.machine.gentle && run.status["hardware"].as_str().is_some_and(|h| h.contains("GPU")) {
         eprintln!(
             "note: this run uses the GPU, which can't be turned off partway through; --gentle only lowers the rest"
@@ -478,8 +527,13 @@ fn see_through(plan: &Plan, machine: &MachineArgs, dry_run: bool) -> Result<u8, 
     let checkpoint = PathBuf::from(plan.checkpoint());
     let began = Instant::now();
     let hours_left = || plan.hours.map(|h| h - began.elapsed().as_secs_f64() / 3600.0);
-    let mut guard =
-        (!machine.no_battery_guard).then(|| Guard::new(machine.battery_pause, machine.battery_resume));
+    // A run this short is over before the battery goes much lower: it waits, or is paused, only for one all but empty.
+    let pause_below = if plan.count <= SHORT_RUN {
+        machine.battery_pause.min(machine::CRITICAL)
+    } else {
+        machine.battery_pause
+    };
+    let mut guard = (!machine.no_battery_guard).then(|| Guard::new(pause_below, machine.battery_resume));
     let every = if machine::battery_faked() { Duration::from_secs(1) } else { Duration::from_secs(30) };
     let run = || Run::new(&plan.name);
     let mut failures = 0;
@@ -494,12 +548,16 @@ fn see_through(plan: &Plan, machine: &MachineArgs, dry_run: bool) -> Result<u8, 
             return Ok(paused_text(plan, true));
         }
         // A battery that is low already waits for the charger, as after a pause.
+        let battery = machine::battery();
         if let Some(g) = guard.as_mut()
-            && let Some(why) = g.pause_for(machine::battery())
+            && let Some(why) = g.pause_for(battery)
         {
+            let charger = matches!(battery, Battery::Level { charger: true, .. });
             eprintln!(
-                "{} {why}: waiting for the charger and {}% before {} the run",
+                "{} {why}: waiting for {} {}% before {} the run. Ctrl+C stops waiting; --no-battery-guard starts a run \
+                 whatever the battery",
                 stamp(),
+                if charger { "it to charge to" } else { "the charger, and" },
                 g.resume_from,
                 if sessions == 0 { "starting" } else { "carrying on with" }
             );
@@ -638,11 +696,13 @@ fn paused_text(plan: &Plan, hours_up: bool) -> u8 {
     let at = format!("{} of {} deals", thousands(run.num("done")), thousands(plan.count));
     if hours_up {
         let hours = plan.hours.unwrap_or_default();
+        let (h, s) = (hours_text(hours), if hours == 1.0 { "" } else { "s" });
         eprintln!(
-            "{} The {} hour{} up: the run is paused at {at}. acc results shows where it stands; acc resume carries on.",
+            "{} The {h} hour{s} {} up: the run is paused at {at}. acc results shows where it stands. The same command \
+             carries it on for another {h} hour{s}, as does acc resume --hours {h}; acc resume alone carries on with no \
+             time limit.",
             stamp(),
-            hours_text(hours),
-            if hours == 1.0 { " is" } else { "s are" }
+            if hours == 1.0 { "is" } else { "are" }
         );
     } else {
         eprintln!("{} Paused at {at}. acc resume carries on; acc results shows where it stands.", stamp());
@@ -661,6 +721,8 @@ fn finished_text(plan: &Plan, report: &str, code: u8) -> u8 {
             report_file.display(),
             plan.name
         );
+    } else {
+        println!("A run as short as this one keeps no report: the one above is all there is.");
     }
     if let Some(file) = &plan.save_wins {
         println!(
@@ -723,8 +785,8 @@ fn session(
         if let Some(status) = child.try_wait().map_err(|e| format!("waiting for acc batch: {e}"))? {
             break status;
         }
-        // Ctrl+C reached the run too, unless it was sent to this process alone; and a run still starting up takes a pause
-        // file for one left from before, and deletes it. So it is put there again, every second, while it is wanted.
+        // Ctrl+C reached the run too, unless it was sent to this process alone. The pause file is put there all the same,
+        // and again every second while it is wanted, which costs nothing: it is this run's alone, and goes when it ends.
         if (asked || machine::stop_asked())
             && last_touch.is_none_or(|t| t.elapsed() >= Duration::from_secs(1))
         {

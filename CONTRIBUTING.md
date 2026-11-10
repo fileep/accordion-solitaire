@@ -18,11 +18,14 @@ You need Rust, through [rustup](https://rustup.rs). On Windows, use Rust's MSVC 
 Tools (the "Desktop development with C++" workload). From the project's folder:
 
 ```
-cargo build --release -p accordion-cli
-cargo test --workspace --release
-cargo fmt --all --check
-cargo clippy --workspace --all-targets -- -D warnings
+cargo build --release --locked -p accordion-cli
+cargo test --workspace --release --locked
+cargo fmt -p accordion-cli -p accordion-solver -p accordion-wasm --check
+cargo clippy --workspace --all-targets --locked -- -D warnings
 ```
+
+(`crates/core` and `crates/gpu` aren't in rustfmt's layout yet, so `cargo fmt --all` would change them; that is best
+done as a change of its own.)
 
 The tests run optimised (`--release`): unoptimised, the solver is many times slower, and some tests run real batches
 of deals, which takes minutes. Without an NVIDIA card and NVRTC the GPU kernel's tests pass without running anything;
@@ -37,7 +40,11 @@ npm ci
 npm test
 ```
 
-CI ([.github/workflows/ci.yml](.github/workflows/ci.yml)) runs all of this on Windows, Linux and macOS.
+In Windows PowerShell, type `npm.cmd` for `npm`: Windows' default settings refuse to run `npm.ps1`, which plain `npm`
+starts there.
+
+CI ([.github/workflows/ci.yml](.github/workflows/ci.yml)) runs the Rust steps on Windows, Linux and macOS, and the
+visualizer's tests on Linux.
 
 Builds use every instruction the building computer's CPU has ([.cargo/config.toml](.cargo/config.toml) says how to
 make a binary for others).

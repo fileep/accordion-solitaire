@@ -152,6 +152,59 @@ fn an_old_checkpoint_over_the_cap_is_cut_to_it_and_its_totals_stay_exact() {
     }
 }
 
+#[test]
+fn a_save_that_fails_after_the_cut_leaves_the_old_checkpoint_whole() {
+    let dir = Dir::new("old-over-failed");
+    let checkpoint = old_checkpoint(&dir);
+    let alone = old_run_left_alone(&dir, &checkpoint);
+    let done = checkpoint["standing"]["done"].as_u64().unwrap();
+    let capped = |more: &[&str]| {
+        let mut command = Command::new(ACC);
+        command.current_dir(&dir.0).args(resume_args(more)).env("ACC_COST_SAMPLE_MOST", "50");
+        command.output().unwrap()
+    };
+    // The new checkpoint can't be written: a folder is where it goes first.
+    std::fs::create_dir(dir.file("cp.tmp")).unwrap();
+    let until = (done + 1).to_string();
+    let output = capped(&["--until", &until]);
+    assert!(!output.status.success(), "{}", text(&output.stderr));
+    assert!(text(&output.stderr).contains("note: this run's file of costs has"), "{}", text(&output.stderr));
+    assert!(
+        std::fs::read(dir.file("cp.costs")).unwrap() == OLD_COSTS,
+        "the costs must still be the checkpoint's"
+    );
+    assert_eq!(json(&dir.file("cp.json"))["tally"]["cpu_deals"].as_u64().unwrap(), done);
+
+    // So it carries on from there, its totals as exact as ever.
+    std::fs::remove_dir(dir.file("cp.tmp")).unwrap();
+    let capped = report(&succeeded(&capped(&[])));
+    let (line, expected) = (&capped["positions/deal"], &alone["positions/deal"]);
+    assert_eq!(after(line, "mean"), after(expected, "mean"));
+    assert_eq!(capped["win rate"], alone["win rate"]);
+}
+
+#[test]
+fn a_pause_file_from_before_the_run_is_ignored_and_one_made_as_it_starts_is_kept() {
+    let dir = Dir::new("pause-file");
+    // Left by a session that has ended: this run goes to its end.
+    std::fs::write(dir.file("cp.pause"), "").unwrap();
+    std::thread::sleep(Duration::from_millis(50));
+    let args = batch_args(&["--count", "200", "--dossiers", "d", "--checkpoint", "cp.json"]);
+    assert!(report(&succeeded(&acc(&dir, &args))).contains_key("win rate"));
+    assert!(!dir.file("cp.pause").exists());
+
+    // Made once the run has its lock, perhaps before it watches for one (acc pause, say): it pauses. Not at once, as
+    // a file system may give a file made in the same moment a time a little before it.
+    let args = batch_args(&["--count", "1m", "--dossiers", "d", "--checkpoint", "cp.json"]);
+    let mut child = spawn(&dir, &args);
+    wait_for(&dir.file("cp.lock"), &mut child);
+    std::thread::sleep(Duration::from_millis(100));
+    std::fs::write(dir.file("cp.pause"), "").unwrap();
+    let output = child.wait_with_output().unwrap();
+    assert!(output.status.success() && output.stdout.is_empty(), "{}", text(&output.stderr));
+    assert!(text(&output.stderr).contains("paused after"), "{}", text(&output.stderr));
+}
+
 fn spawn(dir: &Dir, args: &[&str]) -> Child {
     Command::new(ACC)
         .current_dir(&dir.0)

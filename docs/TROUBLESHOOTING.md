@@ -1,8 +1,9 @@
 # Troubleshooting
 
-Find the message you saw (search this page for a few of its words), or the exit code. Each entry says what it means,
-whether any work is lost, and what to type next. Errors from acc start with `acc:`. If nothing here fits, run `acc doctor`
-and see [Reporting a problem](#reporting-a-problem).
+Find the message you saw (search this page for a few of its words), or the exit code (the number a program leaves when it
+ends: `$LASTEXITCODE` shows it in PowerShell, `echo $?` elsewhere). Each entry says what it means, whether any work is
+lost, and what to type next. Errors from acc start with `acc:`. If nothing here fits, run `acc doctor` and see
+[Reporting a problem](#reporting-a-problem).
 
 ## Is my work lost?
 
@@ -44,6 +45,22 @@ On Linux and macOS: `. "$HOME/.cargo/env"`. To make it last, add `%USERPROFILE%\
 environment variables (search Start for "environment variables"), or that line to `~/.bashrc` or `~/.zshrc`. `acc`, once
 built with `cargo install`, is in the same folder.
 
+### `use of unstable library feature`, or `feature edition2024 is required`
+
+Errors like these while building mean the Rust installed is too old for acc, which needs 1.89 at the very least (it is
+built with 1.99). Bring it up to date, then build again:
+
+```
+rustup update
+cargo install --locked --path crates/cli
+```
+
+### `failed to move ... acc.exe ... Access is denied. (os error 5)`
+
+`cargo install` built acc but couldn't put the new `acc.exe` in place, because the old one is running: a run is going,
+perhaps in another window. Nothing is lost. Pause the run (`acc pause`, or Ctrl+C in its window), build again, then
+`acc resume`.
+
 ### `error: linker 'link.exe' not found`
 
 On Windows, Rust needs Microsoft's C++ build tools. Install the
@@ -55,7 +72,7 @@ a C compiler is missing: `sudo apt install build-essential`. On macOS: `xcode-se
 
 Windows' Smart App Control (or another application control) blocked a newly built `acc.exe`. It decides by the file's
 contents, so the same build can be blocked once and allowed later, and a rebuild changes it. Build again
-(`cargo install --path crates/cli --force`) and try once more; for a long run, use a copy of `acc.exe` that has been seen
+(`cargo install --locked --path crates/cli --force`) and try once more; for a long run, use a copy of `acc.exe` that has been seen
 to start, kept where a rebuild won't replace it. Whether to turn Smart App Control off is your decision (Windows Security,
 App & browser control); acc doesn't need it off.
 
@@ -63,23 +80,41 @@ App & browser control); acc doesn't need it off.
 
 The program stops at once with nothing printed and exit code -1073741795 on Windows, or `Illegal instruction` on Linux.
 acc is built for the processor of the computer that builds it, and this copy came from another computer. Build it on this
-one (`cargo install --path crates/cli --force`). To build one copy for many computers, see the note in
+one (`cargo install --locked --path crates/cli --force`). To build one copy for many computers, see the note in
 [.cargo/config.toml](../.cargo/config.toml).
 
 ### `not built for this CPU: slower than it could be`
 
 A line of `acc doctor`: this copy of acc was built without instructions this processor has (built elsewhere, or for many
-computers), so it runs, more slowly. Build it on this computer: `cargo install --path crates/cli --force`.
+computers), so it runs, more slowly. Build it on this computer: `cargo install --locked --path crates/cli --force`.
 
 ## Starting a run
 
 ### `no runs found in ...\checkpoints`
 
-`acc: no runs found in C:\...\checkpoints. A run keeps its files where it was started, so acc must be run from that same folder`
+`acc: no runs found in C:\...\checkpoints. A run keeps its files where it was started, so acc must be run from that same folder; and a run that took under a minute keeps none: what it printed is all there is`
 
 `acc status`, `acc resume`, `acc pause` and `acc results` look in the `checkpoints` folder of the folder the terminal is
-in. Go to the folder the run was started from (`cd`, then the folder), and try again. A run of less than a minute keeps no
-files at all, so there is nothing to find after it: what it printed was its report.
+in. Go to the folder the run was started from (`cd`, then the folder), and try again. A run of less than a minute keeps
+nothing in `checkpoints` (only its speed log, in `logs`), so there is nothing to find after it: what it printed was its
+report.
+
+### `waiting for the charger, and 60% before starting the run`
+
+`the battery is not on the charger, and down to 25%: waiting for the charger, and 60% before starting the run. Ctrl+C stops waiting; --no-battery-guard starts a run whatever the battery`
+(or `the battery is on the charger, but down to 25%: waiting for it to charge to 60% ...`)
+
+The battery guard of `acc run` and `acc resume` doesn't start a run of more than 10,000 deals on a battery under 30%: a
+laptop under full load can use more power than its charger gives ([LONG_RUNS.md](LONG_RUNS.md#laptops)). It starts by
+itself once the charger is in and the battery is at 60%, and says `still waiting` every 10 minutes meanwhile. Ctrl+C stops
+waiting; to start at once, add `--no-battery-guard`.
+
+### `was started by an older acc, which takes no lock`
+
+`acc resume` and `acc run` refuse to carry on with (or with `--new`, to put aside) a run that an acc from before the lock
+started: nothing can be sure that acc isn't still going, or that a script that starts it again isn't waiting to, and two
+processes on one checkpoint would spoil the run. Make sure no acc is running it (Task Manager, or `Get-Process acc*` in
+PowerShell; `ps` elsewhere) and that no script will start it again, then add `--force`.
 
 ### `this run is already going in another window`
 
@@ -138,7 +173,7 @@ fields that do; [COMMANDS.md](COMMANDS.md#settings-files) says what each means.
 
 ### `--save-wins can't go with --hours alone`
 
-Every winning line takes about 350 bytes, so a run with no end could fill the disk. Give `--deals` as well; acc then says
+Every winning line takes about 475 bytes, so a run with no end could fill the disk. Give `--deals` as well; acc then says
 how big the file will be.
 
 ### `--battery-resume (...) must be above --battery-pause (...)`
@@ -149,8 +184,8 @@ The run carries on at `--battery-resume` percent, so that must be above the perc
 
 ### `less than 5 GB free`
 
-`less than 5 GB free in .: pausing; make room and carry on` (exit code 74), or `paused: the disk was nearly full` in
-`acc status`.
+`less than 5 GB free in checkpoints: pausing; make room and carry on` (exit code 74), or `paused: the disk was nearly
+full` in `acc status`. (The folder named is the one the checkpoint is in.)
 
 The run paused before the disk filled. Nothing is lost. Make room on that disk (empty the recycle bin, move files
 elsewhere), then `acc resume`. `--keep-free` (5 GB) sets the margin. The same exit code follows

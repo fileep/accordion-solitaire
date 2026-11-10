@@ -32,13 +32,12 @@ const RULES: &str = "Rules: all 52 cards dealt face up in a row; a pile moves on
 #[command(after_help = SHOW_EXAMPLES)]
 pub struct ShowArgs {
     /// Deal number N.
-    #[arg(long, conflicts_with_all = ["cards", "file"])]
+    #[arg(long, conflicts_with_all = ["cards", "file"], value_parser = crate::numbers::parse_count)]
     seed: Option<u64>,
     /// A deck as text: 52 cards like "KS 7H 10d A♣", separated by spaces or commas.
     #[arg(long, conflicts_with = "file")]
     cards: Option<String>,
     /// A solve file (with a line to show) or a file holding a deck.
-    #[arg(required_unless_present_any = ["seed", "cards"])]
     file: Option<PathBuf>,
     /// Find a winning line first, as acc solve does.
     #[arg(long)]
@@ -82,7 +81,11 @@ pub fn show(args: &ShowArgs) -> Result<bool, String> {
             line: None,
         },
         (_, _, Some(path)) => from_file(path)?,
-        _ => unreachable!("clap requires a deal"),
+        _ => {
+            return Err("say which deal: acc show --seed 42 (a deal by its number), acc show --cards \"KS 7H ...\" (all \
+                        52 cards), or acc show FILE (a solve file, or a file holding a deck)"
+                .into());
+        }
     };
     if args.solve {
         let mut words = vec!["solve".to_string(), "--threads".into(), args.threads.to_string()];

@@ -32,7 +32,7 @@ use std::fs::{File, OpenOptions, TryLockError};
 use std::io::{BufReader, BufWriter, Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, mpsc};
-use std::time::{Duration, Instant};
+use std::time::{Duration, Instant, SystemTime};
 
 // The groups of `acc batch --help`, which come in the order of the first flag in each.
 const WHICH_DEALS: &str = "Which deals";
@@ -323,7 +323,7 @@ impl Tally {
 
     /// The positions and times in the file of costs, up to the first `most` deals. A checkpoint from before there was a limit
     /// has no totals and every deal in the file, so they are worked out from all of it; what is over the limit is then left
-    /// out, and the next save cuts it from the file.
+    /// out, and cut from the file once the next save's checkpoint is in place.
     fn load_costs(&mut self, file: &Path, most: usize) -> Result<(Vec<u64>, Vec<u64>), String> {
         let reading = |e: std::io::Error| {
             format!(
@@ -335,6 +335,13 @@ impl Tally {
         let deals = self.cpu_deals as usize;
         let no_totals = self.all_cpu_deals < self.cpu_deals;
         let keep = deals.min(most);
+        if no_totals && keep < deals {
+            eprintln!(
+                "note: this run's file of costs has {deals} deals, more than this acc keeps ({most}); it keeps the first {keep} \
+                 and exact totals of all of them from here, so finish the run with this acc: an older one would report the \
+                 costs of the first {keep} alone"
+            );
+        }
         // On the powers of two a first run's vectors go through, or a resume could double them to twice the limit.
         let room = (keep + 1).next_power_of_two().min(most);
         let (mut nodes, mut micros) = (Vec::with_capacity(room), Vec::with_capacity(room));
@@ -376,7 +383,7 @@ const COST_BYTES: usize = 16;
 /// the report is exact over all the deals, from the totals in [`Tally`].
 const COST_SAMPLE_MOST: usize = 125_000_000;
 /// From this many deals the win rate has two more decimals, as the interval has narrowed to the last ones it had.
-const LONGER_WIN_RATE_FROM: u64 = 10_000_000_000_000;
+pub const LONGER_WIN_RATE_FROM: u64 = 10_000_000_000_000;
 /// The exit code of a run that paused because the GPU failed: try again, as a new process may well get the GPU back.
 const EXIT_GPU_FAILED: i32 = 75;
 /// The exit code of a run that paused or stopped because it can't save: make room on the disk, and carry on.
@@ -393,8 +400,8 @@ const GAMES_DISK_MOST: u64 = 50_000_000_000;
 /// renaming leaves a deal of 52 different cards as it was.
 const DEALS: f64 = 8.065_817_517_094_388e67;
 const RENAMINGS: f64 = 149_448_499_200.0;
-/// How large a solve record is, about, to warn when --out won't fit.
-const RECORD_BYTES: u64 = 350;
+/// How large a solve record is, about, to warn when --out won't fit (and for `acc run --save-wins` to say).
+pub const RECORD_BYTES: u64 = 475;
 
 /// All that a run needs to carry on. The positions and times of the first deals solved on the CPU are in the file of
 /// costs beside it, and the records of `--out` in that file: each is cut back to what this counts.
@@ -682,11 +689,18 @@ impl Checkpoint {
         let file =
             OpenOptions::new().write(true).create(true).truncate(false).open(&costs).map_err(writing)?;
         let saved = self.tally.cpu_deals as usize;
-        file.set_len((saved * COST_BYTES) as u64).map_err(writing)?;
+        // What is past the deals counted is from a session that ended before it saved, and is written over. Only when there
+        // is something to add: the checkpoint on disk may count more than `saved` (one from before the limit, over it), and
+        // until the new one has replaced it the file must hold all those.
         let mut w = BufWriter::new(file);
-        w.seek(SeekFrom::End(0)).map_err(writing)?;
-        for (n, us) in nodes[saved..].iter().zip(&micros[saved..]) {
-            w.write_all(&n.to_le_bytes()).and_then(|()| w.write_all(&us.to_le_bytes())).map_err(writing)?;
+        if nodes.len() > saved {
+            w.get_ref().set_len((saved * COST_BYTES) as u64).map_err(writing)?;
+            w.seek(SeekFrom::End(0)).map_err(writing)?;
+            for (n, us) in nodes[saved..].iter().zip(&micros[saved..]) {
+                w.write_all(&n.to_le_bytes())
+                    .and_then(|()| w.write_all(&us.to_le_bytes()))
+                    .map_err(writing)?;
+            }
         }
         w.flush().and_then(|()| w.get_ref().sync_data()).map_err(writing)?;
         self.tally.cpu_deals = nodes.len() as u64;
@@ -695,12 +709,15 @@ impl Checkpoint {
         File::create(&new)
             .and_then(|mut f| f.write_all(text.as_bytes()).and_then(|()| f.sync_all()))
             .and_then(|()| std::fs::rename(&new, path))
-            .map_err(|e| format!("writing {}: {e}", path.display()))
+            .map_err(|e| format!("writing {}: {e}", path.display()))?;
+        // Now the checkpoint counts what the file has up to here, and the rest can go. If it can't, it does no harm.
+        let _ = w.get_ref().set_len((nodes.len() * COST_BYTES) as u64);
+        Ok(())
     }
 }
 
 pub fn run(given: &BatchArgs) -> Result<bool, String> {
-    let began = Instant::now();
+    let (began, began_at) = (Instant::now(), SystemTime::now());
     check_args(given)?;
     let path = match (&given.resume, &given.checkpoint) {
         (Some(path), _) => Some(path.clone()),
@@ -874,7 +891,13 @@ pub fn run(given: &BatchArgs) -> Result<bool, String> {
     let every = Duration::from_secs(args.checkpoint_every.max(1));
     if let Some(path) = &path {
         let pause_file = path.with_extension("pause");
-        let _ = std::fs::remove_file(&pause_file);
+        // One made before this process began was for a session that has ended. One made since is for this one, made
+        // while it was starting up (by acc pause, say), and is kept for the watch to find. (A file system may date a file
+        // a few milliseconds early, which only a request in the process's first moments could fall foul of.)
+        let made = std::fs::metadata(&pause_file).and_then(|m| m.modified());
+        if made.is_ok_and(|made| made < began_at) {
+            let _ = std::fs::remove_file(&pause_file);
+        }
         pause::catch_ctrl_c();
         pause::watch(pause_file.clone());
         if let Some(hours) = args.stop_after {

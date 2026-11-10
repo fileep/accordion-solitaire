@@ -23,10 +23,12 @@ pub struct EndgameArgs {
 #[derive(Subcommand)]
 enum EndgameCommand {
     /// Build the tables for 1 to --piles piles and save them.
+    #[command(after_help = EXAMPLES)]
     Build {
         /// Largest pile count (10 is 68 MB and about a minute; 11 is 1.15 GB).
         #[arg(long, default_value_t = 10)]
         piles: usize,
+        /// The folder to save them in: runs look for them in endgame, in the folder they start in.
         #[arg(long, default_value = "endgame")]
         dir: PathBuf,
         /// Threads (0 = every core).

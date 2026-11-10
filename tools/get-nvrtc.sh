@@ -11,9 +11,9 @@
 #
 # This script asks PyPI for the Linux file of version 12.9.86 for this kind of CPU and its SHA-256, downloads it
 # (into .tools/downloads), checks it, unpacks it into .tools/cuda-nvrtc-12.9.86 in the project's folder, and adds
-# the libnvrtc.so link that acc's CUDA library looks for. acc finds it there: it starts itself again with that folder
-# on LD_LIBRARY_PATH. Nothing else on the computer is changed. It needs curl or wget, and python3 (to read PyPI's
-# answer and to unpack the file, which is a zip archive).
+# a libnvrtc.so link beside libnvrtc.so.12 (acc's CUDA library tries either name). acc finds it there: it starts
+# itself again with that folder on LD_LIBRARY_PATH. Nothing else on the computer is changed. It needs curl or wget,
+# and python3 (to read PyPI's answer and to unpack the file, which is a zip archive).
 #
 #   sh tools/get-nvrtc.sh                                  download, check and unpack
 #   sh tools/get-nvrtc.sh --wheel FILE                     unpack a file you downloaded, checked against PyPI's hash

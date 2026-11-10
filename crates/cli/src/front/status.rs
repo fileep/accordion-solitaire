@@ -65,6 +65,11 @@ fn state_text(run: &Run) -> String {
             "stopped unexpectedly{}",
             age.map_or(String::new(), |a| format!(" (last seen {})", ago(a)))
         ),
+        State::Unsure(age) => format!(
+            "finishing when last seen{}, by an older acc: in its last checks it can say nothing for hours, so whether it is \
+             still going can't be told from here",
+            age.map_or(String::new(), |a| format!(", {}", ago(a)))
+        ),
         State::Finished => "finished".into(),
         State::Gone => "gone: no checkpoint or report left".into(),
     }
@@ -75,7 +80,12 @@ fn next_text(run: &Run) -> String {
     let name = &run.name;
     match run.state() {
         State::Live => format!("acc pause {name} pauses it; acc results {name} shows the win rate so far"),
-        State::Paused | State::Stopped(_) => {
+        State::Paused | State::Stopped(_) | State::Unsure(_) if run.by_older_acc() => format!(
+            "an older acc started this run, and it takes no lock, so make sure nothing is running it (that acc, or a \
+             script that starts it again) before acc resume {name} --force carries on; acc results {name} shows the win \
+             rate so far"
+        ),
+        State::Paused | State::Stopped(_) | State::Unsure(_) => {
             format!("acc resume {name} carries on; acc results {name} shows the win rate so far")
         }
         State::Finished => format!("acc results {name} shows what it found"),
@@ -108,6 +118,7 @@ fn short_state(run: &Run) -> &'static str {
         State::Live => "going",
         State::Paused => "paused",
         State::Stopped(_) => "stopped",
+        State::Unsure(_) => "finishing?",
         State::Finished => "finished",
         State::Gone => "gone",
     }
@@ -160,10 +171,12 @@ fn show_one(run: &Run) {
 
 pub fn pause(args: &PauseArgs) -> Result<bool, String> {
     let runs = runs_here();
+    // A run that may be going is asked too: if it isn't, the request is taken back.
+    let may_be_going = |run: &Run| matches!(run.state(), State::Live | State::Unsure(_));
     let run = match &args.name {
         Some(name) => {
             let run = find(&runs, name)?;
-            if run.state() != State::Live {
+            if !may_be_going(run) {
                 return Err(format!(
                     "{} isn't going ({}), so there is nothing to pause",
                     run.name,
@@ -173,7 +186,7 @@ pub fn pause(args: &PauseArgs) -> Result<bool, String> {
             run
         }
         None => {
-            let live: Vec<&Run> = runs.iter().filter(|r| r.state() == State::Live).collect();
+            let live: Vec<&Run> = runs.iter().filter(|r| may_be_going(r)).collect();
             match live.as_slice() {
                 [run] => *run,
                 [] if runs.is_empty() => return Err(nothing_here()),
@@ -195,33 +208,44 @@ pub fn pause(args: &PauseArgs) -> Result<bool, String> {
     std::fs::write(&file, "").map_err(|e| format!("creating {}: {e}", file.display()))?;
     println!("Asked {} to pause ({}).", run.name, file.display());
     // A run that holds its lock can be seen to stop. One that doesn't (an older acc) can only be seen to take the request.
+    // The request is made once: a run keeps a pause file made after it started, so it is never needed again, and asking
+    // again could pause the next session of the run, started after this one stopped.
     let with_lock = locked(&run.name);
-    let (start, mut asked, mut taken) = (Instant::now(), Instant::now(), false);
+    let (start, mut taken, mut paused) = (Instant::now(), false, false);
     while start.elapsed() < PAUSE_WAIT {
+        if with_lock && !locked(&run.name) {
+            paused = true;
+            break;
+        }
         if !file.exists() {
             taken = true;
-            if !with_lock || !locked(&run.name) {
+            if !with_lock {
                 break;
-            }
-            // A run still starting up deletes a pause file it finds, as one left from before: so it is asked again.
-            if asked.elapsed() >= Duration::from_secs(2) {
-                let _ = std::fs::write(&file, "");
-                asked = Instant::now();
             }
         }
         std::thread::sleep(Duration::from_millis(100));
     }
-    let paused = with_lock && !locked(&run.name);
-    // What a run that stopped, or one done asking, leaves of the request.
+    // It may have taken the request and stopped between two looks.
+    taken |= !file.exists();
+    // What a run that stopped, or one that didn't take it in time, leaves of the request.
     if paused || !taken {
         let _ = std::fs::remove_file(&file);
     }
+    let now = Run::new(&run.name);
     match (paused, taken) {
-        (true, _) => println!(
-            "It has paused, at {}. acc resume {} carries on.",
-            Run::new(&run.name).done_text(),
-            run.name
-        ),
+        (true, true) if now.state() == State::Finished => {
+            println!("It finished before it could pause: acc results {} shows what it found.", run.name)
+        }
+        (true, true) => {
+            println!("It has paused, at {}. acc resume {} carries on.", now.done_text(), run.name)
+        }
+        (true, false) => {
+            return Err(format!(
+                "{} stopped before it took the request ({}): acc status shows it",
+                run.name,
+                state_text(&now)
+            ));
+        }
         (false, true) if with_lock => println!(
             "It took the request, but is still finishing what it had in hand after {} seconds (the last proofs, say); its own window says when it has paused.",
             PAUSE_WAIT.as_secs()
@@ -327,12 +351,20 @@ fn provisional(run: &Run) {
     let (lo, _) = wilson(won, n);
     let (_, hi) = wilson((won + undecided + proving + proof_failed + unproven).min(n), n);
     println!("  won          {} of {} deals", thousands(won), thousands(n));
+    // As many places as the report has, or a long run's would all read 100%.
+    let places = if n >= crate::batch::LONGER_WIN_RATE_FROM { 12 } else { 10 };
     println!(
-        "  win rate     {:.6}% so far; with 95% confidence between {:.6}% and {:.6}%",
+        "  win rate     {:.places$}% so far; with 95% confidence between {:.places$}% and {:.places$}%",
         100.0 * won as f64 / n as f64,
         100.0 * lo,
         100.0 * hi
     );
+    if won < n {
+        println!(
+            "               about 1 deal in {} not won so far",
+            thousands((n as f64 / (n - won) as f64).round() as u64)
+        );
+    }
     for (count, what, meaning) in [
         (lost, "lost", "proven impossible: two separate complete searches found no way to win them"),
         (proving, "proving", "not won by the solver, and being checked by a complete search now"),
