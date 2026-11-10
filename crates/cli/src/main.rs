@@ -87,7 +87,7 @@ Examples:
 const SELFTEST_EXAMPLES: &str = "\
 Examples:
   acc selftest                             every check, at full size (some minutes)
-  acc selftest --playouts 10k --positions 10k --residuals 1k --proofs 300
+  acc selftest --playouts 20k --positions 20k --residuals 2k --proofs 300
                                            fewer cases, as acc doctor --full does";
 
 #[derive(Subcommand)]
@@ -164,6 +164,8 @@ enum Command {
 
 mod batch;
 mod bench;
+#[cfg(test)]
+mod docs_check;
 mod dossier;
 mod endgame;
 mod experiment;

@@ -28,6 +28,12 @@ Making the program usable by other people. None of this changes how a deal is so
 - `tools/long-run.sh`, the shell counterpart of `tools/long-run.ps1` (not tested yet), and a `-Gpu` setting for
   `tools/long-run.ps1`.
 - CI on Windows, Linux and macOS; `CONTRIBUTING.md`, `.gitattributes`, `.editorconfig` and this file.
+- Documentation for people new to the command line, indexed in `docs/README.md`: `GETTING_STARTED.md` (from a fresh
+  computer to a finished run), `COMMANDS.md` (every command, flag and setting, exit codes, quoting in each shell),
+  `LONG_RUNS.md` (time, disk and memory up to 100 trillion deals, pausing, laptops), `READING_RESULTS.md`,
+  `GPU_SETUP.md`, `TROUBLESHOOTING.md`, `VISUALIZER.md` and `ARCHITECTURE.md`. `FORMATS.md` describes the files a run
+  writes. A test checks that `COMMANDS.md` names every command and flag, that the commands the documents show are real,
+  and that their links lead somewhere.
 
 ### Changed
 
@@ -44,8 +50,11 @@ Making the program usable by other people. None of this changes how a deal is so
 - `tools/long-run.ps1` uses the GPU when it can (`-Gpu auto`), where it used to insist on it.
 - `PLAN.md` moved to `docs/PLAN.md`. The author's private tuning scripts moved from `tools/` to `research/tools/`,
   which says they don't run on their own.
+- `README.md` is a short front page; what it used to explain is in the guides above. `docs/RESULTS.md` describes the
+  GPU's current settings, and no longer says the GPU adds 1.4x as if that were still so.
 
 ### Fixed
 
-- The card example in `acc solve --help` and `acc deal --help` (`A♣`, not `♣A`, which couldn't be read).
+- The card example in `acc solve --help`, `acc deal --help` and the visualizer (`A♣`, not `♣A`, which couldn't be read).
+- `acc selftest --help`'s example now has the counts `acc doctor --full` uses.
 - `--keep-free` and the disk warnings work off Windows too, through `df` (not tested there yet).

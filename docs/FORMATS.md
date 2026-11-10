@@ -1,8 +1,9 @@
-# Formats — `accordion-solve/1`
+# Formats
 
-These are frozen as of Phase 1. The Rust implementation is `crates/core`. An independent Python implementation,
-`testdata/tools/make_golden.py`, generates the golden files that the Rust tests must reproduce, so this document, the
-Rust code and the Python code all have to agree.
+Cards, decks, the deals of seeds, moves and solve files (`accordion-solve/1`) are frozen as of Phase 1. The Rust
+implementation is `crates/core`. An independent Python implementation, `testdata/tools/make_golden.py`, generates the
+golden files that the Rust tests must reproduce, so this document, the Rust code and the Python code all have to agree.
+The files a run writes (report, status, log of events, speed log, dossiers, loss records) are at the end.
 
 ## Cards
 
@@ -134,5 +135,133 @@ A record passes when all of the following hold:
 4. After replay, all 52 cards are still present exactly once.
 5. A `win` ends in one pile after exactly 51 moves, with no move after that. The pile has `final_card` on top if the rules name one.
 
-Errors name the 1-based move at fault when there is one. Nothing counts as a win until it passes verification. PLAN.md §6.2 lists the golden
+Errors name the 1-based move at fault when there is one. Nothing counts as a win until it passes verification. [PLAN.md](PLAN.md) §6.2 lists the golden
 cases that exercise each check, including unwinnable deals.
+
+A `loss` record passes when its moves replay legally; the loss itself can't be confirmed by replay, so `acc verify` reports it as
+claimed and says how to prove it again (`acc prove`).
+
+## Files a run writes
+
+`acc batch` (and so `acc run`) keeps its files beside its checkpoint, `checkpoints/batch-<from>-<count>.json` by default, named
+after it: the checkpoint's path with another ending. They are explained for users in [READING_RESULTS.md](READING_RESULTS.md); this
+is their exact form. Unlike the solve format above, they aren't frozen: fields may be added, but none is renamed or removed.
+
+### The report
+
+`<name>.report.txt`, written when a run that took more than a minute (or was carried on) finishes, and printed on standard
+output by every run. Each line is a label padded to 17 characters, then text. The labels, in order:
+
+| Label | Text |
+|---|---|
+| `deals` | `<count> (seeds <first>..<last>)` |
+| `won` | `<won> (every one verified by the reference rules)`, then `; by stage: <stage> <count>, ...` unless every win was `thorough`. Stages: `gpu`, `ladder-0` to `ladder-6`, `thorough`, `prove`. |
+| `not won` | `<n> by the solver (<e> exhausted, <u> hit the limit of <max-nodes> positions)` |
+| `proofs` | `<lost> proven lost, <won> won, <undecided> undecided (two exhaustive runs of up to <prove> positions each)`, then `; <n> FAILED` if any failed. Absent with `--prove 0`. |
+| `failed to verify` | `<n>` |
+| `repeat odds` | `<x> that any two of these deals are the same game (suits and ranks renamed), <y> the same deal, if the generator behaves like a random one (...)`, in e-notation |
+| `distinct games` | `all <n> deals differ, even with suits and ranks renamed`; for a sample, `not all checked: ...` with the sample's size and what it rules out; `<k> pairs of seeds deal the same game ...: <a>=<b>, ...` if any were found; `NOT CHECKED: <why>`; or `not checked (--no-games-check)` |
+| `win rate` | `<p>%   95% CI [<lo>%, <hi>%] (Wilson; undecided deals counted as losses for the lower bound, wins for the upper)`, to 10 decimals (12 from 10^13 deals) |
+| `positions/deal` | `mean <m>  median <m>  p90 <x>  p99 <x>  p99.9 <x>  max <x>`, then ` (<n> deals solved on the CPU)` with the GPU |
+| `ms/deal (1 core)` | the same for time, in milliseconds |
+| `cost sample` | only when more deals were solved on the CPU than their costs were kept for (125 million): which deals the median and percentiles cover |
+| `GPU` | `<name>: won <w> of the <n> deals it was given (<p>%), <f> lines failed verification; <a>M attempts, <r>M positions/s`, then `; STOPPED EARLY: <why>` if it failed. With the GPU only. |
+| `CPU threads` | shares of the CPU threads' time: `verifying GPU lines <p>% (<t> us a line), the GPU's misses <p>%, own deals <p>%, waiting for the GPU <p>%, handing results on <p>%, other <p>%`. With the GPU only. |
+| `throughput` | `<d> deals/s, <c>M CPU positions/s on <hardware> (<s> s wall)`, with `, over <n> sessions` if it paused and carried on |
+| `commits` | the commits the run was built from, if more than one |
+
+`acc run` and `acc results` read the counts of `deals`, `won`, `not won`, `proofs` and `failed to verify` by these labels.
+
+### The status file
+
+`<name>.status.json`, rewritten (whole, by a rename) at every checkpoint, at a pause, once every deal is done and at the end, for
+reading while the run goes.
+`acc status` reads it.
+
+| Field | Meaning |
+|---|---|
+| `state` | `running`, `finishing` (every deal done, the last checks running), `paused`, `paused: no room`, `paused: the GPU failed`, or `finished` |
+| `updated` | When it was written, UTC, `YYYY-MM-DDTHH:MM:SSZ` |
+| `from`, `count`, `done`, `left`, `percent` | The run's first seed and deals; deals done in seed order, and left |
+| `deals_per_s_this_session`, `deals_per_s_overall` | Speeds |
+| `hours_left`, `hours_so_far` | At this session's speed (null before there is one); time spent on deals over all sessions |
+| `sessions` | How many times the run has started or carried on |
+| `commit`, `hardware` | The commit of the folder it runs in (empty if that isn't a git folder), and `<n> threads` or `<n> CPU threads + GPU` |
+| `won` | Deals won so far, by the solver and by proofs, as the report counts them |
+| `lost`, `proving`, `undecided`, `unverified`, `proof_failed` | As in the progress line |
+| `not_won_by_solver`, `failed_verification` | Deals the solver gave up on; winning lines that failed their check |
+| `proofs` | `lost`, `won`, `undecided`, `failed`, `in_hand` |
+| `gpu` | `won`, `launches`, `attempts` |
+| `deals_on_cpu` | Deals solved on the processor |
+| `games_log_gb`, `disk_free_gb` | The sample's log so far; free space where the checkpoint is (null if it can't be read) |
+| `dossiers` | Where the dossiers go, or null with `--no-dossiers` |
+| `save_every_s` | Seconds between checkpoints. Its presence also says the run takes a lock (`<name>.lock`). |
+| `checkpoint` | The checkpoint's path |
+
+Status files from older versions lack the last four fields and `won`; readers must not need them.
+
+### The log of events
+
+`<name>.events.log`: one line per event, `<UTC time> <what>`, appended. The events: `session <n> started at <done> deals, on commit
+<c>`; `paused at <done> deals` (with `: the GPU failed: <why>` when it did); `paused after all the deals`; `seed <s>: proven lost`,
+`won by the exhaustive search`, `undecided` or `PROOF FAILED`; `seed <s>: VERIFICATION FAILED: <why>`; `less than <x> GB free in <dir>:
+pausing; make room and carry on`; `checkpoint: <error>`; `session <n> could not open the GPU: <why>`; `no deal finished in 15 minutes:
+stopping`; `finished: <count> deals, report in <file>`.
+
+### The speed log
+
+`logs/batch-<YYYYMMDD-HHMMSS>Z.csv`, one per session, named by its start in UTC. The first line is a comment,
+`# acc batch: seeds <first>..<last> (<count> deals[, carrying on after <done>]), <hardware>, commit <c>, started <time>Z`; then the header
+and a row a second:
+
+| Column | Meaning |
+|---|---|
+| `unix_time` | Seconds since 1970, UTC |
+| `elapsed_s` | Seconds since the session started |
+| `done`, `left` | Deals done in seed order, and left |
+| `deals_per_s` | Since the row before |
+| `gpu_wins_per_s`, `gpu_mpositions_per_s` | The GPU's wins a second, and millions of positions a second |
+| `gpu_backlog` | GPU results waiting for the CPU threads to check them |
+
+### Dossiers
+
+`<dossiers>/<id>.json` (default `output/hard-deals/`), format `accordion-dossier/1`: the notes on a deal the solver didn't win at once.
+`<id>` is `seed-<n>`, or `deck-<16 hex digits>` (FNV-1a of the canonical cards) for a deck that was typed. A run of the same deal adds to
+its history.
+
+| Field | Meaning |
+|---|---|
+| `format`, `id` | As above |
+| `deal` | `cards` (canonical text) and `seed` if it has one |
+| `rules` | As in solve files |
+| `status` | `unknown` (the limit was reached), `exhausted` (every line searched), `solved (hard)` (won later), or `loss (proven)` |
+| `features` | `initial_legal_moves`, `piles_with_a_move`: two counts of the opening position |
+| `best` | `piles_left` and `moves` (card notation): the line that got furthest |
+| `solution` | The winning line, once there is one |
+| `history` | One entry per attempt, oldest first, each with `date` and `stage` |
+
+A solver attempt (`stage` `batch`, `solve`, or `escalate-<n>`) has `result` (`win`, `exhausted`, `unknown`), `solver` (`acc <version>`),
+`threads`, `max_nodes_per_thread`, `move_order_seed`, `config` (the solver's settings in full), `nodes`, `attempts`, `table_hits`,
+`dead_end_cuts` and `seconds`. A proof (`stage` `prove`) has `solver`, `max_positions`, `plain` and `independent`. `plain` and
+`independent.run` each have `result` (`lost`, `won`, `unfinished`), `positions`, `dead_positions`, `evicted_positions` (forgotten for lack of
+memory, and searched again), `set_bytes` and `seconds`; `independent` also has `endgame_piles`, `move_order_seed` and `pattern_piles`.
+
+`<dossiers>/INDEX.md` lists every dossier in a table, and the gallery (`--gallery`) if there is one; acc rewrites it after every run.
+`<dossiers>/gallery/seed-<n>.json` are solve files of the hardest deals won, with `rank`, `positions`, `attempts`, `stage`, `run` and
+`solver` in `stats`.
+
+### Loss records
+
+`<dossiers>/proofs/seed-<n>-loss.json`: a solve record (above) with `"result": "loss"`, the dossier's best line as `moves`, and
+`stats.proof` holding the proof as in the dossier's history. `acc prove --out FILE` writes the same record.
+
+### Other files
+
+| File | Form |
+|---|---|
+| `<name>.json` | The checkpoint: JSON, with `version` 3. Read only by `acc batch`; nothing else should open it while the run goes, as that can make a save fail. |
+| `<name>.costs` | For each deal solved on the CPU, in seed order, up to the first 125 million: its positions and its time in microseconds, each a little-endian unsigned 64-bit integer (16 bytes a deal). |
+| `<name>.games` | The sample of the check for repeated games: 11 bytes a deal in the sample, in seed order: the low 5 bytes of the renamed deal's fingerprint, then the low 6 bytes of its position in the run, both little-endian. |
+| `<name>.lock` | Empty; held locked while the run goes. |
+| `<name>.pause` | Empty; its appearance asks the run to pause, and the run deletes it. |
+| `endgame/endgame-<k>.bin` | The endgame table for `k` piles: the 8 bytes `ACCEGTB1`, `k` and the number of patterns as little-endian 64-bit integers, one bit per suit/rank pattern in 64-bit little-endian words (1: can be won), and a checksum of the words (FNV-1a's constants, a word at a time). |

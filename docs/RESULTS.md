@@ -86,10 +86,12 @@ verifying its lines (2.6 µs a line), 6.0% on its misses and 0.5% on the rest: t
 attempts and about 2,800 positions, against 133 and about 8,800 in the second billion, so it wins more deals on fewer positions a
 second.
 
-**Sustained speed.** After its first two minutes, the run held 18,900–19,700 deals/s over each stretch of 10M deals. The
-CPU alone held 13,422 deals/s over the 20M run, so over long runs the GPU adds about 1.4×. That is less than the 2.15×
-median of the short comparison runs in docs/BENCHMARKS.md (Phase 8). The CPU slowed far more than the GPU over the long
-run:
+**Sustained speed.** After its first two minutes, the 100M run held 18,900–19,700 deals/s over each stretch of 10M deals.
+The CPU alone held 13,422 deals/s over the 20M run, so over that long run the GPU added about 1.4×. That was less than the
+2.15× median of the short comparison runs in docs/BENCHMARKS.md (Phase 8). (Since then the GPU has come to do nearly all
+the work: the 20 billion ran at 934,074 deals/s, 48 to 70 times the CPU alone of Phase 7, and the build of the 2 trillion run
+holds about 5 million on the same laptop; the CPU alone hasn't been timed again.) The CPU slowed far more than the GPU over
+the 100M run:
 
 - the CPU's median time per deal was 1.15 ms, against 0.47–0.61 ms in the short runs with the GPU;
 - the GPU's rate fell only from 228M to 214M positions/s;
@@ -330,9 +332,14 @@ The defaults since Phase 5 (docs/BENCHMARKS.md has the measurements):
   - the leftmost-card test (since after Phase 8);
   - sleep sets (commuting moves are tried in one order only);
   - complete endgame tables keyed by suit/rank pattern for ≤11 piles.
-- **GPU**, when there is one (since Phase 8): before any of the above, up to 256 attempts of 38 random moves and then up
-  to 1,024 of 36, each followed by a 2,000-position search. Its random moves also favour leaps 8 to 1, and never
-  play a move that leaves no move. A deal it misses goes to the CPU, which solves it from the start.
+- **GPU**, when there is one (since Phase 8; these are the defaults of the build the 2 trillion run uses, `acc settings --gpu`):
+  before any of the above, a first rung of attempts of 40 random moves and a second of 38 (`rungs` `[[40, 24], [38, 376]]`, in
+  the kernel's numbering of tries), each followed by a search of the rest within 700 positions. Tries go in pairs that share
+  their first 20 random moves; a rest with more than 8 ranks (10 on the second rung) isn't searched; and the random moves
+  favour leaps 8 to 1 and are scored by what winning prefixes have in common (docs/BENCHMARKS.md, from "what winning prefixes
+  have in common" to the fourth step). A deal it misses goes to the CPU, which solves it from the start. Earlier runs used
+  earlier settings: the 100M and billion runs up to 256 attempts of 38 random moves and up to 1,024 of 36, each with a
+  2,000-position search, as in the table above.
 
 ## Reproducing
 
@@ -345,6 +352,7 @@ build first; its speed log and report are in [research/runs/](../research/runs/R
 | First billion | a761123; its speed log says `f91bd67+dirty`, as the run started before that commit was made |
 | Second billion | d167ccf |
 | 20 billion | 926e105 |
+| 2 trillion (running since 2026-11-09) | fbbff00 |
 
 ```bash
 cargo run --release -p accordion-cli -- endgame build --piles 11

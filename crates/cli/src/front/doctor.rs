@@ -19,7 +19,7 @@ Examples:
 #[derive(Args)]
 #[command(after_help = EXAMPLES)]
 pub struct DoctorArgs {
-    /// Also try the NVIDIA card: build the GPU code and solve a few thousand deals on it.
+    /// Also try the NVIDIA card: build the GPU code and solve 20,000 deals on it.
     #[arg(long)]
     gpu: bool,
     /// Also run the build's own checks (acc selftest) on fewer cases than it does by default.
