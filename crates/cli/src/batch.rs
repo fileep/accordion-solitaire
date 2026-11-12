@@ -1,6 +1,7 @@
 //! `acc batch`: solve a range of seeded deals on every core, one deal per thread at a time, and on the GPU when
-//! there is one (PLAN.md Phases 4, 5 and 8). Every win is verified by the reference rules before it counts; every
-//! deal that isn't won gets a dossier, and a proof attempt on a thread of its own while the run goes on: two
+//! there is one (PLAN.md Phases 4, 5 and 8). A win counts only once its line is replayed by code separate from the
+//! search: the reference rules, or `quick::line_wins` for most GPU lines (runner.rs). Every deal that isn't won gets a
+//! dossier, and a proof attempt on a thread of its own while the run goes on: two
 //! exhaustive runs that must agree before a loss counts ([`prove::prove_both`]). The summary gives the win rate with
 //! a Wilson 95% interval, counting undecided deals both ways, and the odds that any two deals are the same game, which it
 //! checks: exactly when memory holds all the deals, by a sample past that ([`crate::games`]).

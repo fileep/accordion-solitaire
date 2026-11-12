@@ -6,8 +6,9 @@
 //!
 //! With a GPU, a feeder thread takes batches of deals from the same counter for GPU ladder attempts and only
 //! launches and collects. Workers check the GPU's lines before taking new deals, so nothing waits on them: each line
-//! is replayed by the reference rules, and a deal the GPU didn't win goes through the CPU solver from the start, like
-//! any other.
+//! is replayed by `quick::line_wins` (1 deal in 256 by the reference engine from the seed's deal as well, and a line
+//! it doesn't pass by the reference rules), and a deal the GPU didn't win goes through the CPU solver from the start,
+//! like any other.
 
 use crate::games::Sieve;
 use accordion_core::fast::Position;
