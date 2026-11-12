@@ -864,7 +864,7 @@ pub fn run(given: &BatchArgs) -> Result<bool, String> {
         None => None,
     };
     let done_before = state.standing.done;
-    let last_seed = args.from + args.count - 1;
+    let last_seed = args.from + (args.count - 1); // the checks above make count >= 1 and this at most u64::MAX
     let carrying_on = if is_resumed { format!(", carrying on after {done_before}") } else { String::new() };
     eprintln!(
         "seeds {}..{last_seed} ({} deals{carrying_on}), up to {} positions per deal, {hardware}",
