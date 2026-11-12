@@ -3,7 +3,7 @@
 #   python research/paper/paper_numbers.py [run report or .status.json]     (default: the report in research/runs, or else the live status)
 #   python research/paper/paper_numbers.py <deals> <lost>                    (for the statistics at another point of the run)
 #
-# The interval is the 95% Wilson score interval, written as centre ± half-width to match Blake and Gent. Losses are the records in
+# The rate is the one measured; the 95% interval is the exact (Clopper-Pearson) one, with Garwood's and Wilson's beside it. Losses are the records in
 # hard-deals/proofs below the run's position; a line says so if they disagree with the run's own count.
 import csv
 import json
@@ -52,12 +52,54 @@ def wilson(lost, deals):
     return centre - half, centre + half
 
 
-def win_rate(lost, deals):
-    """The win rate as the paper writes it, with two significant figures on the half-width."""
+def wilson_as_centre(lost, deals):
+    """Wilson's interval as centre ± half-width, two significant figures on the half-width, as Blake and Gent write it. The centre
+    is not the rate seen: it adds z²/2 losses in z² deals."""
     low, high = wilson(lost, deals)
     half = 100 * (high - low) / 2
     places = 1 - math.floor(math.log10(half))
     return f"{100 * (1 - (low + high) / 2):.{places}f} ± {half:.{places}f}%"
+
+
+def solve(f, target, low, high):
+    """The p in [low, high] where f(p) = target, for f falling as p grows, by bisection on log p."""
+    a, b = math.log(low), math.log(high)
+    for _ in range(200):
+        m = (a + b) / 2
+        a, b = (m, b) if f(math.exp(m)) > target else (a, m)
+    return math.exp((a + b) / 2)
+
+
+def clopper_pearson(lost, deals, alpha=0.05):
+    """The exact 95% interval for a loss rate: the rates under which `lost` or more, or `lost` or fewer, has chance alpha/2.
+    log C(n, i) is built from log(n - j) term by term, so that a trillion deals loses no digits."""
+    log_choose = [0.0]
+    for i in range(1, lost + 1):
+        log_choose.append(log_choose[-1] + math.log(deals - i + 1) - math.log(i))
+
+    def at_most(k, p):
+        return sum(math.exp(log_choose[i] + i * math.log(p) + (deals - i) * math.log1p(-p)) for i in range(k + 1))
+
+    high = solve(lambda p: at_most(lost, p), alpha / 2, 1e-30, 1 - 1e-12)
+    low = 0.0 if lost == 0 else solve(lambda p: at_most(lost - 1, p), 1 - alpha / 2, 1e-30, high)
+    return low, high
+
+
+def garwood(lost, deals, alpha=0.05):
+    """The exact Poisson interval, for a check: at these rates it must match Clopper-Pearson."""
+    def at_most(k, mean):
+        return sum(math.exp(-mean + i * math.log(mean) - math.lgamma(i + 1)) for i in range(k + 1))
+
+    high = solve(lambda m: at_most(lost, m), alpha / 2, 1e-9, 10.0 * lost + 50)
+    low = 0.0 if lost == 0 else solve(lambda m: at_most(lost - 1, m), 1 - alpha / 2, 1e-9, high)
+    return low / deals, high / deals
+
+
+def percent(lost, deals, rate=None):
+    """A win rate in percent, with enough places to show the losses' first three digits."""
+    rate = lost / deals if rate is None else rate
+    places = max(0, 2 - math.floor(math.log10(100 * lost / deals))) if lost else 6
+    return f"{100 * (1 - rate):.{places}f}%"
 
 
 def binomial_two_sided(k, n, p):
@@ -129,9 +171,9 @@ def second_generator(lost, deals):
         print("second generator    no results yet")
         return
     other = from_report(SECOND)
-    low, high = wilson(other["lost"], other["deals"])
+    low, high = clopper_pearson(other["lost"], other["deals"])
     print(f"second generator    {other['lost']} lost of {other['deals']:,}, {other['undecided']} undecided, {other['unverified']} wins failed verification")
-    print(f"  losses per billion  {other['lost'] / other['deals'] * 1e9:.2f} observed, {low * 1e9:.2f} to {high * 1e9:.2f} (95%), against {lost / deals * 1e9:.2f}")
+    print(f"  losses per billion  {other['lost'] / other['deals'] * 1e9:.3f} measured, {low * 1e9:.3f} to {high * 1e9:.3f} (95%, exact), against {lost / deals * 1e9:.3f}")
     print(f"  same rate?          exact two-sided p = {binomial_two_sided(other['lost'], other['lost'] + lost, other['deals'] / (other['deals'] + deals)):.3g}")
 
 
@@ -148,12 +190,16 @@ def main():
     seeds = sorted(s for s in (int(p.name.split("-")[1]) for p in (ROOT / "hard-deals/proofs").glob("seed-*-loss.json")) if s < deals)
     if len(seeds) != lost:
         print(f"NOTE: {len(seeds)} loss records below deal {deals:,}, and the run counts {lost}")
-    low, high = wilson(lost, deals)
+    low, high = clopper_pearson(lost, deals)
+    poisson, score = garwood(lost, deals), wilson(lost, deals)
     print(f"deals               {deals:,}")
     print(f"lost                {lost:,}")
-    print(f"win rate            {win_rate(lost, deals)}")
-    print(f"losses per billion  {lost / deals * 1e9:.2f} observed, {low * 1e9:.2f} to {high * 1e9:.2f} (95%)")
-    print(f"relative precision  ±{50 * (high - low) / (lost / deals):.1f}% of the rate; 1 deal lost in {deals / lost:,.0f}")
+    print(f"win rate            {percent(lost, deals)} measured: {lost / deals * 1e9:.3f} lost per billion, 1 deal in {deals / lost:,.0f}")
+    print(f"95% interval        {low * 1e9:.3f} to {high * 1e9:.3f} lost per billion (exact, Clopper-Pearson), 1 deal in {1 / high:,.0f} to {1 / low:,.0f}")
+    print(f"  as a win rate     {percent(lost, deals, high)} to {percent(lost, deals, low)}; ±{50 * (high - low) / (lost / deals):.1f}% of the rate")
+    print(f"  Garwood (Poisson) {poisson[0] * 1e9:.3f} to {poisson[1] * 1e9:.3f} lost per billion, a check")
+    print(f"  Wilson            {score[0] * 1e9:.3f} to {score[1] * 1e9:.3f} lost per billion, {percent(lost, deals, score[1])} to {percent(lost, deals, score[0])}; "
+          f"as Blake and Gent write it, {wilson_as_centre(lost, deals)}")
     if "not_won" in run:
         print(f"exhaustive stage    {run['not_won']} reached it: {run['proofs_won']} won, {lost} proved lost, {run['undecided']} undecided")
         print(f"failures            {run['unverified']} wins failed verification, {run['proof_failed']} proofs failed")

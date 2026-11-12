@@ -7,28 +7,32 @@ pile left**.
 ## Headline
 
 **1,000,000,000,000 random deals (seeds 0–999,999,999,999): 999,999,999,279 won, every win checked by replaying its line, and
-the other 721 proven unwinnable, in 55 h 54 min of running at 4,969,178 deals/s on the same laptop.** About 1 deal in 1.39 billion
-can't be won: 0.721 per billion, with a Wilson 95% interval of 0.67 to 0.78 per billion, or a win rate of
-**[99.9999999224%, 99.9999999330%]** (99.9999999277 ± 0.0000000053%). The run covers the seeds of all the runs below again,
-and found exactly their 23 losses among them. Nothing failed verification, and no deal was left undecided.
+the other 721 proven unwinnable, in 55 h 54 min of running at 4,969,178 deals/s on the same laptop.** Their win rate is exactly
+**99.9999999279%**: 0.721 lost per billion, or 1 deal in 1.39 billion. That is a count, with no uncertainty: every deal was won
+with a checked line or proven lost, and none was left undecided. For the loss rate of all random deals, the exact 95% interval
+(Clopper–Pearson) is **0.669 to 0.776 per billion**, 1 in 1.29 to 1.49 billion, or a win rate of
+**[99.9999999224%, 99.9999999331%]**; it assumes the seeds give uniformly random deals. The run covers the seeds of all the runs
+below again, and found exactly their 23 losses among them. Nothing failed verification.
 
 The runs before it:
 
 **1,000,000,000 random deals (seeds 0–999,999,999): 999,999,998 won, every win replayed by the reference engine, and the
-other 2 proven unwinnable. No two deals are the same game.** The 95% Wilson interval for the win rate is
-**[99.99999927%, 99.99999995%]**: about 1 deal in 500 million can't be won (95% interval: 1 in 137 million to 1 in 1.8
-billion). They are the first random deals shown unwinnable that docs/RESEARCH.md knows of (see Losses).
+other 2 proven unwinnable. No two deals are the same game.** 1 deal in 500 million can't be won; the exact 95% interval is
+1 in 138 million to 1 in 4.1 billion, or a win rate of **[99.99999928%, 99.99999998%]**. They are the first random deals shown unwinnable that docs/RESEARCH.md knows of (see Losses).
 
 **A second billion (seeds 1,000,000,000–1,999,999,999): 999,999,999 won and 1 proven lost, in 45 min 28 s at 366,514
 deals/s,** 8.4 times the first billion's speed on the same laptop. No two of its deals are the same game. Over both,
-**1,999,999,997 of 2,000,000,000 deals won and the other 3 proven lost**: about 1 deal in 670 million can't be won
-(Wilson 95%: 1 in 227 million to 1 in 2.0 billion; win rate [99.99999956%, 99.99999995%]).
+**1,999,999,997 of 2,000,000,000 deals won and the other 3 proven lost**: 1 deal in 670 million can't be won (exact 95%:
+1 in 228 million to 1 in 3.2 billion; win rate [99.99999956%, 99.99999997%]).
 
 **Then 20 billion (seeds 2,000,000,000–21,999,999,999): 19,999,999,980 won and 20 proven lost, in 5 h 56 min 52 s at 934,074
 deals/s,** 2.5 times the second billion's speed on the same laptop. No two of its deals are the same game. Over all three,
-**21,999,999,977 of 22,000,000,000 deals won and the other 23 proven lost**: about 1 deal in 960 million can't be won (Wilson
-95%: 1 in 637 million to 1 in 1.44 billion; win rate [99.99999984%, 99.99999993%]). The exact (Garwood) 95% interval for 23 events
-is 1 in 637 million to 1 in 1.51 billion; Wilson is quoted throughout because the earlier work used it.
+**21,999,999,977 of 22,000,000,000 deals won and the other 23 proven lost**: 1 deal in 960 million can't be won (exact 95%:
+1 in 637 million to 1 in 1.51 billion; win rate [99.99999984%, 99.99999993%]).
+
+The intervals here are exact (Clopper–Pearson; at these rates Garwood's for a Poisson count is the same to four decimals of a
+count). Wilson's, which Blake and Gent use, is nearly the same at the trillion's 721 losses but narrower at a few; it is beside the
+trillion's in Compared with earlier work, and `research/paper/paper_numbers.py` prints all three.
 
 ## Runs
 
@@ -36,16 +40,16 @@ All runs used `acc batch` with the default strategy (below) on the laptop in doc
 at its sustained heat-soaked clocks, and for the last four runs its NVIDIA T550 GPU as well. Deals come from seeds via the
 specified generator (docs/FORMATS.md), so anyone can re-deal and re-check them.
 
-| Seeds | Deals | Won | 95% CI (Wilson) | Solved on | Deals/s | Wall time |
+| Seeds | Deals | Won | 95% interval (exact) | Solved on | Deals/s | Wall time |
 |---|---|---|---|---|---|---|
-| 0–999,999 | 1,000,000 | 1,000,000 | [99.999616%, 100%] | CPU | 19,512 | 51 s |
-| 0–9,999,999 | 10,000,000 | 10,000,000 | [99.999962%, 100%] | CPU | 15,348 | 10 min 52 s |
-| 10,000,000–29,999,999 | 20,000,000 | 20,000,000 | [99.999981%, 100%] | CPU | 13,422 | 24 min 50 s |
+| 0–999,999 | 1,000,000 | 1,000,000 | [99.999631%, 100%] | CPU | 19,512 | 51 s |
+| 0–9,999,999 | 10,000,000 | 10,000,000 | [99.999963%, 100%] | CPU | 15,348 | 10 min 52 s |
+| 10,000,000–29,999,999 | 20,000,000 | 20,000,000 | [99.999982%, 100%] | CPU | 13,422 | 24 min 50 s |
 | 0–99,999,999 | 100,000,000 | 100,000,000 | [99.999996%, 100%] | CPU + GPU | 19,281 | 1 h 26 min 27 s |
-| 0–999,999,999 | 1,000,000,000 | 999,999,998 | [99.99999927%, 99.99999995%] | CPU + GPU | 43,855 | 6 h 20 min 3 s |
-| 1,000,000,000–1,999,999,999 | 1,000,000,000 | 999,999,999 | [99.99999943%, 99.99999998%] | CPU + GPU | 366,514 | 45 min 28 s |
+| 0–999,999,999 | 1,000,000,000 | 999,999,998 | [99.99999928%, 99.99999998%] | CPU + GPU | 43,855 | 6 h 20 min 3 s |
+| 1,000,000,000–1,999,999,999 | 1,000,000,000 | 999,999,999 | [99.99999944%, 99.999999997%] | CPU + GPU | 366,514 | 45 min 28 s |
 | 2,000,000,000–21,999,999,999 | 20,000,000,000 | 19,999,999,980 | [99.99999985%, 99.99999994%] | CPU + GPU | 934,074 | 5 h 56 min 52 s |
-| **0–999,999,999,999** | **1,000,000,000,000** | **999,999,999,279** | **[99.9999999224%, 99.9999999330%]** | **CPU + GPU** | **4,969,178** | **55 h 54 min, in 6 sessions** |
+| **0–999,999,999,999** | **1,000,000,000,000** | **999,999,999,279** | **[99.9999999224%, 99.9999999331%]** | **CPU + GPU** | **4,969,178** | **55 h 54 min, in 6 sessions** |
 
 The first three are Phase 7 and the 100M run is Phase 8. They won every deal: none ended `unknown`, so they left no
 dossiers. The billion run came after Phase 8, with the faster code of docs/BENCHMARKS.md's "After Phase 8" sections
@@ -190,10 +194,13 @@ In the trillion the GPU's up to 400 tries won **999,945,361,644 deals (99.9945%)
 |---|---|---|---|---|
 | Masten (1999 onwards, Solitaire Win Rates) | 30,000,000 | 30,000,000 | none published; Blake & Gent's Wilson 95% on this count is 99.9999936 ± 0.0000064% | about 12 deals/s with the newer program; the hardest 1999 deal took about 2 hours |
 | Blake & Gent, Solvitaire (JAIR 85, article 21, 2026) | 1,000,000 | 999,996; 4 undecided, none proven lost | 99.99948 ± 0.00052% (95%) | general-purpose solver: mean 9.8 CPU-seconds a deal, 110 CPU-days in all |
-| **This solver** | **1,000,000,000,000** | **999,999,999,279; the other 721 proven lost** | **99.9999999277 ± 0.0000000053% (Wilson 95%)** | **about 5 million deals/s on a laptop with its GPU** |
+| **This solver** | **1,000,000,000,000** | **999,999,999,279; the other 721 proven lost** | **99.9999999279% measured; 95% interval [99.9999999224%, 99.9999999331%]** | **about 5 million deals/s on a laptop with its GPU** |
 
 Masten's deals come from another generator, so those 30M deals and these are different deals; the agreement is in the
-rate, not the deals. Both earlier intervals contain this one, and both still include 100%. Before the first billion no random
+rate, not the deals. Both earlier intervals contain this one, and both still include 100%. Written as Blake & Gent write
+theirs, Wilson's interval for the trillion is 99.9999999277 ± 0.0000000053%. Its centre is not the measured rate, as Wilson's
+centre adds about 2 losses to the 721, and its bounds, [99.9999999224%, 99.9999999330%], differ from the exact ones only in the
+last digit. Before the first billion no random
 Accordion deal had been shown unwinnable, as far as docs/RESEARCH.md found. At 0.72 in a billion that is no surprise: Masten's
 30M deals would hold about 0.02 of one.
 
