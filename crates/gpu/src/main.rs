@@ -128,6 +128,7 @@ fn run(args: &Args) -> Result<bool, String> {
     let gpu_start_unix = unix_now();
     let start = Instant::now();
     gpu.feed(
+        accordion_gpu::PREPARERS,
         |&i: &usize| deal_codes(&Deal::from_seed(seeds[i])),
         || {
             let idx: Vec<usize> = (first..(first + gpu.settings.batch).min(n)).collect();

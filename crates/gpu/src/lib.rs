@@ -470,8 +470,8 @@ struct Prepared {
 
 /// Threads preparing a batch for [`Gpu::submit`].
 const PREPARE_THREADS: usize = 4;
-/// Threads preparing batches ahead for [`Gpu::feed`], a batch each, on their own.
-const PREPARERS: usize = 3;
+/// Threads preparing batches ahead for [`Gpu::feed`], a batch each, on their own: enough for the main generator's deals.
+pub const PREPARERS: usize = 3;
 /// Launches [`Gpu::feed`] keeps on the GPU, each on a stream of its own, so that one starts as the last one's threads run out.
 const IN_FLIGHT: usize = 3;
 
@@ -993,6 +993,7 @@ impl Gpu {
     /// came back.
     pub fn feed<T: Sync + Send>(
         &self,
+        preparers: usize,
         position: impl Fn(&T) -> [u8; 52] + Sync,
         next_batch: impl FnMut() -> Option<Vec<T>> + Send,
         mut done: impl FnMut(Vec<T>, BatchResult),
@@ -1021,7 +1022,7 @@ impl Gpu {
             in_flight: VecDeque::new(),
             launch: 0,
             running: 0,
-            preparers: PREPARERS,
+            preparers,
             failed: None,
             lost: Vec::new(),
             slots: (0..IN_FLIGHT).map(|_| None).collect(),
@@ -1038,7 +1039,7 @@ impl Gpu {
         let mut collected_turns = 0usize;
         let (position, streams) = (&position, &streams);
         std::thread::scope(|scope| {
-            for _ in 0..PREPARERS {
+            for _ in 0..preparers {
                 scope.spawn(|| {
                     loop {
                         let mut take_ms = 0.0;

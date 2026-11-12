@@ -614,6 +614,10 @@ pub fn run(
     })
 }
 
+/// Threads making the GPU's deals. A ChaCha20 deal (the `second-generator` feature) costs about 40 times a main one, and 3
+/// threads made only about 1.2M a second of them, so it gets more.
+const GPU_PREPARERS: usize = if cfg!(feature = "second-generator") { 10 } else { accordion_gpu::PREPARERS };
+
 /// The GPU feeder: batches of deals from the shared counter until it runs out (or the run stops), results into `queue`.
 /// If the GPU fails, gives back the deals it had in hand.
 fn feed(
@@ -627,6 +631,7 @@ fn feed(
 ) -> Result<(), (String, Vec<usize>)> {
     let batch = gpu.settings.batch;
     gpu.feed(
+        GPU_PREPARERS,
         |&index: &usize| quick::deal_codes(seeds.seed(index)),
         || {
             // CPU threads that fall behind the GPU (a hot laptop) hold it back, so what waits for them stays small.
