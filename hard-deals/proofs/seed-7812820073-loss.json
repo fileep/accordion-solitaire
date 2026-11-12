@@ -48,7 +48,7 @@
           "evicted_positions": 0,
           "positions": 47146,
           "result": "lost",
-          "seconds": 0.006,
+          "seconds": 0.014,
           "set_bytes": 4227072
         }
       },
@@ -58,7 +58,7 @@
         "evicted_positions": 0,
         "positions": 141456,
         "result": "lost",
-        "seconds": 0.009,
+        "seconds": 0.032,
         "set_bytes": 4227072
       },
       "solver": "acc 0.1.0"

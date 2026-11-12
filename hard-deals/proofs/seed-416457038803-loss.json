@@ -1,0 +1,60 @@
+{
+  "format": "accordion-solve/1",
+  "rules": {
+    "deal": "open",
+    "leaps": [
+      1,
+      3
+    ],
+    "match": "suit-or-rank",
+    "win": "one-pile"
+  },
+  "deal": {
+    "seed": 416457038803,
+    "cards": "8C 9S KH 3D 7H KD 6H QC 9C 2S 5D JS 9H 4D TC 8D 7C 6D 4C 6S 4H AS QD 3S 6C 2H AC 8H 5S TD 4S AD 8S 3H 5C QH TS 7D KC 5H JC 7S JD AH 3C KS 2C TH QS 2D JH 9D"
+  },
+  "result": "loss",
+  "moves": [
+    "2D>2C",
+    "4D>5D",
+    "KD>KH",
+    "6H>7H",
+    "QS>KS",
+    "3D>KD",
+    "9C>QC",
+    "9C>9S",
+    "9D>2D",
+    "JH>TH",
+    "4D>3D",
+    "9H>6H",
+    "JS>2S",
+    "9C>8C"
+  ],
+  "stats": {
+    "proof": {
+      "independent": {
+        "endgame_piles": 11,
+        "move_order_seed": 1,
+        "pattern_piles": 16,
+        "run": {
+          "dead_positions": 520,
+          "evicted_positions": 0,
+          "positions": 584,
+          "result": "lost",
+          "seconds": 0.0,
+          "set_bytes": 294912
+        }
+      },
+      "max_positions": 10000000000,
+      "plain": {
+        "dead_positions": 520,
+        "evicted_positions": 0,
+        "positions": 1536,
+        "result": "lost",
+        "seconds": 0.0,
+        "set_bytes": 294912
+      },
+      "solver": "acc 0.1.0"
+    }
+  }
+}

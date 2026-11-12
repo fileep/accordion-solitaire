@@ -71,18 +71,24 @@
       "independent": {
         "endgame_piles": 11,
         "move_order_seed": 1,
+        "pattern_piles": 16,
         "run": {
-          "dead_positions": 19383970,
-          "positions": 31800248,
+          "dead_positions": 19381842,
+          "evicted_positions": 0,
+          "positions": 31686819,
           "result": "lost",
-          "seconds": 13.409
+          "seconds": 21.71,
+          "set_bytes": 4295032832
         }
       },
+      "max_positions": 10000000000,
       "plain": {
         "dead_positions": 19386305,
+        "evicted_positions": 0,
         "positions": 110959471,
         "result": "lost",
-        "seconds": 29.238
+        "seconds": 34.497,
+        "set_bytes": 4295000064
       },
       "solver": "acc 0.1.0"
     }

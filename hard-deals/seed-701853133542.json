@@ -1,0 +1,132 @@
+{
+  "best": {
+    "moves": [
+      "AH>9H",
+      "KC>KS",
+      "TS>TD",
+      "KC>AC",
+      "QD>QH",
+      "KD>2D",
+      "QC>KC",
+      "8S>3S",
+      "5H>5D",
+      "TC>QC",
+      "TC>TH",
+      "7H>5H",
+      "7H>3H",
+      "7H>7C",
+      "7D>6D",
+      "7D>7H",
+      "KD>QD",
+      "5C>5S",
+      "7D>9D",
+      "8S>AS",
+      "8S>4S",
+      "8D>8S",
+      "TC>3C",
+      "8D>7D",
+      "JH>JD",
+      "6H>JH",
+      "6H>6S",
+      "6H>KH",
+      "8D>4D",
+      "TC>2C"
+    ],
+    "piles_left": 22
+  },
+  "deal": {
+    "cards": "5S QH 2D KD QD 9H AH 5C 7S 6C 9S JC 2H AD 8H TD TS 4C 2S 8C QS 4H 3D 9C JS KH 6S 4D 2C JD 3C 9D 4S 8D 7C 6D TH 3H AS AC KS KC 7D 5D QC 5H TC JH 6H 7H 3S 8S",
+    "seed": 701853133542
+  },
+  "features": {
+    "initial_legal_moves": 14,
+    "piles_with_a_move": 12
+  },
+  "format": "accordion-dossier/1",
+  "history": [
+    {
+      "attempts": 9983,
+      "config": {
+        "ladder": {
+          "budget": 4000,
+          "end": 24,
+          "growth": 200,
+          "leap_weight": 8,
+          "prefix": "uniform",
+          "start": 36,
+          "step": 2,
+          "tries": 256,
+          "unstuck": false
+        },
+        "luby_unit": 1000,
+        "max_nodes": 50000000,
+        "restarts": "luby",
+        "search": {
+          "endgame_piles": 11,
+          "gates": {
+            "connectivity": 19,
+            "every_node": false,
+            "left_leaf": 0,
+            "leftmost": true
+          },
+          "order": "uniform",
+          "pattern_piles": 0,
+          "pattern_table": 16,
+          "probe_first": false,
+          "sleep_sets": true,
+          "table_min_piles": 0
+        },
+        "seed": 701853133542
+      },
+      "date": "2026-11-11T03:57:17Z",
+      "dead_end_cuts": 0,
+      "max_nodes_per_thread": 50000000,
+      "move_order_seed": 701853133542,
+      "nodes": 50000001,
+      "result": "unknown",
+      "seconds": 21.195,
+      "solver": "acc 0.1.0",
+      "stage": "batch",
+      "table_hits": 19810047,
+      "threads": 1
+    },
+    {
+      "date": "2026-11-11T03:57:24Z",
+      "independent": {
+        "endgame_piles": 11,
+        "move_order_seed": 1,
+        "pattern_piles": 16,
+        "run": {
+          "dead_positions": 1308048,
+          "evicted_positions": 0,
+          "positions": 2356504,
+          "result": "lost",
+          "seconds": 2.755,
+          "set_bytes": 268468224
+        }
+      },
+      "max_positions": 10000000000,
+      "plain": {
+        "dead_positions": 1308048,
+        "evicted_positions": 0,
+        "positions": 6390620,
+        "result": "lost",
+        "seconds": 3.616,
+        "set_bytes": 268468224
+      },
+      "solver": "acc 0.1.0",
+      "stage": "prove"
+    }
+  ],
+  "id": "seed-701853133542",
+  "rules": {
+    "deal": "open",
+    "leaps": [
+      1,
+      3
+    ],
+    "match": "suit-or-rank",
+    "win": "one-pile"
+  },
+  "status": "loss (proven)"
+}

@@ -99,6 +99,79 @@
       },
       "solver": "acc 0.1.0",
       "stage": "prove"
+    },
+    {
+      "attempts": 1800,
+      "config": {
+        "ladder": {
+          "budget": 4000,
+          "end": 24,
+          "growth": 200,
+          "leap_weight": 8,
+          "prefix": "uniform",
+          "start": 36,
+          "step": 2,
+          "tries": 256,
+          "unstuck": false
+        },
+        "luby_unit": 1000,
+        "max_nodes": 50000000,
+        "restarts": "luby",
+        "search": {
+          "endgame_piles": 11,
+          "gates": {
+            "connectivity": 19,
+            "every_node": false,
+            "left_leaf": 0,
+            "leftmost": true
+          },
+          "order": "uniform",
+          "pattern_piles": 0,
+          "pattern_table": 16,
+          "probe_first": false,
+          "sleep_sets": true,
+          "table_min_piles": 0
+        },
+        "seed": 17436063346
+      },
+      "date": "2026-11-09T06:54:08Z",
+      "dead_end_cuts": 0,
+      "max_nodes_per_thread": 50000000,
+      "move_order_seed": 17436063346,
+      "nodes": 34084,
+      "result": "exhausted",
+      "seconds": 0.003,
+      "solver": "acc 0.1.0",
+      "stage": "batch",
+      "table_hits": 5076,
+      "threads": 1
+    },
+    {
+      "date": "2026-11-09T06:54:08Z",
+      "independent": {
+        "endgame_piles": 11,
+        "move_order_seed": 1,
+        "pattern_piles": 16,
+        "run": {
+          "dead_positions": 7344,
+          "evicted_positions": 0,
+          "positions": 11542,
+          "result": "lost",
+          "seconds": 0.003,
+          "set_bytes": 1081344
+        }
+      },
+      "max_positions": 10000000000,
+      "plain": {
+        "dead_positions": 7344,
+        "evicted_positions": 0,
+        "positions": 39432,
+        "result": "lost",
+        "seconds": 0.005,
+        "set_bytes": 1081344
+      },
+      "solver": "acc 0.1.0",
+      "stage": "prove"
     }
   ],
   "id": "seed-17436063346",
