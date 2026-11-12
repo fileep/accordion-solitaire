@@ -197,6 +197,15 @@ program holding it open (a backup or antivirus scan); once that has stopped, `ac
 One save of the checkpoint failed, usually because another program had the file open for a moment. The last checkpoint
 stands, and the next save, a minute later, tries again. After five failures in a row the run pauses (exit code 74).
 
+### The run is half as fast as it was
+
+Seen on the test laptop on Windows' Balanced power mode: a run that had held 5.6M deals a second fell to 3.5M, with the GPU
+half idle and the processor's efficiency cores busy at a low clock while its performance cores sat idle. Windows' power
+throttling had put acc, which had no window of its own, on the efficiency cores. Nothing is lost; the run only goes slower.
+Turning throttling off for acc's process brought it back to 6.6M at once: a program can do that by calling
+`SetProcessInformation` with `ProcessPowerThrottling`, the execution-speed bit set in the mask and cleared in the state.
+acc doesn't do this itself yet. A power mode other than Balanced may avoid it, which hasn't been tried.
+
 ### Proving takes a long time
 
 `seed N: not won; proving it lost, up to 10000000000 positions a run`, then a long wait, or `finishing the proofs of the N

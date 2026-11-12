@@ -1,5 +1,8 @@
 # Lean proofs of the lost deals: second study
 
+> Working notes from a study of 2026-11-09, kept as written. [E] figures were estimates made before Lean was
+> installed; [README.md](README.md) has what was built and measured since.
+
 [M] = measured here. [E] = my estimate. Lean was not installed or run, so every Lean figure is [E] and `Accordion.lean` has never been compiled.
 
 **Answer.** The near-wins are not big proofs. Their reachable set fits in a tiny automaton: the 19.4M-position, 111M-move deal becomes 1,135 nodes, and checking it takes 41,651 lookups [M]. That overturns the earlier "near-wins need `native_decide`": kernel-only looks possible for every loss, about 2-36 core-hours in all [E], down from 70-700 core-days. The splitting theorem is no longer needed.
@@ -81,7 +84,7 @@ Remaining risks: a misread rule still passes through everything, and all kernel 
 
 ## 5. What next
 
-**For the run, nothing changes.** Only the seeds matter, and `acc` already writes them in `hard-deals/proofs/`. The solver needs to save nothing extra, because a certificate rebuilds from a seed in seconds. The prove budget defaults to 10 billion moves per deal, about 90x the largest seen. If a giant ever exceeds it, the automaton can settle it offline with little memory. `ov/run1t/RUN.md` plans 1 trillion deals and about 1,040 losses; 2 trillion doubles those, so please confirm which is running.
+**For the run, nothing changes.** Only the seeds matter, and `acc` already writes them in `hard-deals/proofs/`. The solver needs to save nothing extra, because a certificate rebuilds from a seed in seconds. The prove budget defaults to 10 billion moves per deal, about 90x the largest seen. If a giant ever exceeds it, the automaton can settle it offline with little memory. (The trillion-deal run that followed had 721 losses.)
 
 **After the run:**
 1. Stage 0 in Lean: rules, generator tested on the 23 seed/card pairs, checker, and seeds 3,417,058,778 and 112,249,515. The second is a 19.4M-position loss with a certificate of about 6K edges. This replaces my timing guesses with real ones; a day or two [E].
@@ -90,4 +93,4 @@ Remaining risks: a misread rule still passes through everything, and all kernel 
 
 **Changed from the earlier studies:** a certificate can be far cheaper than re-enumerating; "nothing suggests a compact invariant" was wrong; and no giant-loss memory plan is needed.
 
-Files: `ov/lean2/Accordion.lean`, `dawg.py`, `anatomy.py`, `falsify.py`, logs alongside.
+Files: the study's scripts and logs are in [automaton/](automaton/), where `Accordion.lean` has since grown into the checker.

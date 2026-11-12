@@ -20,7 +20,10 @@ so. On 2026-11-11, at 833,733,001,216 deals, it was paused and the count in its 
 finished normally, with its proofs, its check for repeated games and its report. It ran in 6 sessions, with pauses for the
 battery, a Windows Update restart and that change. The report's `commits` line gives `fbbff00, a55ea74+dirty`: the second is
 the repository's commit when it was resumed, read by `git`, while the program was fbbff00 throughout. The events log has a line
-for each session start and each loss proved.
+for each session start and each loss proved. The report's `won` line says every win was "verified by the reference rules":
+that is the wording of the run's build. In fact 255 of every 256 GPU lines were checked by `quick::line_wins`, a third
+implementation of the rules, 1 deal in 256 went through the reference engine as well, which also checks that the GPU had that
+seed's deal, and every CPU win through the reference rules (docs/RESULTS.md, "How every win is checked").
 
 ## Tests of the record
 
@@ -65,15 +68,21 @@ python research/paper/paper_numbers.py
 The win rate treats deals as uniform draws, which rests on the generator. To test that, the `second-generator` feature deals from
 ChaCha20 with mask-and-redraw instead of xoshiro256\*\* with Lemire's method, sharing no code or method. The same seed gives another
 deal, so its results go in folders of their own, and its report has a `generator` line. At the 0.7 losses per billion of the main run,
-200 billion deals should give about 140 losses, in about 10 to 11 hours:
+200 billion deals should give about 140 losses. It runs slower than the main generator's runs: making ChaCha20 deals on the
+processor, about 5 times the work of a main deal, sets its speed (1.3–2M deals/s on the test laptop, against 5–6.6M):
 
 ```bash
 cargo build --release -p accordion-cli --features second-generator --target-dir target/chacha
 ```
 
+Then see it through with that build, as any long run ([docs/LONG_RUNS.md](../../docs/LONG_RUNS.md)), for example:
+
 ```powershell
-powershell -ExecutionPolicy Bypass -File C:\runs\guard.ps1 -Acc C:\runs\acc-chacha.exe -Count 200000000000 -Checkpoint checkpoints\chacha-0-200000000000.json -StartExtra "--dossiers hard-deals-chacha"
+powershell -ExecutionPolicy Bypass -File tools\long-run.ps1 -Acc path\to\acc-chacha.exe -From 0 -Count 200000000000 -Gpu on --dossiers hard-deals-chacha
 ```
+
+or `acc run --from 0 --deals 200b --gpu on` with that build, which also pauses for the battery. The project's own run was seen
+through by the author's battery watchdog, which isn't published, under the name `chacha-0-200000000000`.
 
 Its losses are compared by count only: Lean's `deal` is the main generator, so they have no proofs in Lean. The paper reports this
 run, which follows the trillion run. Copy its report here as `chacha-0-200000000000.report.txt`, and `paper_numbers.py` compares it

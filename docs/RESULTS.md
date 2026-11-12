@@ -85,7 +85,9 @@ sample: a hash of the renamed deal picked 2,272,765,214 deals (0.227%), and none
 are always picked together, so 1,317 or more such pairs among the trillion would have shown with 95% chance. 2,349,633 other pairs
 share 40 bits of their fingerprints, against 2,348,980 expected by chance.
 
-**The GPU's share.** The reference engine replayed every GPU line, and none failed. The CPU solved the rest: the deals
+**The GPU's share.** Every GPU line was replayed, and none failed: by the reference engine up to the first billion, by the
+reference rules on the top cards (`replay_tops`) in the second billion and the 20 billion, and in the trillion mostly by
+`quick::line_wins`, with 1 deal in 256 through the reference engine as well (How every win is checked, below). The CPU solved the rest: the deals
 the GPU tried and missed, solved again from the start, and the deals the CPU workers took for themselves while the GPU
 was busy.
 
@@ -140,8 +142,10 @@ below 850,114 deals/s from start to finish.
 
 The trillion averaged **4,969,178 deals/s** over its 6 sessions. Its last session, 7.4 hours, held **6.44–6.63M deals/s in each
 full hour** after a slow first one, and the first session's first seven hours 6.41–6.75M. The average is lower for two reasons.
-Two sessions (12.5 hours) ran at 3.5–3.7M: Windows had put the process, which had no window of its own, on the efficiency cores
-alone, until a script turned that off for it. And in the first and third sessions other work on the laptop, even at idle
+Two sessions (12.5 hours) ran at 3.5–3.7M: Windows' power throttling had put the process, which had no window of its own, on
+the efficiency cores alone. A small script turned that off for acc's process, by calling
+`SetProcessInformation(ProcessPowerThrottling)` with the execution-speed bit in the mask and cleared in the state
+(docs/TROUBLESHOOTING.md, "The run is half as fast as it was"). And in the first and third sessions other work on the laptop, even at idle
 priority, took some of the shared power budget, down to 1.4M deals/s for two hours of the first.
 
 **Cost per deal** (positions are solver nodes, times are one core of 16 busy ones). The 10M run covers every deal. The

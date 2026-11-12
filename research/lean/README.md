@@ -17,6 +17,10 @@ Lean 4.35.0 (`lean-toolchain`). The checker is proved correct for any certificat
 | `automaton/lean_tests.py` | Writes the tests: a real win, and bad certificates the kernel must refuse |
 | `automaton/check_certificates.py` | A second checker in Python that shares no code with `dawg.py`; results in `certificates.csv` |
 
+The other files in `automaton/` and `regions/` are the earlier studies' scripts and logs (`lean2.md`, `leanproof.md`,
+`regions.md`). `falsify.log` and `falsify2.log` end in a script error (a `TypeError` in `dawg.py`'s `verify`), so they hold
+only the checks printed before it; `falsify3.log` and `falsify4.log` are later runs.
+
 To build and prove:
 
 ```bash
@@ -32,6 +36,11 @@ python research/lean/automaton/prove_all.py hard-deals/proofs research/lean/auto
 ```
 
 `prove_all.py` takes a number of jobs as a fourth argument, for when nothing else is running. Each Lean takes up to about 3 GB.
+
+`prove_all.py` and `replay.py` run only on Windows for now: they find Lean at
+`~/.elan/toolchains/leanprover--lean4---v4.35.0/bin/lean.exe`, cap each process's memory with Windows calls, and `replay.py`
+uses `nanoda_bin.exe` and `leanexport.exe` from that toolchain. The Lean files themselves, and `lean` run by hand as above,
+work anywhere Lean 4.35.0 does.
 
 To check the proofs in a second kernel, `nanoda_bin`, which is in the Lean toolchain and written in Rust, sharing no code with Lean's:
 

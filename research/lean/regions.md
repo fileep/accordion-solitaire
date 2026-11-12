@@ -1,6 +1,9 @@
 # Splitting a lost deal into independent regions
 
-[M] = measured here. [E] = my estimate. Lean was not run, so every Lean figure is [E]. Scripts and the table for each deal are in `scratchpad/ov/regions/` (`per_deal.txt`).
+> Working notes from a study of 2026-11-09, kept as written. [E] figures were estimates made before Lean was
+> installed; [README.md](README.md) has what was built and measured since.
+
+[M] = measured here. [E] = my estimate. Lean was not run, so every Lean figure is [E]. Scripts and the table for each deal are in [regions/](regions/) (`per_deal.txt`).
 
 **Answer.** The hypothesis holds for 17 of the 23 recorded losses [M]: exactly the 17 that jam at 27 or more piles. Those proofs shrink by a median of 79x in positions and 187x in moves, down to a few seconds of kernel time each [E]. The other 6 can't be split at all, and they hold 92% of the work [M]. A kernel-only proof becomes plausible for about three quarters of the losses, not for all.
 

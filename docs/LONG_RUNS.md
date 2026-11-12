@@ -164,7 +164,8 @@ under `caffeinate -i` (`caffeinate -i acc run --overnight`). Neither has been tr
 ## Scripts in `tools/`
 
 For most people `acc run` and `acc resume` do everything needed. The scripts are for seeing a long `acc batch` through
-with a program file of your choosing, as the project's own big runs were:
+with a program file of your choosing. (The project's trillion-deal run was seen through by the author's own battery watchdog,
+which isn't published; `acc run`'s battery guard now does the same job.)
 
 - `tools/long-run.ps1` (Windows) starts the run, or carries on with it, and carries on again after a GPU failure or a crash
   until it stops making progress:

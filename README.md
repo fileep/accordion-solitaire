@@ -6,7 +6,7 @@ or onto the one three places to its left, when their top cards share a suit or a
 and counts how many of each there were.
 
 **The result so far** ([docs/RESULTS.md](docs/RESULTS.md), as of 2026-11-12): of 1,000,000,000,000 random deals,
-999,999,999,279 were won, every win checked by replaying it under the rules, and the other 721 were proven impossible. About 1
+999,999,999,279 were won, every win checked by replaying its whole line with code separate from the search, and the other 721 were proven impossible. About 1
 deal in 1.39 billion can't be won (95% interval: 1 in 1.29 billion to 1 in 1.49 billion). The run took 56 hours on a laptop
 with an NVIDIA T550 graphics card, at about 5 million deals a second.
 

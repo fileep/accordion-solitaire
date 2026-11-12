@@ -1,5 +1,8 @@
 # A Lean proof of Accordion wins and losses
 
+> Working notes from a study of 2026-11-08, kept as written. [E] figures were estimates made before Lean was
+> installed; [README.md](README.md) has what was built and measured since.
+
 [M] = measured here or recorded in the repo. [E] = my estimate, which may be off by 3-10x. Lean was not installed or run, so every Lean speed is [E].
 
 **Answer.** Prove the losses and only sample the wins. Lean can enumerate every position of each lost deal itself, so it needs no certificate, no pruning proofs and no solver change. About 1,040 losses is 0.5-5 core-hours compiled [E]. A proof of all trillion wins is not practical. The first step is half a day.
@@ -43,7 +46,7 @@ Recorded sizes, 23 proven losses, plain run [M]:
 | Moves generated | 416 | 379,939 | 6.3M | 110,959,471 | 145.9M |
 | Rust seconds | 0.00 | 0.046 | 1.48 | 29.2 | 34 |
 
-Two details differ from the brief. A median proof is 0.05 s, not 1-2 s. The 19.5 billion figure in `INDEX.md` is solver effort, not proof size; that deal's proof is 19.4M positions.
+Two details differ from what the study was asked to assume. A median proof is 0.05 s, not 1-2 s. The 19.5 billion figure in `INDEX.md` is solver effort, not proof size; that deal's proof is 19.4M positions.
 
 **Pruning is not worth proving [M].** The independent run (tests, sleep sets, tables) stores only 0.4% fewer positions than the plain run, and generates 69% fewer moves. So all that proof work buys at most 3x in time and nothing in memory. The likely cause: 17 of the 23 deals never get below 27 piles (move 25), and the dead-end tests can't fire before move 15 (left-leaf, move 26) [RESEARCH.md], so they have little room to act. Sleep sets combined with a dead-position set are also the subtlest proof, and endgame tables are a 20 GB input needing their own proof. The plain run needs none of this, and it is what `acc` already reruns on every loss.
 
@@ -87,6 +90,6 @@ What could go wrong:
 
 Use `native_decide` or a compiled checker for all ~1,040, and kernel-only for as many small ones as is cheap. Don't prove pruning, don't touch the solver, and don't attempt all wins.
 
-**Cheapest first step:** stage 0, which needs Lean installed (`elan`, by you). If stage 0 feels clumsy, stop there.
+**Cheapest first step:** stage 0, which needs Lean installed (`elan`). If stage 0 feels clumsy, stop there.
 
 Sources: lean-lang.org/doc/reference/4.28.0-rc1/ValidatingProofs/ (trust); lean-lang.org/doc/reference/4.28.0/Basic-Types/Natural-Numbers/ (kernel `Nat`); lean-lang.org/doc/reference/4.36.0-rc1/releases/v4.29.0/ (native axioms); leanprover-community Zulip archive (`native_decide` trust and soundness threads, kernel recursion).

@@ -8,4 +8,5 @@
 # For GitHub's language statistics: the research record and the generated results are not the program's code.
 research/** linguist-documentation
 hard-deals/** linguist-generated
+hard-deals-chacha/** linguist-generated
 *.cu linguist-language=C++
