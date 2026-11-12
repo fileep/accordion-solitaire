@@ -1,0 +1,14 @@
+deals            1000000000000 (seeds 0..999999999999)
+won              999999999279 (every one verified by the reference rules); by stage: gpu 999945361644, ladder-0 6529094, ladder-1 12753974, ladder-2 15471866, ladder-3 11264021, ladder-4 5445828, ladder-5 2070192, ladder-6 714311, prove 5, thorough 388344
+not won          726 by the solver (630 exhausted, 96 hit the limit of 50000000 positions)
+proofs           721 proven lost, 5 won, 0 undecided (two exhaustive runs of up to 10000000000 positions each)
+failed to verify 0
+repeat odds      9.3e-34 that any two of these deals are the same game (suits and ranks renamed), 6.2e-45 the same deal, if the generator behaves like a random one (n²/2 over 52!/(4!·13!), and over 52!)
+distinct games   not all checked: no repeats among the 2272765214 deals a hash of the game picked, 0.227% of the 1000000000000, even with suits and ranks renamed. Any two the same are picked together, so 1317 or more pairs the same among the 1000000000000 would have been seen with 95% chance. 2349633 other pairs share 40 bits of their fingerprints, against 2348980 by chance
+win rate         99.9999999279%   95% CI [99.9999999224%, 99.9999999330%] (Wilson; undecided deals counted as losses for the lower bound, wins for the upper)
+positions/deal   mean 59139  median 35516  p90 124525  p99 398587  p99.9 997454  max 50000001 (54638356 deals solved on the CPU)
+ms/deal (1 core) mean 17.38  median 6.53  p90 39.40  p99 168.01  p99.9 487.94  max 49292.7 (54638356 deals solved on the CPU)
+GPU              NVIDIA T550 Laptop GPU: won 999945361644 of the 1000000000000 deals it was given (99.99%), 0 lines failed verification; 5021116.9M attempts, 2721M positions/s
+CPU threads      verifying GPU lines 26.2% (0.8 us a line), the GPU's misses 31.5%, own deals 0.0%, waiting for the GPU 36.8%, handing results on 5.3%, other 0.3%
+throughput       4969178 deals/s, 16M CPU positions/s on 15 CPU threads + GPU (201240.5 s wall, over 6 sessions)
+commits          fbbff00, a55ea74+dirty

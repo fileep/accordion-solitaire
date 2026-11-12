@@ -8,8 +8,8 @@ do on a laptop. [GETTING_STARTED.md](GETTING_STARTED.md) comes first; the comman
 These are **estimates**, worked out from measured speeds and sizes; no run of most of these sizes has been made with this
 version. The speeds are the test laptop's (Intel i7-1260P, 16 threads, NVIDIA T550 laptop GPU, Windows 11):
 
-- **With the GPU**, about 5 million deals a second: hour by hour, the 2 trillion run held 6.4 to 6.7 million a second in
-  its first seven hours and 5.0 to 5.4 million later, and 4.5 to 5.3 million were measured on a warmer desk
+- **With the GPU**, about 5 million deals a second: the trillion run averaged 5.0 million over 56 hours, and held 6.4 to
+  6.7 million a second in its best hours; 4.5 to 5.3 million were measured on a warmer desk
   ([BENCHMARKS.md](BENCHMARKS.md), November 2026). A bigger card should be faster; none has been tried.
 - **On the processor alone**, about 15,000 deals a second on 16 threads: runs in Phase 7 held 13,422 to 19,512
   ([RESULTS.md](RESULTS.md)). That was older code, and the processor alone hasn't been timed since, so today's figure may be
@@ -40,7 +40,7 @@ still going at the end, beside the check for repeated games, can take up to `--p
   on the processor; without it, every deal is.
 - **The endgame tables**, if built to 11 piles: 1.15 GB on disk and about as much memory.
 - **Proofs** of the deals the solver doesn't win take a few MB each, and rarely up to `--prove-memory` (8 GB) for each of
-  their two searches. About 1 deal in 960 million is proven impossible (23 in the project's 22 billion), and each gets a
+  their two searches. About 1 deal in 1.4 billion is proven impossible (721 in the project's trillion), and each gets a
   dossier and a loss record of a few KB in `output/hard-deals`: under 1 GB at 100 trillion.
 - **The speed log** grows by about 6 MB a day.
 - `--save-wins` (`acc batch --out`) adds about 475 bytes a deal: 475 GB a billion. It is refused with `--hours` alone.
@@ -53,8 +53,8 @@ of their own (`--from`), or made with `acc batch --no-games-check`.
 
 A run plays consecutive seeds, from `--from` on. The same seed is the same deal everywhere, so:
 
-- To **check** the project's results, play seeds it has played: 0 to 21,999,999,999 are in [RESULTS.md](RESULTS.md), and a
-  run of 0 to 1,999,999,999,999 (2 trillion) was going when this was written.
+- To **check** the project's results, play seeds it has played: 0 to 999,999,999,999 (a trillion) are in
+  [RESULTS.md](RESULTS.md).
 - To find **new** results, choose seeds no one has used, and say which in what you publish. Seeds go up to
   18,446,744,073,709,551,615; anything from 10 trillion (`--from 10t`) up was unused by this project as of November 2026.
 - Runs that start where the last ended never repeat a deal: `acc run` says what to type for the next range when it finishes.
@@ -141,7 +141,7 @@ A laptop can run for days if it is set up for it. What acc does by itself:
   the guard leaves it alone unless the battery is under 10%.
 
 Why a run can drain a battery on the charger: a laptop under full load can use more power than its charger gives. On the
-test laptop, the 2 trillion run took the battery down 5.5 to 6.8 Wh an hour with the processor and the GPU at
+test laptop, the trillion run took the battery down 5.5 to 6.8 Wh an hour with the processor and the GPU at
 full speed ([BENCHMARKS.md](BENCHMARKS.md), "Holding the battery level"). The guard is for that.
 
 What you may choose to set yourself (acc changes none of these):

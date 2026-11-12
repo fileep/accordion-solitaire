@@ -6,6 +6,14 @@ pile left**.
 
 ## Headline
 
+**1,000,000,000,000 random deals (seeds 0–999,999,999,999): 999,999,999,279 won, every win checked by replaying its line, and
+the other 721 proven unwinnable, in 55 h 54 min of running at 4,969,178 deals/s on the same laptop.** About 1 deal in 1.39 billion
+can't be won: 0.721 per billion, with a Wilson 95% interval of 0.67 to 0.78 per billion, or a win rate of
+**[99.9999999224%, 99.9999999330%]** (99.9999999277 ± 0.0000000053%). The run covers the seeds of all the runs below again,
+and found exactly their 23 losses among them. Nothing failed verification, and no deal was left undecided.
+
+The runs before it:
+
 **1,000,000,000 random deals (seeds 0–999,999,999): 999,999,998 won, every win replayed by the reference engine, and the
 other 2 proven unwinnable. No two deals are the same game.** The 95% Wilson interval for the win rate is
 **[99.99999927%, 99.99999995%]**: about 1 deal in 500 million can't be won (95% interval: 1 in 137 million to 1 in 1.8
@@ -36,7 +44,8 @@ specified generator (docs/FORMATS.md), so anyone can re-deal and re-check them.
 | 0–99,999,999 | 100,000,000 | 100,000,000 | [99.999996%, 100%] | CPU + GPU | 19,281 | 1 h 26 min 27 s |
 | 0–999,999,999 | 1,000,000,000 | 999,999,998 | [99.99999927%, 99.99999995%] | CPU + GPU | 43,855 | 6 h 20 min 3 s |
 | 1,000,000,000–1,999,999,999 | 1,000,000,000 | 999,999,999 | [99.99999943%, 99.99999998%] | CPU + GPU | 366,514 | 45 min 28 s |
-| **2,000,000,000–21,999,999,999** | **20,000,000,000** | **19,999,999,980** | **[99.99999985%, 99.99999994%]** | **CPU + GPU** | **934,074** | **5 h 56 min 52 s** |
+| 2,000,000,000–21,999,999,999 | 20,000,000,000 | 19,999,999,980 | [99.99999985%, 99.99999994%] | CPU + GPU | 934,074 | 5 h 56 min 52 s |
+| **0–999,999,999,999** | **1,000,000,000,000** | **999,999,999,279** | **[99.9999999224%, 99.9999999330%]** | **CPU + GPU** | **4,969,178** | **55 h 54 min, in 6 sessions** |
 
 The first three are Phase 7 and the 100M run is Phase 8. They won every deal: none ended `unknown`, so they left no
 dossiers. The billion run came after Phase 8, with the faster code of docs/BENCHMARKS.md's "After Phase 8" sections
@@ -55,25 +64,35 @@ of deals"), again on seeds no earlier run used, in one session: it didn't need t
 searched and one stopped at the limit, and `acc batch` proved them all lost as it went (Losses). The check for repeated games and
 the last proofs took about 27 minutes more.
 
+The trillion ran commit fbbff00 from seed 0, so it covers every earlier run's seeds again. It was started as 2 trillion deals
+and cut to a trillion on 2026-11-11, at 833.7 billion, by lowering the count in its checkpoint; it then finished normally. It ran
+in 6 sessions, from 2026-11-09 to 2026-11-12, between pauses to charge the battery (docs/LONG_RUNS.md), a Windows Update restart
+and that change. The solver didn't win 726 deals: 630 with every line searched and 96 at the 50M-position limit. `acc batch` won 5
+of them with its exhaustive search and proved the other 721 lost as it went, with none left undecided. Below 22 billion its losses
+are exactly the 23 of the earlier runs. Its speed logs, report and events log are in `research/runs/`.
+
 **No repeated games.** The 100M and billion runs also checked that their deals are different games, not only different
 orders of the cards. Two deals that differ only in the names of the suits or ranks play exactly alike, so each deal is
 renamed first (suits and ranks in order of first appearance). The renamed decks are then compared: 64-bit fingerprints
 are sorted, and any two with the same fingerprint are compared card by card. All 100,000,000, and then all
 1,000,000,000, differ. The second billion passed the same check among its own deals, and the 20 billion among its own, from
-disk, as 160 GB of fingerprints wouldn't fit in memory; the three were not compared with each other.
+disk, as 160 GB of fingerprints wouldn't fit in memory; the three were not compared with each other. The trillion checked a
+sample: a hash of the renamed deal picked 2,272,765,214 deals (0.227%), and none of them repeat. Two deals that are the same game
+are always picked together, so 1,317 or more such pairs among the trillion would have shown with 95% chance. 2,349,633 other pairs
+share 40 bits of their fingerprints, against 2,348,980 expected by chance.
 
 **The GPU's share.** The reference engine replayed every GPU line, and none failed. The CPU solved the rest: the deals
 the GPU tried and missed, solved again from the start, and the deals the CPU workers took for themselves while the GPU
 was busy.
 
-| | 100M run | Billion run | Second billion | 20 billion |
-|---|---|---|---|---|
-| Deals given to the GPU | 82,273,155 | 790,102,016 | 996,646,794 | 20,000,000,000 |
-| Won on the GPU | 81,823,614 (99.45%) | 786,211,377 (99.51%) | 994,056,063 (99.74%) | 19,997,847,246 (99.989%) |
-| GPU ladder attempts | 13.5 billion | 127.5 billion | 132.7 billion | 553.6 billion |
-| GPU speed | 214M positions/s | 331M positions/s | 3,206M positions/s | 2,632M positions/s |
-| GPU misses, solved on the CPU | 449,541 | 3,890,639 | 2,590,731 | 2,152,754 |
-| Deals the CPU workers took for themselves | 17,726,845 | 209,897,984 | 3,353,206 | 0 |
+| | 100M run | Billion run | Second billion | 20 billion | Trillion |
+|---|---|---|---|---|---|
+| Deals given to the GPU | 82,273,155 | 790,102,016 | 996,646,794 | 20,000,000,000 | 1,000,000,000,000 |
+| Won on the GPU | 81,823,614 (99.45%) | 786,211,377 (99.51%) | 994,056,063 (99.74%) | 19,997,847,246 (99.989%) | 999,945,361,644 (99.9945%) |
+| GPU ladder attempts | 13.5 billion | 127.5 billion | 132.7 billion | 553.6 billion | 5,021 billion |
+| GPU speed | 214M positions/s | 331M positions/s | 3,206M positions/s | 2,632M positions/s | 2,721M positions/s |
+| GPU misses, solved on the CPU | 449,541 | 3,890,639 | 2,590,731 | 2,152,754 | 54,638,356 |
+| Deals the CPU workers took for themselves | 17,726,845 | 209,897,984 | 3,353,206 | 0 | 0 |
 
 In the billion run the CPU workers spent 79.6% of their time on their own deals, 10.9% on the GPU's misses and 7.8%
 verifying GPU lines (34.1 µs a line). Handing results on took 1.1% and the rest 0.6%; they never waited for the GPU. In
@@ -86,11 +105,14 @@ verifying its lines (2.6 µs a line), 6.0% on its misses and 0.5% on the rest: t
 attempts and about 2,800 positions, against 133 and about 8,800 in the second billion, so it wins more deals on fewer positions a
 second.
 
+In the trillion the GPU missed 1 deal in 18,300, and a deal took it 5.0 attempts. The CPU workers spent 36.8% of their time waiting
+for it, 31.5% on its misses, 26.2% verifying its lines (0.8 µs a line), 5.3% handing results on and 0.3% on the rest.
+
 **Sustained speed.** After its first two minutes, the 100M run held 18,900–19,700 deals/s over each stretch of 10M deals.
 The CPU alone held 13,422 deals/s over the 20M run, so over that long run the GPU added about 1.4×. That was less than the
 2.15× median of the short comparison runs in docs/BENCHMARKS.md (Phase 8). (Since then the GPU has come to do nearly all
-the work: the 20 billion ran at 934,074 deals/s, 48 to 70 times the CPU alone of Phase 7, and the build of the 2 trillion run
-holds about 5 million on the same laptop; the CPU alone hasn't been timed again.) The CPU slowed far more than the GPU over
+the work: the 20 billion ran at 934,074 deals/s, 48 to 70 times the CPU alone of Phase 7, and the trillion at 4,969,178 on the
+same laptop; the CPU alone hasn't been timed again.) The CPU slowed far more than the GPU over
 the 100M run:
 
 - the CPU's median time per deal was 1.15 ms, against 0.47–0.61 ms in the short runs with the GPU;
@@ -112,6 +134,12 @@ deals/s after the first half minute.
 The 20 billion held **927,678–937,553 deals/s in each of its six hours**, the first the slowest, and its speed log has no second
 below 850,114 deals/s from start to finish.
 
+The trillion averaged **4,969,178 deals/s** over its 6 sessions. Its last session, 7.4 hours, held **6.44–6.63M deals/s in each
+full hour** after a slow first one, and the first session's first seven hours 6.41–6.75M. The average is lower for two reasons.
+Two sessions (12.5 hours) ran at 3.5–3.7M: Windows had put the process, which had no window of its own, on the efficiency cores
+alone, until a script turned that off for it. And in the first and third sessions other work on the laptop, even at idle
+priority, took some of the shared power budget, down to 1.4M deals/s for two hours of the first.
+
 **Cost per deal** (positions are solver nodes, times are one core of 16 busy ones). The 10M run covers every deal. The
 100M and billion runs cover only the deals solved on the CPU: the 100M run's tail is heavier because the GPU's misses are
 among them, and its times are longer because its CPU ran hotter. The billion run's maximums are seed 112,249,515, stopped
@@ -129,6 +157,8 @@ at the limit (Losses); its hardest win wasn't recorded.
 | Time, second billion (5.9M deals on the CPU) | 1.36 ms | 14.6 ms | 58 ms | 143 ms | 4.85 s |
 | Positions, 20 billion (2.15M deals on the CPU, all the GPU's misses) | 39,262 | 138,582 | 418,504 | 970,789 | 50,000,001 |
 | Time, 20 billion (2.15M deals on the CPU) | 6.65 ms | 19.1 ms | 38 ms | 81 ms | 3.16 s |
+| Positions, trillion (54.6M deals on the CPU, all the GPU's misses) | 35,516 | 124,525 | 398,587 | 997,454 | 50,000,001 |
+| Time, trillion (54.6M deals on the CPU) | 6.53 ms | 39.4 ms | 168 ms | 488 ms | 49.3 s |
 
 **Where the wins came from:** the strategy is a ladder of random-prefix attempts in front of a thorough search. A GPU, when
 there is one, runs a shorter ladder of its own first.
@@ -151,18 +181,21 @@ CPU won the rest: rung 0 4,264,658, rung 1 1,148,628, rung 2 419,421, rungs 3–
 In the 20 billion the GPU's up to 1,280 tries won **19,997,847,246 deals (99.989%)**, choosing its moves by what winning prefixes do.
 The CPU won the deals it missed: rung 0 244,759, rung 1 562,320, rung 2 678,360, rungs 3–6 658,965, and the thorough search 8,330.
 
+In the trillion the GPU's up to 400 tries won **999,945,361,644 deals (99.9945%)**. The CPU won the deals it missed: rung 0
+6,529,094, rung 1 12,753,974, rung 2 15,471,866, rungs 3–6 19,494,352, the thorough search 388,344, and the exhaustive search 5.
+
 ## Compared with earlier work
 
 | | Deals | Won | Reported interval | Speed |
 |---|---|---|---|---|
 | Masten (1999 onwards, Solitaire Win Rates) | 30,000,000 | 30,000,000 | none published; Blake & Gent's Wilson 95% on this count is 99.9999936 ± 0.0000064% | about 12 deals/s with the newer program; the hardest 1999 deal took about 2 hours |
 | Blake & Gent, Solvitaire (JAIR 85, article 21, 2026) | 1,000,000 | 999,996; 4 undecided, none proven lost | 99.99948 ± 0.00052% (95%) | general-purpose solver: mean 9.8 CPU-seconds a deal, 110 CPU-days in all |
-| **This solver** | **22,000,000,000** | **21,999,999,977; the other 23 proven lost** | **Wilson 95% [99.99999984%, 99.99999993%]** | **934,000 deals/s sustained on a laptop with its GPU** |
+| **This solver** | **1,000,000,000,000** | **999,999,999,279; the other 721 proven lost** | **99.9999999277 ± 0.0000000053% (Wilson 95%)** | **about 5 million deals/s on a laptop with its GPU** |
 
 Masten's deals come from another generator, so those 30M deals and these are different deals; the agreement is in the
 rate, not the deals. Both earlier intervals contain this one, and both still include 100%. Before the first billion no random
-Accordion deal had been shown unwinnable, as far as docs/RESEARCH.md found. At 23 in 22 billion that is no surprise: Masten's
-30M deals would hold about 0.03 of one.
+Accordion deal had been shown unwinnable, as far as docs/RESEARCH.md found. At 0.72 in a billion that is no surprise: Masten's
+30M deals would hold about 0.02 of one.
 
 ## Hardest deals
 
@@ -241,25 +274,33 @@ Sixteen of the 20 get no lower than 27 piles, and only two get down to 2. The on
 others: seed 14,204,616,047 has 923,520 positions, which the solver, with its lossy table and its restarts, went over until it had
 generated 50M.
 
-**How often.** 23 losses in 22 billion deals, and the rate has held: 2 in the first billion, 1 in the second, and 20 in the next 20.
+**721 in the trillion.** `acc batch` proved them all lost as the run went on; below 22 billion they are the same 23 seeds as above.
+The Python search of `classify_losses.py` (below) agrees on every one: no win, and exactly as many reachable positions as the plain
+run has dead ones, 424,002,536 in all, the most 22,066,800 (seed 268,817,008,782). Their records are in `hard-deals/proofs/`, and
+each has an automaton certificate checked in Python and proved in Lean (`research/lean/`).
+
+**How often.** 721 losses in a trillion deals, 0.72 per billion. The first 22 billion had 23, 1.05 per billion, and the other 978
+billion 698, 0.71 per billion: high, though not far outside chance (exact two-sided p = 0.07). The loss seeds fit uniform
+placement over the trillion (Kolmogorov–Smirnov p = 0.96).
 
 Since the first billion, `acc batch` proves the deals it doesn't win itself, while the run goes on, and the prover is 2.4× faster
 (both runs on seed 112,249,515 now take 16 s; docs/BENCHMARKS.md, "After Phase 8 — proving losses"). A future run's
 undecided deals are only those a proof of 10 billion positions a run can't settle.
 
 **Two kinds of loss.** `testdata/tools/classify_losses.py` searches every reachable position of every loss again with the
-independent Python rules, and records which cards ever interact: a move joins the card that moves and the card it covers. All 23
-have no win and exactly the plain run's count of positions (26,948,206 in all). Row by row in `research/runs/losses.csv`:
+independent Python rules, and records which cards ever interact: a move joins the card that moves and the card it covers. All 721
+have no win and exactly the plain run's count of positions (424,002,536 in all, for the 721 of the trillion). Row by row in
+`research/runs/losses.csv`:
 
 | Kind | Deals | Groups of cards that ever meet | Fewest piles reached | Cards that never move |
 |---|---|---|---|---|
-| **Split** | 17 | 22–45 | 27–45 | 29–45 |
-| **Endgame** | 6 | 1 | 2–3 | 1–15 |
+| **Split** | 595 | 2–51 | 2–51 | 13–51 |
+| **Endgame** | 126 | 1 | 2–5 | 1–28 |
 
 A split deal has a short explanation, though the groups come from the search: knowing that two cards never meet takes every reachable
 position. A pile only ever holds cards of one group, so at least one pile per group is always left, and two or more groups can't be
 won. An endgame deal has no such block: all 52 cards link up through
-moves that some line can play, but no single line plays enough of them, and play gets down to 2 or 3 piles and stops there.
+moves that some line can play, but no single line plays enough of them, and play gets down to 2 to 5 piles and stops there.
 
 **Why they're lost, two in detail.** Seed 202,346,720 is split and seed 112,249,515 an endgame loss. The Python search of
 `check_loss.py` also prints what it saw:
@@ -278,14 +319,14 @@ moves that some line can play, but no single line plays enough of them, and play
 
 - **By run.** Up to the first billion, the reference engine replayed every line. The second billion and the 20 billion replayed
   every line by the reference rules on the top cards alone (`replay_tops`, below), and sent 1 deal in 256 through the reference
-  engine as well. The runs keep no lines (1.1 TB for 22 billion deals at 51 bytes each), so to check a win independently, solve
-  that deal again and replay its line; a deal once won stays won, whatever path the search took. The 2 trillion run (fbbff00)
+  engine as well. The runs keep no lines (51 TB for the trillion at 51 bytes each), so to check a win independently, solve
+  that deal again and replay its line; a deal once won stays won, whatever path the search took. The trillion run (fbbff00)
   checks 255 of 256 GPU lines with `quick::line_wins` instead, a third implementation of the rules on the card codes the GPU
   had, which says yes only to a legal win of a full deck (tests compare it with the reference engine on legal and illegal
   moves) and sends anything else to the reference rules. 1 deal in 256 goes through the reference engine, which also checks
   that the GPU had that seed's deal, and so does every line won on the CPU.
 - The solver searches with the fast engine, but nothing counts until a check separate from the search replays the
-  whole line: the deliberately simple **reference rules**, or for most GPU lines of the 2 trillion run `quick::line_wins`. That covers legality of every move, the card set, and one pile after exactly 51 moves (PLAN.md §6.1).
+  whole line: the deliberately simple **reference rules**, or for most GPU lines of the trillion run `quick::line_wins`. That covers legality of every move, the card set, and one pile after exactly 51 moves (PLAN.md §6.1).
 - The reference engine's rules agree with an independent Python implementation on every golden file. The fast engine
   agrees with the reference engine over 10M lockstep random playouts.
 - The GPU's lines are replayed the same way: 81.8M of them in the 100M run and 786.2M in the billion run, none failing.
@@ -337,7 +378,7 @@ The defaults since Phase 5 (docs/BENCHMARKS.md has the measurements):
   - the leftmost-card test (since after Phase 8);
   - sleep sets (commuting moves are tried in one order only);
   - complete endgame tables keyed by suit/rank pattern for ≤11 piles.
-- **GPU**, when there is one (since Phase 8; these are the defaults of the build the 2 trillion run uses, `acc settings --gpu`):
+- **GPU**, when there is one (since Phase 8; these are the defaults of the build the trillion run used, `acc settings --gpu`):
   before any of the above, a first rung of attempts of 40 random moves and a second of 38 (`rungs` `[[40, 24], [38, 376]]`, in
   the kernel's numbering of tries), each followed by a search of the rest within 700 positions. Tries go in pairs that share
   their first 20 random moves; a rest with more than 8 ranks (10 on the second rung) isn't searched; and the random moves
@@ -357,7 +398,7 @@ build first; its speed log and report are in [research/runs/](../research/runs/R
 | First billion | a761123; its speed log says `f91bd67+dirty`, as the run started before that commit was made |
 | Second billion | d167ccf |
 | 20 billion | 926e105 |
-| 2 trillion (running since 2026-11-09) | fbbff00 |
+| Trillion | fbbff00 |
 
 ```bash
 cargo run --release -p accordion-cli -- endgame build --piles 11

@@ -5,10 +5,10 @@ or onto the one three places to its left, when their top cards share a suit or a
 `acc`, the program here, plays numbered deals, finds a winning line for every deal it can, proves the others impossible,
 and counts how many of each there were.
 
-**The result so far** ([docs/RESULTS.md](docs/RESULTS.md), as of 2026-11-06): of 22,000,000,000 random deals, 21,999,999,977
-were won, every win checked by replaying it under the rules, and the other 23 were proven impossible. About 1 deal in 960
-million can't be won (95% interval: 1 in 637 million to 1 in 1.44 billion). The last 20 billion took 5 h 57 min on a laptop
-with an NVIDIA T550 graphics card, at 934,074 deals a second.
+**The result so far** ([docs/RESULTS.md](docs/RESULTS.md), as of 2026-11-12): of 1,000,000,000,000 random deals,
+999,999,999,279 were won, every win checked by replaying it under the rules, and the other 721 were proven impossible. About 1
+deal in 1.39 billion can't be won (95% interval: 1 in 1.29 billion to 1 in 1.49 billion). The run took 56 hours on a laptop
+with an NVIDIA T550 graphics card, at about 5 million deals a second.
 
 ## What you need
 

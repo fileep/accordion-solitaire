@@ -41,7 +41,7 @@ def from_report(path):
     return {"deals": deals, "lost": int(number(r"^proofs\s+(\d+) proven lost")), "not_won": int(number(r"^not won\s+(\d+)")),
             "proofs_won": int(number(r"proven lost, (\d+) won")), "undecided": int(number(r"won, (\d+) undecided")),
             "unverified": int(number(r"^failed to verify\s+(\d+)")), "proof_failed": 0, "on_cpu": deals - int(number(r"^GPU\s.*?won (\d+) of the")),
-            "attempts": number(r"([\d.]+)M attempts") * 1e6, "speed": number(r"^throughput\s+(\d+) deals/s"), "hours": number(r"\(([\d.]+) s wall\)") / 3600}
+            "attempts": number(r"([\d.]+)M attempts") * 1e6, "speed": number(r"^throughput\s+(\d+) deals/s"), "hours": number(r"\(([\d.]+) s wall") / 3600}
 
 
 def wilson(lost, deals):

@@ -41,15 +41,18 @@ python research/lean/automaton/replay.py research/lean/automaton/lean_results.cs
 
 ## What has been checked
 
-- With the current checker, these losses are proved in the kernel: seeds 3,417,058,778, 7,311,711,652, 112,249,515, 202,346,720,
-  1,005,616,798 and 124,280,819,596. The full list of losses has not been run: that waits for the end of the 2 trillion deal run.
-- nanoda accepts the five smaller of those proofs, checking about 1,750 declarations a batch with only `propext` and `Quot.sound` allowed.
+- All 721 losses of the trillion run are proved in the kernel, one theorem each, with `prove_all.py`: 34 batches of up to 37
+  deals, 1.41 hours of CPU in all (39 minutes on 6 jobs), at most 2.7 GB in one Lean, and no batch failed. Row by row in
+  `lean_results.csv`.
+- nanoda accepts all 721 proofs, 70,270 declarations in the 34 batches, with only `propext` and `Quot.sound` allowed: 0.97 hours
+  of CPU with the export (13 minutes on 6 jobs), and at most 2.35 GB, for the export. Row by row in `replay_results.csv`.
   Changing one number in an exported proof, by pointing an application at a different number, was refused by its type checker 6 times
-  out of 6. A batch costs about the same CPU as Lean's check (for the five deals: 7-12 s, plus about 4 s to export), and 0.14 GB against
+  out of 6. A batch costs about the same CPU as Lean's check (on the five deals first tried: 7-12 s, plus about 4 s to export), and 0.14 GB against
   Lean's 2.3 GB, though the export itself needs 2.3 GB. `lean4lean`, also in the toolchain, can't read this toolchain's files here.
 - `lean_tests.py` compiles: a 51-move win of seed 0 replays under the same rules, and a dropped edge, a false inclusion claim, a
   winnable row and an empty table are all refused.
-- `check_certificates.py` passes all 138 losses it was run on, and agrees with an explicit search on 400 random rows.
+- `check_certificates.py` passes all 721 losses of the trillion run, with every position count equal to its loss record, and agrees
+  with an explicit search on 400 random rows. The certificates have 53 to 10,468 nodes (median 212) for 2 to 22,066,800 positions.
 
 ## Cost
 
@@ -62,10 +65,11 @@ library is loaded; a batch of deals pays that once.
 | Seed 1,005,616,798, the most work of the first 138 | 3,405,471 | 9,464 | 168 s | 2.6 GB |
 
 Across the first 138 losses the check does 4.06 million table reads, so about 17 minutes of CPU, and about 3 hours for 1,450 losses
-(an estimate from the two deals above).
+(an estimate from the two deals above). All 721 of the trillion run took 1.41 hours, start-ups included, beside nothing else
+heavy but the Python loss checks.
 
 How the checker got here, so nobody repeats it. The first version took 34 s on seed 112,249,515 and ran out of its time limit on
-seed 1,005,616,798; a batch reached 40 GB and pushed the 2 trillion run into paging.
+seed 1,005,616,798; a batch reached 40 GB and pushed the trillion run into paging.
 
 - **Inclusion claims as a search tree instead of a list** was the largest gain, 5.5 times on the hardest deal. A node can have 2,697
   claims, and scanning them was 55 million steps.

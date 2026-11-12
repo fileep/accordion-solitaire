@@ -2374,7 +2374,7 @@ New over base: pair 1 x1.116 last half and x1.095 whole, pair 2 x1.141 and x1.08
 
 **What binds.** The GPU: 99.7-100% busy through the hot check, at its power cap on a cool desk and at its thermal limit on this one. The CPU does not bind (the misses are 5.9 in 100,000). What is left is structural (fewer search turns, fewer own moves, the search's 23% idle lane slots) and the own move's tail and common block, each estimated under x1.05.
 
-## Holding the battery level instead of pausing (the 2 trillion run, Nov 9)
+## Holding the battery level instead of pausing (the trillion run, then planned as 2 trillion, Nov 9)
 
 From `checkpoints/guard.log`, Balanced, on AC, nothing changed by hand between the two stretches:
 
@@ -2393,7 +2393,7 @@ Full speed with the guard's pauses: 25 Wh down at about 6.3 Wh/h is 4 h of runni
 
 The work that made the program usable by others (the `acc run` front end and its commands, friendlier numbers and
 help, per-deal costs capped so that runs of 100 trillion deals fit in memory, the build and NVRTC changes for other
-machines) changes no solving, proving or verification. Nothing here was timed: the 2 trillion run had the machine.
+machines) changes no solving, proving or verification. Nothing here was timed: the trillion run had the machine.
 What changed is in [CHANGELOG.md](../CHANGELOG.md).
 
 **Considered, not tried:**
