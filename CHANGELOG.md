@@ -5,7 +5,9 @@ What changes between releases, newest first. There has been no release yet: the 
 
 ## Unreleased
 
-Making the program usable by other people. None of this changes how a deal is solved, proved or verified.
+Making the program usable by other people, a second deal generator to test the results with, and the record of the
+trillion-deal run. Apart from the second generator, which is only there when built in, none of this changes how a deal is
+dealt, solved, proved or verified.
 
 ### Added
 
@@ -35,6 +37,14 @@ Making the program usable by other people. None of this changes how a deal is so
   `GPU_SETUP.md`, `TROUBLESHOOTING.md`, `VISUALIZER.md` and `ARCHITECTURE.md`. `FORMATS.md` describes the files a run
   writes. A test checks that `COMMANDS.md` names every command and flag, that the commands the documents show are real,
   and that their links lead somewhere.
+- The `second-generator` build feature (`--features second-generator`): deals from ChaCha20 with mask-and-redraw instead
+  of xoshiro256** with Lemire's method, sharing no code with the main generator, to test whether the win rate rests on the
+  generator. The same seed gives another deal, and the report has a `generator` line. See
+  [research/runs/README.md](research/runs/README.md).
+- The record of the trillion-deal run (seeds 0 to 999,999,999,999: 721 proven lost, none undecided): its report, log of
+  events and speed logs in `research/runs/`, the 721 loss records in `hard-deals/`, every loss re-derived by the
+  independent Python rules (`research/runs/losses.csv`), and every loss proved in Lean's kernel and checked again in
+  nanoda (`research/lean/`).
 
 ### Changed
 
@@ -61,3 +71,5 @@ Making the program usable by other people. None of this changes how a deal is so
 - `--keep-free` and the disk warnings work off Windows too, through `df` (not tested there yet).
 - A pause file made while a run is starting up is kept for it, where it used to be deleted as left from before; only one
   made before the run's process began is.
+- A run that ends at the last seed there is (`--from 18446744073709551615 --count 1`) no longer overflows working out its
+  last seed, which stopped a debug build.

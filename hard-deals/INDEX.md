@@ -1,7 +1,8 @@
 # Hard deals
 
 Every deal the solver has not won within its cap gets a dossier here (`<id>.json`) and a row below.
-See PLAN.md §5 for the dossier format and the escalation stages. `acc` rewrites this file after every run.
+See [docs/FORMATS.md](../docs/FORMATS.md#dossiers) for the dossier format and [docs/PLAN.md](../docs/PLAN.md) §5 for the
+escalation stages. This is the record of the trillion-deal run; runs now write their dossiers to `output/hard-deals` unless told otherwise.
 
 | Deal | Status | Stages run | Best (piles left) | Positions searched | Last attempt |
 |---|---|---|---|---|---|

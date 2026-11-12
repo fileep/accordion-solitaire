@@ -1893,7 +1893,7 @@ for it. Nothing here depends on the GPU's speed; only the time does.
   Control blocked a fresh `acc.exe` twice in this work, exit 126). `.events.log` and `.status.json` sit beside the checkpoint.
   The checkpoint format is now 2: no older checkpoint resumes.
 
-**The repeat check, past 2 billion deals.** The user's decision was that no proof is needed if the odds of a repeat are under 1 in
+**The repeat check, past 2 billion deals.** The author's decision was that no proof is needed if the odds of a repeat are under 1 in
 1,000. By the birthday bound at 1.022 trillion they are about 9.7e-34 for the same game with suits and ranks renamed, and 6.5e-45
 for the same deal, if the generator behaves like a random one; so the check only backs that assumption. A hash of the game's first
 16 cards, unchanged by renaming, picks the deals: each costs 11 bytes (a 5-byte key and a 6-byte position; 10 and 5 up to the 1-trillion build) in an append-only log in
@@ -2376,7 +2376,8 @@ New over base: pair 1 x1.116 last half and x1.095 whole, pair 2 x1.141 and x1.08
 
 ## Holding the battery level instead of pausing (the trillion run, then planned as 2 trillion, Nov 9)
 
-From `checkpoints/guard.log`, Balanced, on AC, nothing changed by hand between the two stretches:
+From the log of `guard.ps1`, the author's own watchdog script that ran the trillion run (not published; it paused the run
+at low battery, which `acc run` now does by itself). Balanced, on AC, nothing changed by hand between the two stretches:
 
 | Stretch | Deals/s by the hour | Battery |
 |---|---|---|
@@ -2387,7 +2388,7 @@ In the second stretch, sampled once for 30 s near 13:35: CPU package 11.0 W, `ac
 
 Full speed with the guard's pauses: 25 Wh down at about 6.3 Wh/h is 4 h of running, 25 Wh back at 30 Wh/h is 50 min, so 83% of the time at 6.6M, about 5.4M deals/s on average. Level battery, no pauses: about 5.2M. The two are within this comparison's noise: a slowdown that only breaks even with the battery costs about what the pauses cost.
 
-**Considered, not tried:** capping the CPU live with the process's affinity (the GPU binds and the CPU is already at 11 W, so little to save); `--threads` on a resume to hold the CPU at that level for good (`-ResumeExtra` in the guard; not measured); a GPU duty cycle in the run (a new build, a stop and a start, for no expected gain); a GPU power limit (a system setting, the user's to make).
+**Considered, not tried:** capping the CPU live with the process's affinity (the GPU binds and the CPU is already at 11 W, so little to save); `--threads` on a resume to hold the CPU at that level for good (`-ResumeExtra` in the guard; not measured); a GPU duty cycle in the run (a new build, a stop and a start, for no expected gain); a GPU power limit (a system setting, left to the machine's owner).
 
 ## Making it ready for other people (Nov 9)
 

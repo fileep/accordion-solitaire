@@ -147,7 +147,7 @@ Batch files also allow a compact form: one byte per move (index·2 + leap flag),
 
 Phases run in order:
 `0 → 1 → 2 → 3 → 4 → 5 → 7 → 8`. Phase 6 was merged into Phase 5. Phase `8` (the GPU runner) was to follow only if the Phase 5
-GPU gate passed; it didn't quite (1.7×), and the runner was built anyway at the user's request, then measured.
+GPU gate passed; it didn't quite (1.7×), and the runner was built anyway at the author's request, then measured.
 
 ### Phase 0 — Toolchain and scaffold ✅ done
 
@@ -396,7 +396,7 @@ or one entry picked by seed from a batch or `hard-deals/` file. It has no batch 
   - **GPU** (`accgpu`, crates/gpu):
     - The kernel reaches 255M positions/s and 18,840 deals/s alone.
     - CPU + GPU is about 1.7× the CPU alone. **The 2× gate is not met** on this laptop, where both share one cooling system.
-      Phase 8 was built anyway, at the user's request (below).
+      Phase 8 was built anyway, at the author's request (below).
 - **Every strategy falls back to the thorough search.** The ladder is a stage in front of it.
   - A test starves every ladder search and checks that the thorough stage still wins every deal.
   - On the 100,000 regression deals, one deal fell through every rung and was won by the thorough stage.
@@ -657,7 +657,7 @@ Its symmetry work (endgame tables, the symmetry-keyed cache and canonical deal I
 
 ### Phase 8 — GPU deep-rung lottery ✅ done
 
-Built at the user's request, although the Phase 5 gate measured 1.7×, short of its 2×.
+Built at the author's request, although the Phase 5 gate measured 1.7×, short of its 2×.
 
 **Outcome** (docs/BENCHMARKS.md Phase 8, docs/RESULTS.md):
 

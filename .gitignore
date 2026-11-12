@@ -21,5 +21,7 @@ __pycache__/
 /blog-images
 # What the `acc batch --out results.jsonl` examples write
 /results.jsonl
+# Lean's build folder for the proofs in research/lean (.olean files and nanoda exports, hundreds of MB)
+/build
 # Local editor and assistant settings
 /.claude/
