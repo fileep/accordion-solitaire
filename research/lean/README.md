@@ -10,6 +10,7 @@ Lean 4.35.0 (`lean-toolchain`). The checker is proved correct for any certificat
 |---|---|
 | `automaton/Accordion.lean` | Rules on piles, the deal generator, the theorem that a passing certificate proves the loss, a replayed win |
 | `automaton/Certificate.lean` | Loads a certificate table straight into the kernel, for speed. Needs no trust: a wrong table fails |
+| `automaton/ChaCha.lean` | The second generator, ChaCha20, checked against RFC 8439's test vector, for the losses of the second-generator run |
 | `automaton/dawg.py` | Builds the automaton by forward reachability on automata |
 | `automaton/lean_certificates.py` | Writes the Lean text for a seed |
 | `automaton/prove_all.py` | Proves every loss in batches, with a memory cap |
@@ -41,6 +42,14 @@ python research/lean/automaton/prove_all.py hard-deals/proofs research/lean/auto
 `~/.elan/toolchains/leanprover--lean4---v4.35.0/bin/lean.exe`, cap each process's memory with Windows calls, and `replay.py`
 uses `nanoda_bin.exe` and `leanexport.exe` from that toolchain. The Lean files themselves, and `lean` run by hand as above,
 work anywhere Lean 4.35.0 does.
+
+The second-generator run's losses are proved the same way, with `ChaCha.olean` in the build dir as well (built like
+`Certificate.olean`). Each theorem then says `DealLost (ChaCha.deal seed)`: Lean computes the seed's ChaCha20 deal itself, so a
+loss record with the wrong cards fails, and the same certificate claimed for another seed is refused.
+
+```bash
+python research/lean/automaton/prove_all.py hard-deals-chacha/proofs research/lean/automaton/lean_results_chacha.csv build --chacha
+```
 
 To check the proofs in a second kernel, `nanoda_bin`, which is in the Lean toolchain and written in Rust, sharing no code with Lean's:
 

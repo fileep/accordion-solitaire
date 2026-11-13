@@ -1,10 +1,16 @@
 # Writes a Lean file proving named seeds lost, from their automaton certificates (check_certificates.py builds them).
 # Nothing in the output is trusted: a wrong table makes `decide +kernel` fail.
 #
-#   python research/lean/automaton/lean_certificates.py out.lean seed     (from the repository root)
+#   python research/lean/automaton/lean_certificates.py out.lean seed [records dir]     (from the repository root)
+#
+# With a records dir, the seed is one of the second generator's (ChaCha20): its cards come from its loss record, and the theorem
+# is about `ChaCha.deal seed`, which Lean computes from ChaCha.lean, so a record with the wrong cards fails.
+import json
 import sys
+from pathlib import Path
 
 from check_certificates import build, deal_from_seed
+from make_golden import parse_card
 
 
 def superset_claims(edges, acc):
@@ -44,6 +50,16 @@ def table(edges, acc, sup):
 
 NEWLINE = chr(10)
 HEADER = "import Certificate\nopen Accordion\n\n"
+CHACHA_HEADER = "import Certificate\nimport ChaCha\nopen Accordion\n\n"
+
+
+def record_cards(records, seed):
+    """The cards of a loss record, as numbers suit * 13 + rank."""
+    record = json.loads((Path(records) / f"seed-{seed}-loss.json").read_text(encoding="utf-8"))
+    assert record["deal"]["seed"] == seed and record["result"] == "loss"
+    cards = [parse_card(t) for t in record["deal"]["cards"].split()]
+    assert sorted(cards) == list(range(52)), seed
+    return cards
 
 
 MAX_RUN = 1000
@@ -73,9 +89,10 @@ def cover(seed, kind, predicate, parts, lines):
     return proof
 
 
-def source(seed):
-    """The Lean text proving `seed` lost, for a file that starts with HEADER, and the size of its certificate as (nodes, edges, claims)."""
-    edges, acc = build(deal_from_seed(seed))
+def source(seed, records=None):
+    """The Lean text proving `seed` lost, for a file that starts with HEADER (CHACHA_HEADER with records), and the size of its
+    certificate as (nodes, edges, claims)."""
+    edges, acc = build(deal_from_seed(seed) if records is None else record_cards(records, seed))
     sup = superset_claims(edges, acc)
     node_work = [1 + sum(1 + sum(1 + sum(1 + len(edges[c2]) for c2 in edges[c1].values()) for c1 in edges[c].values()) for c in out.values())
                  for out in edges]
@@ -85,17 +102,18 @@ def source(seed):
     incl = cover(seed, "i", "inclNode", chunks(incl_work, INCL_WORK), lines)
     nodes = cover(seed, "n", "nodeOK", chunks(node_work, NODE_WORK), lines)
     lines += ["set_option maxHeartbeats 0 in",
-              f"theorem lost_{seed} : DealLost (deal {seed}) :=",
+              f"theorem lost_{seed} : DealLost ({'deal' if records is None else 'ChaCha.deal'} {seed}) :=",
               f"  dealLost_of_lost (Aut.lost_of_parts (A := a{seed}) (root := 0) (by decide +kernel) {bounds} {incl} {nodes} (by decide +kernel) (by decide +kernel))", "",
               f"#print axioms lost_{seed}", "", ""]
     return NEWLINE.join(lines), (len(edges), sum(map(len, edges)), sum(map(len, sup)))
 
 
 def main():
-    text, size = source(int(sys.argv[2]))
+    records = sys.argv[3] if len(sys.argv) > 3 else None
+    text, size = source(int(sys.argv[2]), records)
     print("nodes, edges, claims:", size)
     with open(sys.argv[1], "w", encoding="utf-8", newline="\n") as f:
-        f.write(HEADER + text)
+        f.write((HEADER if records is None else CHACHA_HEADER) + text)
 
 
 if __name__ == "__main__":

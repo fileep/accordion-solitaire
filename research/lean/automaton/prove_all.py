@@ -2,7 +2,9 @@
 # Seeds already in the output are skipped, so it can be stopped and run again. The seeds come from the names of the loss records.
 #
 #   python research/lean/automaton/prove_all.py hard-deals/proofs research/lean/automaton/lean_results.csv <build dir> [jobs]     (from the repository root)
+#   python research/lean/automaton/prove_all.py hard-deals-chacha/proofs research/lean/automaton/lean_results_chacha.csv <build dir> [jobs] --chacha
 #
+# --chacha proves the second generator's losses (lean_certificates.py), and the build dir also needs ChaCha.olean.
 # The build dir holds Accordion.olean and Certificate.olean, from `lean -R research/lean/automaton -o <dir>/X.olean research/lean/automaton/X.lean`.
 # Times are the user CPU time of Lean, start-up included: wall time means little at idle priority beside a running batch. A Lean
 # that passes MEMORY_CAP_GB is killed and its batch marked failed, so that it can't push a long run into paging. Jobs is 1 by default:
@@ -10,6 +12,7 @@
 # a seed that has never passed is tried again on the next run. Each batch leaves its .olean in the build dir, for replay.py.
 import csv
 import ctypes
+import functools
 import multiprocessing
 import os
 import re
@@ -22,7 +25,7 @@ from concurrent.futures import ThreadPoolExecutor
 from ctypes import wintypes
 from pathlib import Path
 
-from lean_certificates import HEADER, source  # through dawg.py, this process and Lean run at idle priority
+from lean_certificates import CHACHA_HEADER, HEADER, source  # through dawg.py, this process and Lean run at idle priority
 
 FIELDS = ["seeds", "nodes", "edges", "claims", "cpu_seconds", "peak_gb", "ok"]
 MAX_SEEDS, MAX_NODES = 40, 15000
@@ -54,9 +57,9 @@ def cpu_seconds(process):
     return user.value / 1e7
 
 
-def prove(batch, texts, build, env, record):
+def prove(batch, texts, build, env, record, header=HEADER):
     file = build / f"B{batch[0]}.lean"
-    file.write_text(HEADER + "".join(t for t, _ in texts), encoding="utf-8", newline=chr(10))
+    file.write_text(header + "".join(t for t, _ in texts), encoding="utf-8", newline=chr(10))
     with tempfile.TemporaryFile("w+", encoding="utf-8") as out:
         process = subprocess.Popen([LEAN, "-j", "1", "-R", str(build), "-o", str(file.with_suffix(".olean")), str(file)], env=env, stdout=out, stderr=subprocess.STDOUT)
         killed = False
@@ -78,12 +81,15 @@ def prove(batch, texts, build, env, record):
         print(batch, "failed" + (" at the memory cap" if killed else "") + ":", stdout[:400], flush=True)
         if len(batch) > 1:
             for seed, text in zip(batch, texts):
-                prove([seed], [text], build, env, record)
+                prove([seed], [text], build, env, record, header)
 
 
 def main():
-    directory, out, build = Path(sys.argv[1]), Path(sys.argv[2]), Path(sys.argv[3])
-    jobs = int(sys.argv[4]) if len(sys.argv) > 4 else 1
+    chacha = "--chacha" in sys.argv
+    args = [a for a in sys.argv if a != "--chacha"]
+    directory, out, build = Path(args[1]), Path(args[2]), Path(args[3])
+    jobs = int(args[4]) if len(args) > 4 else 1
+    make, header = (functools.partial(source, records=str(directory)), CHACHA_HEADER) if chacha else (source, HEADER)
     rows = list(csv.DictReader(out.open(encoding="utf-8"))) if out.exists() else []
     done = {int(s) for r in rows if r["ok"] == "True" for s in r["seeds"].split()}
     todo = sorted(s for s in (int(p.name.split("-")[1]) for p in directory.glob("seed-*-loss.json")) if s not in done)
@@ -101,14 +107,14 @@ def main():
 
         with multiprocessing.Pool(jobs) as sources, ThreadPoolExecutor(jobs) as lean:
             batch, texts = [], []
-            for seed, made in zip(todo, sources.imap(source, todo)):
+            for seed, made in zip(todo, sources.imap(make, todo)):
                 batch.append(seed)
                 texts.append(made)
                 if len(batch) >= MAX_SEEDS or sum(size[0] for _, size in texts) >= MAX_NODES:
-                    lean.submit(prove, batch, texts, build, env, record)
+                    lean.submit(prove, batch, texts, build, env, record, header)
                     batch, texts = [], []
             if batch:
-                lean.submit(prove, batch, texts, build, env, record)
+                lean.submit(prove, batch, texts, build, env, record, header)
 
 
 if __name__ == "__main__":
