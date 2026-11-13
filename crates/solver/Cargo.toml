@@ -4,6 +4,8 @@ description = "Accordion solitaire solver: random-prefix attempts, brute force, 
 version.workspace = true
 edition.workspace = true
 publish.workspace = true
+license.workspace = true
+repository.workspace = true
 
 [dependencies]
 accordion-core.workspace = true

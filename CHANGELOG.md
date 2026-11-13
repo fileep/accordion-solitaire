@@ -11,6 +11,7 @@ dealt, solved, proved or verified.
 
 ### Added
 
+- A licence: MIT or Apache-2.0, at your option (`LICENSE-MIT`, `LICENSE-APACHE`).
 - `acc run`, `acc resume`, `acc status`, `acc pause` and `acc results`: start a run of deals with a few plain options
   (`--deals 2m`, `--hours 8`, `--overnight`, `--quick`, `--gentle`), carry on with it, see where it stands, pause it
   from another window and read what it found. A run started this way starts again by itself after a GPU failure or a

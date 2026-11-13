@@ -4,6 +4,8 @@ description = "WebAssembly bindings of accordion-core and accordion-solver for t
 version.workspace = true
 edition.workspace = true
 publish.workspace = true
+license.workspace = true
+repository.workspace = true
 readme.workspace = true
 
 [lib]

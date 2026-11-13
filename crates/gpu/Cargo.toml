@@ -4,6 +4,8 @@ description = "NVIDIA GPU attempts (CUDA, compiled by NVRTC when a run starts) t
 version.workspace = true
 edition.workspace = true
 publish.workspace = true
+license.workspace = true
+repository.workspace = true
 readme.workspace = true
 
 [[bin]]

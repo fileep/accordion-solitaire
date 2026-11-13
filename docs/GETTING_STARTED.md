@@ -86,7 +86,7 @@ If Windows says `cargo : The term 'cargo' is not recognized`, see
 
 ## 3. Get the code
 
-From the project's page, download it as a ZIP file (on GitHub: the green **Code** button, then **Download ZIP**) and unpack
+From the project's page, https://github.com/fileep/accordion-solitaire, download it as a ZIP file (on GitHub: the green **Code** button, then **Download ZIP**) and unpack
 it, for example into your Documents folder. Or, if you have git, copy the address from the same button and type
 `git clone` followed by a space and the address.
 

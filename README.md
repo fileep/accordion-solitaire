@@ -21,7 +21,9 @@ with an NVIDIA T550 graphics card, at about 5 million deals a second.
 
 ## Quick start
 
-In a terminal, in the project's folder (the same commands in Windows PowerShell, on Linux and on macOS):
+Get the code from https://github.com/fileep/accordion-solitaire (the green **Code** button, then **Download ZIP**), or
+with `git clone https://github.com/fileep/accordion-solitaire.git`. Then, in a terminal, in the project's folder (the
+same commands in Windows PowerShell, on Linux and on macOS):
 
 ```
 cargo install --locked --path crates/cli
@@ -85,5 +87,9 @@ The first builds `acc` and puts it where the terminal finds it (a few minutes). 
 
 ## Licence
 
-The licence hasn't been chosen yet. NVRTC, which the GPU needs, is NVIDIA's software under NVIDIA's licence: it isn't part
-of this project, and each user fetches it ([docs/GPU_SETUP.md](docs/GPU_SETUP.md)).
+Licensed under either of the [MIT licence](LICENSE-MIT) or the [Apache License, Version 2.0](LICENSE-APACHE), at your
+option. Unless you say otherwise, any contribution you submit for inclusion is licensed the same way, without any
+additional terms or conditions.
+
+NVRTC, which the GPU needs, is NVIDIA's software under NVIDIA's licence: it isn't part of this project, and each user
+fetches it ([docs/GPU_SETUP.md](docs/GPU_SETUP.md)).

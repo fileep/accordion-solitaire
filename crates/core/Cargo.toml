@@ -4,6 +4,8 @@ description = "Accordion solitaire rules, cards, deals, engines and file formats
 version.workspace = true
 edition.workspace = true
 publish.workspace = true
+license.workspace = true
+repository.workspace = true
 
 [features]
 # Deals from ChaCha20 instead of xoshiro256**: a different set of deals for the same seeds.
