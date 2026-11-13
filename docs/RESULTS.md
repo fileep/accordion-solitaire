@@ -376,6 +376,18 @@ a timing run of 200M deals showed a low p for seed + 8 (0.0013), which went back
 These tests look at the deals, and at their low-order structure; the raw generator has not been through a general battery such as
 TestU01 or PractRand. A 64-bit seed can reach at most 2^64 of the 52! orders of the cards.
 
+A bias confined to deals as rare as lost ones would not show in these tests, so the measurement was repeated with a second
+generator: ChaCha20 (RFC 8439) keyed by the seed, each index drawn by masking a byte and redrawing instead of Lemire's method, and
+the same shuffle, solver and checks (docs/FORMATS.md, "The second generator"). Seeds 0–99,999,999,999 gave 99,999,999,919 wins,
+every line replayed, and 81 proven losses, none undecided: **0.810 lost per billion, exact 95% interval 0.643 to 1.007**, against
+0.721 in the trillion run. The ratio of the two rates is 1.12 (exact conditional 95% interval 0.88 to 1.42; two-sided p = 0.33).
+With about 72 losses expected, the comparison would catch a difference of about 40% four times in five; it cannot rule out smaller
+ones. The run was planned as 200 billion deals and cut to 100 billion for time: 15.8 hours of running in 7 sessions, at 1,756,634
+deals/s, slower than the main runs because making a ChaCha20 deal on the processor takes about 5 times the work. Its records are in
+`research/runs/` and its losses in `hard-deals-chacha/`. All 81 are proved in Lean as theorems about `ChaCha.deal seed`, and
+nanoda accepts the proofs; the independent Python rules searched each exhaustively, found no win and counted the same positions
+as its record, 103,643,234 in all (`research/runs/losses-chacha.csv`).
+
 ## The strategy
 
 The defaults since Phase 5 (docs/BENCHMARKS.md has the measurements):

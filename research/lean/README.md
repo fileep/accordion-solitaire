@@ -67,6 +67,10 @@ python research/lean/automaton/replay.py research/lean/automaton/lean_results.cs
   Changing one number in an exported proof, by pointing an application at a different number, was refused by its type checker 6 times
   out of 6. A batch costs about the same CPU as Lean's check (on the five deals first tried: 7-12 s, plus about 4 s to export), and 0.14 GB against
   Lean's 2.3 GB, though the export itself needs 2.3 GB. `lean4lean`, also in the toolchain, can't read this toolchain's files here.
+- All 81 losses of the second-generator run (ChaCha20, seeds 0–99,999,999,999) are proved the same way, as theorems about
+  `ChaCha.deal seed`: 6 batches, 0.18 hours of CPU on 6 jobs, at most 2.65 GB, none failed (`lean_results_chacha.csv`). nanoda
+  accepts all 81, 12,046 declarations, in 0.12 hours of CPU (`replay_results_chacha.csv`). `ChaCha.lean` proves its block function
+  against RFC 8439's test vector, and the same certificate claimed for the next seed was refused.
 - `lean_tests.py` compiles: a 51-move win of seed 0 replays under the same rules, and a dropped edge, a false inclusion claim, a
   winnable row and an empty table are all refused.
 - `check_certificates.py` passes all 721 losses of the trillion run, with every position count equal to its loss record, and agrees

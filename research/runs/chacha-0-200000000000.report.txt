@@ -1,0 +1,15 @@
+deals            100000000000 (seeds 0..99999999999)
+generator        ChaCha20: not the deals of the main runs
+won              99999999919 (every line replayed: by the reference rules, or a GPU line by the quick check and 1 in 256 by the reference engine too); by stage: gpu 99994537094, ladder-0 654261, ladder-1 1273640, ladder-2 1546095, ladder-3 1126689, ladder-4 544513, ladder-5 207395, ladder-6 71615, prove 3, thorough 38614
+not won          84 by the solver (69 exhausted, 15 hit the limit of 50000000 positions)
+proofs           81 proven lost, 3 won, 0 undecided (two exhaustive runs of up to 10000000000 positions each)
+failed to verify 0
+repeat odds      9.3e-36 that any two of these deals are the same game (suits and ranks renamed), 6.2e-47 the same deal, if the generator behaves like a random one (n²/2 over 52!/(4!·13!), and over 52!)
+distinct games   not all checked: no repeats among the 2272816256 deals a hash of the game picked, 2.273% of the 100000000000, even with suits and ranks renamed. Any two the same are picked together, so 131 or more pairs the same among the 100000000000 would have been seen with 95% chance. 2349582 other pairs share 40 bits of their fingerprints, against 2349086 by chance
+win rate         99.9999999190%   95% CI [99.9999998993%, 99.9999999348%] (Wilson; undecided deals counted as losses for the lower bound, wins for the upper)
+positions/deal   mean 59226  median 35525  p90 124617  p99 398906  p99.9 997132  max 50000001 (5462906 deals solved on the CPU)
+ms/deal (1 core) mean 31.93  median 12.16  p90 78.42  p99 264.97  p99.9 636.40  max 44167.3 (5462906 deals solved on the CPU)
+GPU              NVIDIA T550 Laptop GPU: won 99994537094 of the 100000000000 deals it was given (99.99%), 0 lines failed verification; 502024.0M attempts, 962M positions/s
+CPU threads      verifying GPU lines 19.3% (1.7 us a line), the GPU's misses 20.4%, own deals 0.0%, waiting for the GPU 49.6%, handing results on 10.5%, other 0.2%
+throughput       1756634 deals/s, 6M CPU positions/s on 15 CPU threads + GPU (56927.1 s wall, over 7 sessions)
+commits          7b735bf, 8137d5d, cbb7992, e3b37a7, 35ec01b

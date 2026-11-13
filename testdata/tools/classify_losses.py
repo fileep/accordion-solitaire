@@ -3,13 +3,17 @@
 # of the record's plain run, so this is also a full re-check of the record. It writes one row per deal.
 #
 #   python testdata/tools/classify_losses.py hard-deals/proofs research/runs/losses.csv [jobs]     (from the repository root)
+#   python testdata/tools/classify_losses.py hard-deals-chacha/proofs research/runs/losses-chacha.csv [jobs] --chacha
 #
+# --chacha is for the second generator's losses: their cards are not the main generator's deal of the seed, so that check is
+# skipped. Lean checks them against ChaCha20 instead (research/lean/automaton/ChaCha.lean).
 # Each row records which cards ever interact, taken over every move of every reachable position. A move joins two cards,
 # the mover and the card it covers. Cards never joined form separate groups, which explain the loss but are no proof apart
 # from the search that found them: a pile only ever holds cards of one group, so at least one pile per group is always left.
 # Two cards that are never covered explain it as well, since a win covers every card but one, and so does a first card that
 # is never covered, since the first card never moves and the last card standing is one that moved.
 import csv
+import functools
 import json
 import multiprocessing
 import sys
@@ -24,11 +28,11 @@ FIELDS = ["seed", "positions", "fewest_piles", "kind", "groups", "group_sizes", 
           "never_moved", "frozen", "two_pile_positions", "seconds", "cards"]
 
 
-def analyse(path):
+def analyse(path, chacha=False):
     record = json.loads(Path(path).read_text(encoding="utf-8"))
     deal = tuple(NUMBER[token] for token in record["deal"]["cards"].split())
     seed = record["deal"].get("seed")
-    if seed is not None and list(deal) != deal_from_seed(seed):
+    if seed is not None and not chacha and list(deal) != deal_from_seed(seed):
         raise ValueError(f"{path}: the cards are not the deal of seed {seed}")
 
     start = time.time()
@@ -95,11 +99,13 @@ def analyse(path):
 
 
 def main():
-    directory, out = Path(sys.argv[1]), Path(sys.argv[2])
-    jobs = int(sys.argv[3]) if len(sys.argv) > 3 else multiprocessing.cpu_count() // 2
+    chacha = "--chacha" in sys.argv
+    args = [a for a in sys.argv if a != "--chacha"]
+    directory, out = Path(args[1]), Path(args[2])
+    jobs = int(args[3]) if len(args) > 3 else multiprocessing.cpu_count() // 2
     paths = sorted(directory.glob("*-loss.json"), key=lambda p: json.loads(p.read_text(encoding="utf-8"))["deal"].get("seed", 0))
     with multiprocessing.Pool(jobs) as pool:
-        rows = pool.map(analyse, paths, chunksize=1)
+        rows = pool.map(functools.partial(analyse, chacha=chacha), paths, chunksize=1)
     with out.open("w", newline="", encoding="utf-8") as f:
         writer = csv.DictWriter(f, fieldnames=FIELDS, lineterminator="\n")
         writer.writeheader()
