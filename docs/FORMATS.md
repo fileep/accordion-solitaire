@@ -79,6 +79,21 @@ Reference values for testing an implementation:
 - xoshiro256\*\* from state [1, 2, 3, 4] starts 11520, 0, 1509978240.
 - Seeded deals are listed in `testdata/deals_by_seed.json`.
 
+### The second generator
+
+A build with the `second-generator` feature (`cargo build --release --features second-generator`) deals from ChaCha20
+instead, to test that the win rate doesn't depend on the generator. The same seed gives a different deal, so its results
+are kept apart, and its run reports have a `generator` line.
+
+1. **ChaCha20** (RFC 8439, 20 rounds): the key's eight 32-bit words are `seed mod 2^32`, `seed >> 32` and six zeros; the
+   nonce is three zero words, and the block counter starts at 0 and goes up by 1 a block.
+2. **Bytes:** each 64-byte block is read in order, word 0 first, each word low byte first.
+3. **Uniform `below(n)`** for 1 ≤ n ≤ 52 (mask and redraw): let `mask = 2^b − 1`, where `b` is the number of bits in
+   `n − 1`; draw a byte, keep `byte & mask`, and redraw until it is below `n`.
+4. **Fisher–Yates:** as above, `j = below(i + 1)` for `i` from 51 down to 1.
+
+The code is `ChaCha20` in `crates/core/src/rng.rs`; its tests check the block function against RFC 8439's test vector.
+
 ## Moves
 
 - **Text:** `7H>7C`, meaning the pile whose top card is 7H moves onto the pile whose top card is 7C.

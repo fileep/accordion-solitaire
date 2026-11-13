@@ -66,7 +66,8 @@ python research/paper/paper_numbers.py
 ## A second generator
 
 The win rate treats deals as uniform draws, which rests on the generator. To test that, the `second-generator` feature deals from
-ChaCha20 with mask-and-redraw instead of xoshiro256\*\* with Lemire's method, sharing no code or method. The same seed gives another
+ChaCha20 with mask-and-redraw instead of xoshiro256\*\* with Lemire's method: no generator code or way of drawing an index is
+shared, and the Fisher–Yates shuffle is the same (docs/FORMATS.md, "The second generator"). The same seed gives another
 deal, so its results go in folders of their own, and its report has a `generator` line. At the 0.7 losses per billion of the main run,
 100 billion deals should give about 72 losses (the project's run was started as 200 billion and cut to 100 billion, as the
 trillion was, so its files are named `chacha-0-200000000000`). It runs slower than the main generator's runs: making ChaCha20 deals on the

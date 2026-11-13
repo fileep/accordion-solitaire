@@ -145,6 +145,13 @@ def certificates(losses):
     print(f"  positions         median {statistics.median(positions):,}, most {max(positions):,}")
     print(f"  nodes             median {statistics.median(nodes):,}, most {max(nodes):,}")
     print(f"  Spearman          {spearman(positions, nodes):.2f} between positions and nodes")
+    print(f"  log-log slope     {log_log_slope(positions, nodes):.2f}: nodes grow roughly as positions to this power (least squares)")
+
+
+def log_log_slope(x, y):
+    a, b = [math.log(v) for v in x], [math.log(v) for v in y]
+    ma, mb = statistics.mean(a), statistics.mean(b)
+    return sum((p - ma) * (q - mb) for p, q in zip(a, b)) / sum((p - ma) ** 2 for p in a)
 
 
 def lean(losses):
@@ -175,6 +182,10 @@ def second_generator(lost, deals):
     print(f"second generator    {other['lost']} lost of {other['deals']:,}, {other['undecided']} undecided, {other['unverified']} wins failed verification")
     print(f"  losses per billion  {other['lost'] / other['deals'] * 1e9:.3f} measured, {low * 1e9:.3f} to {high * 1e9:.3f} (95%, exact), against {lost / deals * 1e9:.3f}")
     print(f"  same rate?          exact two-sided p = {binomial_two_sided(other['lost'], other['lost'] + lost, other['deals'] / (other['deals'] + deals)):.3g}")
+    # Given both runs' losses, the second's share is binomial; its exact interval gives one for the ratio of the two rates.
+    share_low, share_high = clopper_pearson(other["lost"], other["lost"] + lost)
+    ratio = lambda share: share / (1 - share) * deals / other["deals"]
+    print(f"  ratio of rates      {ratio(other['lost'] / (other['lost'] + lost)):.2f}, 95% interval {ratio(share_low):.2f} to {ratio(share_high):.2f} (exact, conditional)")
 
 
 def main():

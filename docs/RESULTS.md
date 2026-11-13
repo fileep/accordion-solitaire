@@ -335,7 +335,8 @@ moves that some line can play, but no single line plays enough of them, and play
   checks 255 of 256 GPU lines with `quick::line_wins` instead, a third implementation of the rules on the card codes the GPU
   had, which says yes only to a legal win of a full deck (tests compare it with the reference engine on legal and illegal
   moves) and sends anything else to the reference rules. 1 deal in 256 goes through the reference engine, which also checks
-  that the GPU had that seed's deal, and so does every line won on the CPU.
+  that the GPU had that seed's deal. Every line won on the CPU is replayed by the reference rules, and 1 in 256 of them by
+  the reference engine as well.
 - The solver searches with the fast engine, but nothing counts until a check separate from the search replays the
   whole line: the deliberately simple **reference rules**, or for most GPU lines of the trillion run `quick::line_wins`. That covers legality of every move, the card set, and one pile after exactly 51 moves (PLAN.md §6.1).
 - The reference engine's rules agree with an independent Python implementation on every golden file. The fast engine
