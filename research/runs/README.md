@@ -68,7 +68,8 @@ python research/paper/paper_numbers.py
 The win rate treats deals as uniform draws, which rests on the generator. To test that, the `second-generator` feature deals from
 ChaCha20 with mask-and-redraw instead of xoshiro256\*\* with Lemire's method, sharing no code or method. The same seed gives another
 deal, so its results go in folders of their own, and its report has a `generator` line. At the 0.7 losses per billion of the main run,
-200 billion deals should give about 140 losses. It runs slower than the main generator's runs: making ChaCha20 deals on the
+100 billion deals should give about 72 losses (the project's run was started as 200 billion and cut to 100 billion, as the
+trillion was, so its files are named `chacha-0-200000000000`). It runs slower than the main generator's runs: making ChaCha20 deals on the
 processor, about 5 times the work of a main deal, sets its speed (1.3–2M deals/s on the test laptop, against 5–6.6M):
 
 ```bash
@@ -78,10 +79,10 @@ cargo build --release -p accordion-cli --features second-generator --target-dir 
 Then see it through with that build, as any long run ([docs/LONG_RUNS.md](../../docs/LONG_RUNS.md)), for example:
 
 ```powershell
-powershell -ExecutionPolicy Bypass -File tools\long-run.ps1 -Acc path\to\acc-chacha.exe -From 0 -Count 200000000000 -Gpu on --dossiers hard-deals-chacha
+powershell -ExecutionPolicy Bypass -File tools\long-run.ps1 -Acc path\to\acc-chacha.exe -From 0 -Count 100000000000 -Gpu on --dossiers hard-deals-chacha
 ```
 
-or `acc run --from 0 --deals 200b --gpu on` with that build, which also pauses for the battery. The project's own run was seen
+or `acc run --from 0 --deals 100b --gpu on` with that build, which also pauses for the battery. The project's own run was seen
 through by the author's battery watchdog, which isn't published, under the name `chacha-0-200000000000`.
 
 Its losses are compared by count only: Lean's `deal` is the main generator, so they have no proofs in Lean. The paper reports this
