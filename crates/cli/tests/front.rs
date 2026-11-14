@@ -201,10 +201,13 @@ fn the_help_and_every_command_with_no_run_here() {
     }
 
     let doctor = succeeded(&dir.acc(&["doctor"]));
-    contains_all(
-        &doctor,
-        &["PASS  build", "PASS  folder", "PASS  battery   none", "PASS  solving   100 of 100 deals won"],
-    );
+    // macOS has no battery reading yet, and acc doctor says so instead of "none".
+    let battery = if cfg!(target_os = "macos") {
+        "PASS  battery   not read on macOS yet"
+    } else {
+        "PASS  battery   none"
+    };
+    contains_all(&doctor, &["PASS  build", "PASS  folder", battery, "PASS  solving   100 of 100 deals won"]);
     assert!(!doctor.contains("FAIL"), "{doctor}");
 
     let shown = succeeded(&dir.acc(&["show", "--seed", "42"]));

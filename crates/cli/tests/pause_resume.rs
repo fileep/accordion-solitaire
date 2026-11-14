@@ -160,10 +160,13 @@ fn a_pause_changes_nothing() {
     let args = with(args, INTERRUPTED);
     let (checkpoint, pause) = (dir.file("cp.json"), dir.file("cp.pause"));
     let mut child = spawn(&dir.0, &args);
-    let mut stops = Vec::new();
+    let mut stops: Vec<u64> = Vec::new();
     let mut stdout;
     loop {
-        std::thread::sleep(Duration::from_millis(400));
+        // Longer after each pause that found nothing done: a busy machine (CI's 2-core Windows) can take seconds to start.
+        let stalls =
+            stops.iter().rev().take_while(|&&s| Some(s) == stops.last().copied()).count().saturating_sub(1);
+        std::thread::sleep(Duration::from_millis(400 * (1 + stalls as u64)));
         let output = pause_until_done(child, &pause);
         stdout = succeeded(&output);
         if !stdout.is_empty() {
@@ -172,10 +175,11 @@ fn a_pause_changes_nothing() {
         assert!(text(&output.stderr).contains("--resume"), "{}", text(&output.stderr));
         let done = done_in(&checkpoint);
         // A pause can land before the resumed run has finished anything (a loaded machine is slow to start, and the pause
-        // file is asked for again every 250 ms), but a run that goes no further in four pauses is stuck.
+        // file is asked for again every 250 ms), but a run that goes no further in eight pauses, each waited for longer
+        // than the last, is stuck.
         assert!(
-            stops.len() < 4 || stops[stops.len() - 4] < done,
-            "no further than {done} in four pauses: {stops:?}"
+            stops.len() < 8 || stops[stops.len() - 8] < done,
+            "no further than {done} in eight pauses: {stops:?}"
         );
         stops.push(done);
         child = acc(&dir.0)
