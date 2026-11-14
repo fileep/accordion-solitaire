@@ -326,13 +326,13 @@ impl Endgame {
     /// Writes the tables to `dir/endgame-<k>.bin`, one file per pile count.
     pub fn save(&self, dir: &Path) -> std::io::Result<()> {
         std::fs::create_dir_all(dir)?;
-        for k in 1..=self.max_piles() {
+        for (k, table) in self.bits.iter().enumerate().skip(1) {
             let mut f = std::io::BufWriter::new(std::fs::File::create(dir.join(format!("endgame-{k}.bin")))?);
             f.write_all(MAGIC)?;
             f.write_all(&(k as u64).to_le_bytes())?;
             f.write_all(&patterns(k).to_le_bytes())?;
             let mut check = Fnv::default();
-            for &w in &self.bits[k] {
+            for &w in table {
                 f.write_all(&w.to_le_bytes())?;
                 check.add(w);
             }
