@@ -37,7 +37,12 @@ with the trillion run. Its 81 loss records are in [hard-deals-chacha/proofs/](..
 ## Tests of the record
 
 - `generator-tests.txt`: whether seeds give uniformly random deals, from `crates/core/examples/deal_stats.rs`.
-- `losses.csv`: every proven loss re-derived and explained, from `testdata/tools/classify_losses.py`.
+- `losses.csv`: every proven loss re-derived and explained, from `testdata/tools/classify_losses.py`; `losses-chacha.csv`
+  the same for the second generator's.
+- `win-replay.log`: 100 million winning lines of the trillion run's program (`acc-2t.exe`, fbbff00), re-solved on
+  2026-11-14 in 100 blocks of a million spread evenly over seeds 0–999,999,999,999 (block k from k × 10^10 + 1,234,567)
+  with `acc batch --out`, and every one replayed by `testdata/tools/replay_lines.py`, with the independent Python rules
+  and generator: every deal was its seed's, every move legal, every line one pile after 51 moves. 1 h 51 min.
 
 ## After a long run
 

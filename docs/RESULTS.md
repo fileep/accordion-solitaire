@@ -341,6 +341,12 @@ moves that some line can play, but no single line plays enough of them, and play
   whole line: the deliberately simple **reference rules**, or for most GPU lines of the trillion run `quick::line_wins`. That covers legality of every move, the card set, and one pile after exactly 51 moves (PLAN.md §6.1).
 - The reference engine's rules agree with an independent Python implementation on every golden file. The fast engine
   agrees with the reference engine over 10M lockstep random playouts.
+- **At scale, by independent rules.** A rule too loose in both the search and its replay would count a lost deal as won,
+  and no Lean proof would notice. So on 2026-11-14 the trillion run's program (fbbff00) re-solved 100 million deals, in
+  100 blocks of a million spread evenly over its seeds, and wrote every checked line; `testdata/tools/replay_lines.py`
+  replayed all 100,000,000 with the Python rules and generator of `make_golden.py`, which share no code with the Rust
+  ones. Every deal was its seed's, every move legal, and every line ended in one pile after 51 moves; none failed. A
+  damaged move, deal or line is refused. The log is `research/runs/win-replay.log`.
 - The GPU's lines are replayed the same way: 81.8M of them in the 100M run and 786.2M in the billion run, none failing.
   Since the second billion, `acc batch` without `--out` replays each line by the reference rules on the top cards alone,
   which is all they look at, and allocates nothing (`replay_tops`: a test checks it against the reference engine on random
