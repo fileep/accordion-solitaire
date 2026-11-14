@@ -3,8 +3,8 @@
 A web page for playing Accordion by hand, having the solver win a deal from wherever you are, and replaying solve files
 move by move. It runs in your browser on your own computer; the solver in it is acc's own, compiled to WebAssembly.
 
-These steps weren't run while this was written, as they download packages; they are the project's usual ones, and CI
-runs the visualizer's tests on Linux.
+These steps weren't run while this was written, as they download packages; they are the project's usual ones. CI
+installs the packages (`npm ci`) and passes the visualizer's tests (`npm test`) on Linux on every push.
 
 ## Starting it
 

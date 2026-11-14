@@ -4,8 +4,8 @@ This page takes you from a computer that has never seen this project to a finish
 how to program. Each step gives the exact thing to type and what you should see.
 
 The examples were run on the test machine: a Windows 11 laptop with an Intel i7-1260P (16 threads) and an NVIDIA T550.
-Your numbers will differ. Windows is tested; Linux and macOS are expected to work but have not been tried yet, so the
-steps for them are the usual ones for any Rust program, not ones checked on this project.
+Your numbers will differ. Windows is tested. On Linux and macOS acc builds and passes its tests on every push (CI), but
+this guide's steps haven't been followed there, so the steps for them are the usual ones for any Rust program.
 
 ## Words used here
 

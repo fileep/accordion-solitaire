@@ -49,6 +49,8 @@ dealt, solved, proved or verified.
 
 ### Changed
 
+- CI uses `actions/checkout` and `actions/setup-node` version 7, which run on Node 24 (version 4 ran on the deprecated
+  Node 20).
 - Runs of up to 100 trillion deals fit in memory: the positions and time of each deal solved on the CPU are kept for
   the first 125 million such deals only, as a fair sample for the report's percentiles; means, totals and maxima still
   cover every deal. A run that stays under that number reports exactly what it did before. Older checkpoints carry on.
@@ -67,6 +69,10 @@ dealt, solved, proved or verified.
 
 ### Fixed
 
+- Builds and passes its tests on Linux and macOS (CI) as well as Windows. Clippy 1.100 asked for an iterator in the
+  endgame tables' save; a constant only the x86-64 paths use was dead code on Apple silicon; and three tests assumed
+  the author's computer: the memory flags `acc run` adds under 32 GB, macOS's battery line in `acc doctor`, and a
+  pause test's timing on a slow machine.
 - The card example in `acc solve --help`, `acc deal --help` and the visualizer (`A♣`, not `♣A`, which couldn't be read).
 - `acc selftest --help`'s example now has the counts `acc doctor --full` uses.
 - `--keep-free` and the disk warnings work off Windows too, through `df` (not tested there yet).
