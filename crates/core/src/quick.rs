@@ -5,7 +5,8 @@
 use crate::deal::Deal;
 use crate::rng::{SplitMix64, Xoshiro256StarStar};
 
-/// Bit `code` set for each of the 52 cards' codes (`suit << 4 | rank`, rank below 13).
+/// Bit `code` set for each of the 52 cards' codes (`suit << 4 | rank`, rank below 13). Only the x86-64 paths use it.
+#[cfg(target_arch = "x86_64")]
 const DECK: u64 = 0x1FFF_1FFF_1FFF_1FFF;
 
 /// True only if `codes` is a full deck and `line` is 51 legal moves on it, so one pile is left. False means "ask the

@@ -103,6 +103,26 @@ fn refused(output: &Output, says: &str) {
     assert!(text(&output.stderr).contains(says), "wanted {says:?} in: {}", text(&output.stderr));
 }
 
+/// The `same as: acc batch ...` line `acc run` prints, without the `--games-memory` and `--prove-memory` it adds on a
+/// computer with less memory than acc batch assumes (CI's have 16 GB), so a test reads the same on any computer.
+fn same_as(said: &str) -> String {
+    let line = said
+        .lines()
+        .find(|l| l.starts_with("same as: "))
+        .unwrap_or_else(|| panic!("no same as: line in:\n{said}"));
+    let mut kept = Vec::new();
+    let mut words = line.split(' ');
+    while let Some(word) = words.next() {
+        if word == "--games-memory" || word == "--prove-memory" {
+            let gb = words.next().unwrap_or_default();
+            assert!(gb.parse::<u64>().is_ok_and(|gb| gb >= 1), "{word} wants a number of GB: {line}");
+        } else {
+            kept.push(word);
+        }
+    }
+    kept.join(" ")
+}
+
 fn contains_all(text: &str, words: &[&str]) {
     for w in words {
         assert!(text.contains(w), "wanted {w:?} in:\n{text}");
@@ -279,7 +299,7 @@ fn a_quick_run_goes_from_start_to_finish() {
         ],
     );
     let said = text(&output.stderr);
-    assert!(said.contains("same as: acc batch --from 0 --count 10000 --threads 2 --gpu off"), "{said}");
+    assert_eq!(same_as(&said), "same as: acc batch --from 0 --count 10000 --threads 2 --gpu off");
     // A run this short leaves nothing to carry on, so nothing to report on either.
     assert!(!dir.file("checkpoints").exists());
     refused(&dir.acc(&["results"]), "no runs found");
@@ -319,10 +339,10 @@ fn a_run_pauses_for_the_battery_and_by_hand_and_carries_on() {
     assert!(!dir.file("checkpoints/batch-0-30000.pause").exists());
     let (ok, _, said) = dir.finished("run", child);
     assert!(ok, "{said}");
+    assert_eq!(same_as(&said), "same as: acc batch --from 0 --count 30000 --threads 2 --gpu off");
     contains_all(
         &said,
         &[
-            "same as: acc batch --from 0 --count 30000 --threads 2 --gpu off",
             "the battery is not on the charger, and down to 20%: pausing the run",
             "paused for the battery at",
             "battery 70%, on the charger: carrying on",
