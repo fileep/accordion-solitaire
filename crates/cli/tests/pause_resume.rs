@@ -473,10 +473,10 @@ fn ctrl_break_pauses_and_a_second_one_stops() {
         fn GenerateConsoleCtrlEvent(event: u32, process_group: u32) -> i32;
     }
     let dir = Dir::new("ctrl");
-    let args = with(run_args(0, 5_000_000), &["--dossiers", "d", "--checkpoint", "cp.json"]);
-    let start = || {
+    let args = |from: u64| with(run_args(from, 5_000_000), &["--dossiers", "d", "--checkpoint", "cp.json"]);
+    let start = |from: u64| {
         acc(&dir.0)
-            .args(&args)
+            .args(args(from))
             .creation_flags(CREATE_NEW_PROCESS_GROUP)
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
@@ -488,7 +488,7 @@ fn ctrl_break_pauses_and_a_second_one_stops() {
         unsafe { GenerateConsoleCtrlEvent(CTRL_BREAK_EVENT, child.id()) != 0 }
     };
 
-    let child = start();
+    let child = start(0);
     std::thread::sleep(Duration::from_secs(2));
     if !send(&child) {
         drop(child);
@@ -501,8 +501,10 @@ fn ctrl_break_pauses_and_a_second_one_stops() {
     assert!(done > 0 && done < 5_000_000, "done {done}");
     let _ = std::fs::remove_file(dir.file("cp.json"));
 
-    // Two in a row stop it, with no time to pause: deals this easy take a few milliseconds to finish.
-    let child = start();
+    // Two in a row stop it at once. The run starts on a deal whose search goes to the whole limit of 50 million positions
+    // (47 s on the test machine), so the first leaves it pausing for a long time and the second comes before the pause is
+    // done, however slowly the machine delivers it. With easy deals the pause could end first (it did on CI's Windows).
+    let child = start(742_927_780_651);
     std::thread::sleep(Duration::from_secs(2));
     assert!(send(&child) && send(&child));
     let start = Instant::now();
