@@ -1,0 +1,25 @@
+cff-version: 1.2.0
+message: "If you use this software or its results, please cite the paper below."
+title: "Accordion solitaire solver"
+abstract: "A solver for open Accordion solitaire that measured the win rate on a trillion random deals, replaying every win and proving every loss in Lean 4."
+authors:
+  - family-names: Jander
+    given-names: Filip
+repository-code: "https://github.com/fileep/accordion-solitaire"
+license:
+  - MIT
+  - Apache-2.0
+keywords:
+  - solitaire
+  - Accordion
+  - search
+  - Lean 4
+  - formal verification
+preferred-citation:
+  type: article
+  title: "The win rate of open Accordion solitaire"
+  authors:
+    - family-names: Jander
+      given-names: Filip
+  year: 2026
+  repository-code: "https://github.com/fileep/accordion-solitaire"
