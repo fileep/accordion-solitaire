@@ -36,7 +36,7 @@ still going at the end, beside the check for repeated games, can take up to `--p
   computer's memory with `acc run`, it checks a sample, noted on disk as the run goes: 50 GB, or half of the free space if
   that is less. That sample is most of the disk in the table, and it is read back in parts of up to 16 GB at the end.
 - **Each deal solved on the processor** costs 16 bytes (its positions and time, for the report's percentiles), in memory
-  and on disk, for the first 125 million such deals only: 2 GB at most. With the GPU only about 1 deal in 9,000 is solved
+  and on disk, for the first 125 million such deals only: 2 GB at most. With the GPU only about 1 deal in 18,000 is solved
   on the processor; without it, every deal is.
 - **The endgame tables**, if built to 11 piles: 1.15 GB on disk and about as much memory.
 - **Proofs** of the deals the solver doesn't win take a few MB each, and rarely up to `--prove-memory` (8 GB) for each of

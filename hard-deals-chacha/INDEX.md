@@ -1,7 +1,9 @@
 # Hard deals
 
-Every deal the solver has not won within its cap gets a dossier here (`<id>.json`) and a row below.
-See docs/FORMATS.md for what a dossier holds. `acc` rewrites this file after every run.
+Every deal the second-generator run (ChaCha20, seeds 0–99,999,999,999) did not win within its cap has a dossier here
+(`<id>.json`) and a row below. These seeds give these deals only in a build with the `second-generator` feature
+([research/runs/README.md](../research/runs/README.md#a-second-generator)); the standard `acc` deals other cards from them.
+See [docs/FORMATS.md](../docs/FORMATS.md#dossiers) for the dossier format. This is the record of that run.
 
 | Deal | Status | Stages run | Best (piles left) | Positions searched | Last attempt |
 |---|---|---|---|---|---|

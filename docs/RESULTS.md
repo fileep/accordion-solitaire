@@ -37,7 +37,7 @@ trillion's in Compared with earlier work, and `research/paper/paper_numbers.py` 
 ## Runs
 
 All runs used `acc batch` with the default strategy (below) on the laptop in docs/BENCHMARKS.md: i7-1260P with 16 threads,
-at its sustained heat-soaked clocks, and for the last four runs its NVIDIA T550 GPU as well. Deals come from seeds via the
+at its sustained heat-soaked clocks, and for the last five runs its NVIDIA T550 GPU as well. Deals come from seeds via the
 specified generator (docs/FORMATS.md), so anyone can re-deal and re-check them.
 
 | Seeds | Deals | Won | 95% interval (exact) | Solved on | Deals/s | Wall time |
