@@ -10,7 +10,7 @@ and counts how many of each there were.
 deal in 1.39 billion can't be won. The run took 56 hours on a laptop
 with an NVIDIA T550 graphics card, at about 5 million deals a second.
 
-Move info about the development of this program can be found here: https://www.filipjander.com/2026/11/1-trillion-accordion-solitaire-solves.html 
+More info about the development of this program can be found here: https://www.filipjander.com/2026/11/1-trillion-accordion-solitaire-solves.html 
 
 ## What's needed to replicate these results
 
