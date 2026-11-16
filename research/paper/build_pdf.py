@@ -1,6 +1,7 @@
 # Builds the paper's PDF from a Word export of its doc: 12-point Times New Roman on US Letter with 1-inch margins, tables and
 # figures kept whole on a page, the formula set as text, and the figures drawn as SVG (figures.py) so their labels can be
-# selected. Microsoft Edge prints the page; no other tool is needed.
+# selected. A figure that doesn't fit in what is left of a page moves to the top of the next one and the text after it
+# moves up to fill the page, as a typesetter would float it. Microsoft Edge prints the page; no other tool is needed.
 #
 #   python research/paper/build_pdf.py <export.docx> ["research/paper/The win rate of open Accordion solitaire.pdf"]
 #
@@ -28,6 +29,7 @@ CSS = """
 @page { size: Letter; margin: 1in; @bottom-center { content: counter(page); font-family: "Times New Roman", Times, serif; font-size: 10pt; } }
 html { font-family: "Times New Roman", Times, serif; font-size: 12pt; line-height: 1.35; color: #000; }
 body { margin: 0; }
+@media screen { body { width: 6.5in; } }
 h1 { font-size: 17pt; text-align: center; margin: 0 0 6pt; line-height: 1.2; }
 .byline { text-align: center; margin: 0 0 18pt; }
 h2 { font-size: 13pt; margin: 16pt 0 6pt; break-after: avoid; page-break-after: avoid; }
@@ -38,7 +40,7 @@ p.abstract { margin: 0 0.4in 14pt; }
 p.lead { break-after: avoid; page-break-after: avoid; }
 a { color: #1a3d8f; text-decoration: none; }
 code { font-family: "Courier New", monospace; font-size: 10.5pt; }
-.formula { text-align: center; margin: 4pt 0 10pt; }
+.formula { text-align: center; margin: 4pt 0 10pt; break-before: avoid; page-break-before: avoid; }
 .formula .gap { display: inline-block; width: 3em; }
 figure { margin: 10pt 0 14pt; break-inside: avoid; page-break-inside: avoid; }
 figure svg { display: block; width: 100%; height: auto; }
@@ -52,8 +54,60 @@ li p { margin: 0; text-align: left; }
 ol.references { list-style: none; padding-left: 2.2em; counter-reset: ref; }
 ol.references li { counter-increment: ref; position: relative; }
 ol.references li::before { content: "[" counter(ref) "]"; position: absolute; left: -2.2em; }
+ol.references a { overflow-wrap: anywhere; }
 ol.notes li p { word-spacing: 0.1em; }
 """
+
+# Runs in the page before Edge prints it. It measures each block at the printed width, walks the blocks page by page
+# (9 inches of text a page, in whole lines), and when a figure doesn't fit in the rest of a page it holds the figure back
+# until the next page starts, letting the text that follows fill the page. Headings, tables, lead-in lines and paragraphs
+# of five lines or fewer stay whole, and a longer paragraph leaves at least three lines on each side of a page break.
+FLOAT_FIGURES = """
+(() => {
+  const PAGE = 864, LINE = 21.6, KEEP = 3 * LINE;
+  const els = [...document.body.children].filter(e => e.tagName !== "SCRIPT");
+  const box = els.map(e => e.getBoundingClientRect());
+  const h = els.map((e, i) => (i + 1 < els.length ? box[i + 1].top : box[i].bottom) - box[i].top);  // with the gap below
+  const out = [], held = [];
+  let y = 0;
+  const place = () => { while (held.length && y + held[0][1] <= PAGE) { const [e, own, all] = held.shift(); out.push(e); y += all; } };
+  const put = (e, i) => { out.push(e); y += h[i]; };
+  const turn = () => { y = 0; place(); };
+  const whole = i => ["TABLE", "FIGURE"].includes(els[i].tagName) || els[i].classList.contains("formula") ||
+    Math.round(box[i].height / LINE) <= 5;
+  els.forEach((e, i) => {
+    const own = box[i].height;
+    if (e.tagName === "FIGURE") {
+      if (!held.length && y + own <= PAGE) put(e, i); else held.push([e, own, h[i]]);
+      return;
+    }
+    const heading = /^H[1-3]$/.test(e.tagName), lead = e.classList.contains("lead");
+    const n = Math.round(own / LINE);
+    if (heading || lead || whole(i)) {
+      if (n <= 5) e.style.breakInside = "avoid";
+      // A heading or a lead-in line needs room for what it leads into: all of it if that stays whole, else three lines.
+      const next = i + 1 < els.length ? (whole(i + 1) ? box[i + 1].height : KEEP) : 0;
+      if (y + (heading || lead ? h[i] + next : own) > PAGE) turn();
+      put(e, i);
+      return;
+    }
+    if (y + own <= PAGE) { put(e, i); return; }
+    let fit = Math.floor((PAGE - y) / LINE);
+    if (n - fit < 3) fit = n - 3;
+    if (fit < 3) { turn(); put(e, i); return; }
+    out.push(e); y = (n - fit) * LINE + (h[i] - own); place();
+  });
+  held.forEach(([e]) => out.push(e));
+  out.forEach(e => document.body.appendChild(e));
+})();
+"""
+
+ADDRESS = re.compile(r"(?:https?://)?[\w-]+(?:\.[\w-]+)+(?:/[\w.~%()+:-]+)+")
+
+
+def soft_breaks(s):
+    """Lets a web address or a DOI break after a slash, so a long one neither stretches a line nor runs off it."""
+    return ADDRESS.sub(lambda m: re.sub(r"/(?=[\w%])", "/<wbr>", m.group(0)), s)
 
 
 def load(path):
@@ -83,7 +137,7 @@ def run_html(r):
             out.append(" ")
         elif child.tag == f"{W}br":
             out.append("<br>")
-    s = "".join(out)
+    s = soft_breaks("".join(out))
     props = r.find(f"{W}rPr")
     if props is not None and s:
         style = props.find(f"{W}rStyle")
@@ -187,6 +241,8 @@ def build(body, rels, kinds):
             cls = ' class="abstract"' if section == "Abstract" else ""
             blocks.append(f"<{tag}{cls}>{inner}</{tag}>")
         elif style == "Code":
+            if "\\to" in plain and blocks and blocks[-1].startswith("<p>"):
+                blocks[-1] = '<p class="lead">' + blocks[-1][3:]  # the line that leads into the formula stays with it
             blocks.append(formula(plain) if "\\to" in plain else f"<pre><code>{inner}</code></pre>")
         elif len(blocks) == 1 and "@" in plain:
             date, _, author = plain.partition("·")
@@ -197,7 +253,7 @@ def build(body, rels, kinds):
     close_list()
     title = html.unescape(re.sub(r"<[^>]+>", "", blocks[0]))
     return (f'<!doctype html><html lang="en"><head><meta charset="utf-8"><title>{html.escape(title)}</title>'
-            f"<style>{CSS}</style></head><body>" + "\n".join(blocks) + "</body></html>")
+            f"<style>{CSS}</style></head><body>" + "\n".join(blocks) + f"<script>{FLOAT_FIGURES}</script></body></html>")
 
 
 def main():

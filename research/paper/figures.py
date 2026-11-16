@@ -31,8 +31,9 @@ def rect(x, y, w, h, rx=6, stroke=EDGE, width=1.25, fill="none", opacity=1):
             f'stroke="{stroke}" stroke-width="{width}"/>')
 
 
-def path(d, marker):
-    return f'<path d="{d}" fill="none" stroke="{EDGE}" stroke-width="1.4" marker-end="url(#{marker})"/>'
+def path(d, marker, dash=None):
+    dashed = f' stroke-dasharray="{dash}"' if dash else ""
+    return f'<path d="{d}" fill="none" stroke="{EDGE}" stroke-width="1.4"{dashed} marker-end="url(#{marker})"/>'
 
 
 def fig1():
@@ -73,15 +74,16 @@ def fig2():
 
     m = "f2a"
     b = [text(24, 30, "Every deal ends as a replayed win or a proven loss", TITLE, bold=True)]
-    b += [path(d, m) for d in ["M244 108V140", "M244 212V260", "M244 332V380", "M244 452V500", "M464 176H632V192",
+    b += [path(d, m) for d in ["M244 108V140", "M244 212V260", "M244 332V380", "M464 176H632V192",
                                "M464 296H632V280", "M464 416H700V280", "M464 536H528"]]
+    b.append(path("M244 452V500", m, "5 4"))  # dashed: the Lean check was made after the run
     boxes = [(52, 56, "Deal from a seed", ["SplitMix64, then xoshiro256**, then a Fisher–Yates shuffle"]),
              (140, 72, "GPU: semi-random prefix, short endgame search",
-              ["Plays 38–40 moves weighted by patterns from won games, then", "searches up to 700 positions. Up to 400 tries a deal."]),
+              ["Plays 40 or 38 moves weighted by patterns from won games, then", "searches up to 700 positions. Up to 400 tries a deal."]),
              (260, 72, "CPU: thorough search",
-              ["Shorter semi-random prefixes, then restarting depth-first search,", "with dead-end tests and complete endgame tables up to 11 piles"]),
+              ["Shorter semi-random prefixes, then restarting depth-first search,", "with a dead-end test and complete endgame tables up to 11 piles"]),
              (380, 72, "Exhaustive search", ["Visits every reachable position with an exact table,", "in two separate searches that must agree"]),
-             (500, 72, "Certificate checked in Lean",
+             (500, 72, "After the run: certificate checked in Lean",
               ["A compact description of every position the deal can reach,", "checked in Lean to be closed under moves, with no win (Section 3)"])]
     for y0, h, name, lines in boxes:
         b += [step(y0, h), text(40, y0 + 24, name, BODY, bold=True)]
@@ -158,10 +160,11 @@ def fig4():
 
 
 def fig5():
-    deal = ("JH 8C 7S AD 4S QC KC 6S 7H AC 4H AH JS 3H 2S 2D 9S 5D 9D 5H 9H 4C TS JD TD 4D 9C 2H 8H KS 3D TC 2C 5S 7C QS JC 6D "
-            "KD 3S 3C 5C AS QH QD 7D 8S TH 8D 6C KH 6H")
-    return card_grid(suits(deal), {46}, "Seed 0 is won in 51 moves",
-                     ["The winning line (Note 2) leaves one pile, topped by 7♦."])
+    deal = ("AC 4D TS JD 3H 5C 3S 6D 2H 9C 7S KC TH 3C JH 8S 5H 9S KH 2D QH JC 4S 8C 5S 2C 7D TC 9H 8H QS 5D 6C AH 6S 8D QC KD "
+            "4H AS 7H AD 4C 3D 2S 6H KS 9D 7C QD JS TD")
+    return card_grid(suits(deal), {29, 30}, "Seed 124,280,819,596 has one legal move, and is lost",
+                     ["The only legal move in the row is 8♥ onto 9♥, from position 30 to 29. After it, no card matches",
+                      "the card 1 or 3 places to its left, so 51 piles remain and the deal is lost."])
 
 
 FIGURES = {1: fig1, 2: fig2, 3: fig3, 4: fig4, 5: fig5}
