@@ -7,10 +7,12 @@ and counts how many of each there were.
 
 **The result so far** ([docs/RESULTS.md](docs/RESULTS.md), as of 2026-11-12): of 1,000,000,000,000 random deals,
 999,999,999,279 were won, every win checked by replaying its whole line with code separate from the search, and the other 721 were proven impossible. About 1
-deal in 1.39 billion can't be won (95% interval: 1 in 1.29 billion to 1 in 1.49 billion). The run took 56 hours on a laptop
+deal in 1.39 billion can't be won. The run took 56 hours on a laptop
 with an NVIDIA T550 graphics card, at about 5 million deals a second.
 
-## What you need
+Move info about the development of this program can be found here: https://www.filipjander.com/2026/11/1-trillion-accordion-solitaire-solves.html 
+
+## What's needed to replicate these results
 
 | | |
 |---|---|
@@ -36,7 +38,7 @@ The first builds `acc` and puts it where the terminal finds it (a few minutes). 
 `acc run --quick` plays 10,000 deals, and `acc show` shows one deal won move by move. If anything is new to you, start with
 [docs/GETTING_STARTED.md](docs/GETTING_STARTED.md): it explains each step and what you should see.
 
-## Want to... type this
+## Commands
 
 | Want to | Type |
 |---|---|
