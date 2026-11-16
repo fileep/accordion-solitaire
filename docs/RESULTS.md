@@ -189,7 +189,7 @@ CPU won the rest: rung 0 4,264,658, rung 1 1,148,628, rung 2 419,421, rungs 3–
 In the 20 billion the GPU's up to 1,280 tries won **19,997,847,246 deals (99.989%)**, choosing its moves by what winning prefixes do.
 The CPU won the deals it missed: rung 0 244,759, rung 1 562,320, rung 2 678,360, rungs 3–6 658,965, and the thorough search 8,330.
 
-In the trillion the GPU's up to 400 tries won **999,945,361,644 deals (99.9945%)**. The CPU won the deals it missed: rung 0
+In the trillion the GPU's up to 384 tries won **999,945,361,644 deals (99.9945%)**. The CPU won the deals it missed: rung 0
 6,529,094, rung 1 12,753,974, rung 2 15,471,866, rungs 3–6 19,494,352, the thorough search 388,344, and the exhaustive search 5.
 
 ## Compared with earlier work
@@ -410,8 +410,9 @@ The defaults since Phase 5 (docs/BENCHMARKS.md has the measurements):
   - complete endgame tables keyed by suit/rank pattern for ≤11 piles.
 - **GPU**, when there is one (since Phase 8; these are the defaults of the build the trillion run used, `acc settings --gpu`):
   before any of the above, a first rung of attempts of 40 random moves and a second of 38 (`rungs` `[[40, 24], [38, 376]]`, in
-  the kernel's numbering of tries), each followed by a search of the rest within 700 positions. Tries go in pairs that share
-  their first 20 random moves; a rest with more than 8 ranks (10 on the second rung) isn't searched; and the random moves
+  the kernel's numbering of tries, which comes to at most 384 played), each followed by a search of the rest within 700
+  positions. After a deal's first 16 tries, tries go in pairs that share their first 20 random moves; a rest with more
+  than 8 ranks (10 on the second rung) isn't searched; and the random moves
   favour leaps 8 to 1 and are scored by what winning prefixes have in common (docs/BENCHMARKS.md, from "what winning prefixes
   have in common" to the fourth step). A deal it misses goes to the CPU, which solves it from the start. Earlier runs used
   earlier settings: the 100M and billion runs up to 256 attempts of 38 random moves and up to 1,024 of 36, each with a

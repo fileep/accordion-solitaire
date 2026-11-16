@@ -31,8 +31,8 @@ accordion-core ──► accordion-solver ──► accordion-cli (acc)
 2. **The GPU, if there is one.** A feeder thread takes batches of 262,144 deals and launches the kernel on them. For each
    deal the kernel makes up to a few hundred **attempts**: play a prefix of 38 to 40 moves chosen at random (weighted
    towards moves three to the left, and scored by patterns that winning prefixes share), then search what is left, at most
-   16 piles, exhaustively within 700 positions. Attempts go in pairs that share their first 20 moves; a leftover with too
-   many different ranks isn't searched. The first winning line of each deal comes back.
+   16 piles, exhaustively within 700 positions. After a deal's first 16 attempts, attempts go in pairs that share their
+   first 20 moves; a leftover with too many different ranks isn't searched. The first winning line of each deal comes back.
 3. **Checking the GPU's lines.** The processor's worker threads replay each line before the deal counts as won, with
    `quick::line_wins`: a replay of the rules on the GPU's own cards that says yes only to a legal win of a full deck. A line
    it doesn't pass goes to the reference rules. 1 deal in 256 is replayed by the reference engine from the seed's deal
