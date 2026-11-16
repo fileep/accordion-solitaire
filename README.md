@@ -14,7 +14,7 @@ More info about the development of this program can be found here: https://www.f
 
 ## What's needed to replicate these results
 
-| | |
+| You need | Notes |
 |---|---|
 | A 64-bit computer | Windows 11 is tested; Windows 10 is expected to work. Linux and macOS build and pass the tests on every push, though nothing beyond the tests has been run there yet (see below). |
 | Rust, the language acc is written in | Free, from [rustup.rs](https://rustup.rs): a recent version (`rustup update` gets one). On Windows also Microsoft's C++ build tools. [docs/GETTING_STARTED.md](docs/GETTING_STARTED.md) has every step. |
