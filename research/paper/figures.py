@@ -79,7 +79,7 @@ def fig2():
     b.append(path("M244 452V500", m, "5 4"))  # dashed: the Lean check was made after the run
     boxes = [(52, 56, "Deal from a seed", ["SplitMix64, then xoshiro256**, then a Fisher–Yates shuffle"]),
              (140, 72, "GPU: semi-random prefix, short endgame search",
-              ["Plays 40 or 38 moves weighted by patterns from won games, then", "searches up to 700 positions. Up to 400 tries a deal."]),
+              ["Plays 40 or 38 moves weighted by patterns from won games, then", "searches up to 700 positions. Up to 384 tries a deal."]),
              (260, 72, "CPU: thorough search",
               ["Shorter semi-random prefixes, then restarting depth-first search,", "with a dead-end test and complete endgame tables up to 11 piles"]),
              (380, 72, "Exhaustive search", ["Visits every reachable position with an exact table,", "in two separate searches that must agree"]),
