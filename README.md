@@ -91,10 +91,7 @@ The first builds `acc` and puts it where the terminal finds it (a few minutes). 
 ## AI usage
 
 All of the code here was written by Claude, Anthropic's AI model, under my direction: every commit is co-authored by Claude
-(Opus 5.5 and Sonnet 5.5). I set the goals and proposed the main strategy ideas, such as game mining and dead-end tests; Claude did the implementation.
-The results don't rest on trusting that code: every win is replayed by code separate from the search, every loss has a proof in
-[`hard-deals/`](hard-deals/), and a second random number generator over 100 billion deals gave a similar win rate.
-[docs/READING_RESULTS.md](docs/READING_RESULTS.md) shows how to check them yourself.
+(Opus 5.5 and Sonnet 5.5). I set the goals and proposed the main strategy ideas, Claude did the implementation.
 
 ## Licence
 
