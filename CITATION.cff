@@ -1,6 +1,8 @@
 cff-version: 1.2.0
 message: "If you use this software or its results, please cite the paper below."
 title: "Accordion solitaire solver"
+version: 0.1.0
+date-released: 2026-11-16
 abstract: "A solver for open Accordion solitaire that measured the win rate on a trillion random deals, replaying every win and proving every loss in Lean 4."
 authors:
   - family-names: Jander

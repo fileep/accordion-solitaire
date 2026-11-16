@@ -1,9 +1,12 @@
 # Changelog
 
-What changes between releases, newest first. There has been no release yet: the program's history until now is in
+What changes between releases, newest first. The program's history before the first release is in
 [docs/PLAN.md](docs/PLAN.md) and [docs/BENCHMARKS.md](docs/BENCHMARKS.md).
 
-## Unreleased
+## 0.1.0, 2026-11-16
+
+The first release: the solver, the run records and the proofs behind the paper "The win rate of open Accordion
+solitaire", whose links point at this release.
 
 Making the program usable by other people, a second deal generator to test the results with, and the record of the
 trillion-deal run. Apart from the second generator, which is only there when built in, none of this changes how a deal is
