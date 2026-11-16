@@ -1,7 +1,7 @@
 # Accordion Solitaire Solver
 
-Accordion is a patience game: the 52 cards are dealt face up in a row, and a pile may be moved onto the pile next to it,
-or onto the one three places to its left, when their top cards share a suit or a rank. It is won when one pile is left.
+Accordion is a solitaire game where the 52 cards of a standard deck are dealt face up in a row, and a pile may be moved onto the pile next to it,
+or onto the one three places to its left, when their top cards share a suit or a rank. It is won when one pile is left. It is pretty difficult for humans, yet almost every deal can be won with perfect play. 
 `acc`, the program here, plays numbered deals, finds a winning line for every deal it can, proves the others impossible,
 and counts how many of each there were.
 
