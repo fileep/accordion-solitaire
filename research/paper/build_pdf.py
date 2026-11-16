@@ -247,6 +247,8 @@ def build(body, rels, kinds):
         elif len(blocks) == 1 and "@" in plain:
             date, _, author = plain.partition("·")
             blocks.append(f'<p class="byline">{html.escape(author.strip().lstrip("@"))}<br>{html.escape(date.strip())}</p>')
+        elif not section and blocks[-1].startswith('<p class="byline">'):
+            blocks[-1] = blocks[-1].replace("<br>", f"<br>{inner}<br>", 1)  # affiliation and contact: between the name and the date
         else:
             cls = ' class="abstract"' if section == "Abstract" else ""
             blocks.append(f"<p{cls}>{inner}</p>")
