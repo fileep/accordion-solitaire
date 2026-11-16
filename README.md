@@ -44,7 +44,8 @@ The first builds `acc` and puts it where the terminal finds it (a few minutes). 
 |---|---|
 | Check that this computer is ready | `acc doctor` |
 | Play a million deals and count the wins | `acc run` |
-| Play for 8 hours, then carry on another night | `acc run --overnight` |
+| Play a set number of deals, from a starting seed if you like | `acc run --deals 100k`, or `acc run --deals 100k --from 5m` |
+| Play for a set number of hours, then carry on another time | `acc run --hours 8` |
 | Leave the computer usable while it plays | `acc run --gentle` |
 | See how the runs started here are going | `acc status` |
 | Pause a run from another window (or press Ctrl+C in its own) | `acc pause` |
