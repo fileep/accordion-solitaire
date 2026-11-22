@@ -3,10 +3,24 @@
 What changes between releases, newest first. The program's history before the first release is in
 [docs/PLAN.md](docs/PLAN.md) and [docs/BENCHMARKS.md](docs/BENCHMARKS.md).
 
+## 0.1.1, 2026-11-21
+
+Corrections to the documents. The links of the paper "The win rate of open Accordion solitaire" point at this release.
+The program is the same as in 0.1.0 and still reports that version.
+
+### Fixed
+
+- The GPU plays at most 384 tries a deal, not 400: a deal's first 16 tries go alone, and only the later ones go in pairs
+  (`docs/RESULTS.md`, `docs/ARCHITECTURE.md`, and the paper's Figure 2 in `research/paper/figures.py`).
+- `docs/RESULTS.md` counts five GPU runs, and `docs/LONG_RUNS.md` says that with the GPU about 1 deal in 18,000 is
+  solved on the processor.
+- `hard-deals-chacha/INDEX.md` says that it is the record of the second-generator run, and that its seeds give these
+  deals only in a build with the `second-generator` feature.
+
 ## 0.1.0, 2026-11-16
 
 The first release: the solver, the run records and the proofs behind the paper "The win rate of open Accordion
-solitaire", whose links point at this release.
+solitaire".
 
 Making the program usable by other people, a second deal generator to test the results with, and the record of the
 trillion-deal run. Apart from the second generator, which is only there when built in, none of this changes how a deal is
