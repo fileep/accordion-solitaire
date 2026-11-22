@@ -3,10 +3,20 @@
 What changes between releases, newest first. The program's history before the first release is in
 [docs/PLAN.md](docs/PLAN.md) and [docs/BENCHMARKS.md](docs/BENCHMARKS.md).
 
+## 0.1.2, 2026-11-21
+
+For archiving on Zenodo. The links of the paper "The win rate of open Accordion solitaire" point at this release. The
+program is the same as in 0.1.0 and still reports that version.
+
+### Added
+
+- `.zenodo.json`, which describes the project to Zenodo. Zenodo reads one licence from `CITATION.cff`, where this
+  project names two, and would not archive a release without it. The Zenodo record names MIT; the project stays under
+  MIT or Apache-2.0, at your option.
+
 ## 0.1.1, 2026-11-21
 
-Corrections to the documents. The links of the paper "The win rate of open Accordion solitaire" point at this release.
-The program is the same as in 0.1.0 and still reports that version.
+Corrections to the documents. The program is the same as in 0.1.0 and still reports that version.
 
 ### Fixed
 

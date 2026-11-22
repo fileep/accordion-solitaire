@@ -1,0 +1,18 @@
+{
+  "title": "Accordion solitaire solver",
+  "description": "A solver for open Accordion solitaire, with the run records and the Lean 4 proofs behind the paper \"The win rate of open Accordion solitaire\": of one trillion random deals, 999,999,999,279 were won and 721 were proved lost. Licensed under MIT or Apache-2.0, at your option.",
+  "upload_type": "software",
+  "creators": [
+    {
+      "name": "Jander, Filip"
+    }
+  ],
+  "license": "mit",
+  "keywords": [
+    "solitaire",
+    "Accordion",
+    "search",
+    "Lean 4",
+    "formal verification"
+  ]
+}
