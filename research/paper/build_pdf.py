@@ -248,7 +248,8 @@ def build(body, rels, kinds):
             date, _, author = plain.partition("·")
             blocks.append(f'<p class="byline">{html.escape(author.strip().lstrip("@"))}<br>{html.escape(date.strip())}</p>')
         elif not section and blocks[-1].startswith('<p class="byline">'):
-            blocks[-1] = blocks[-1].replace("<br>", f"<br>{inner}<br>", 1)  # affiliation and contact: between the name and the date
+            head, _, date = blocks[-1].rpartition("<br>")  # affiliation, then DOI and licence: in the doc's order, above the date
+            blocks[-1] = f"{head}<br>{inner}<br>{date}"
         else:
             cls = ' class="abstract"' if section == "Abstract" else ""
             blocks.append(f"<p{cls}>{inner}</p>")
