@@ -82,6 +82,7 @@ The first builds `acc` and puts it where the terminal finds it (a few minutes). 
 | `crates/gpu` | `accordion-gpu`: the NVIDIA GPU's part of a run (CUDA, compiled with NVRTC); `accgpu` measures the GPU alone |
 | `crates/wasm` | the core and the solver compiled to WebAssembly for the visualizer |
 | `viz/` | the visualizer, a web page (Vite and TypeScript) |
+| `game-tree/` | a 3D explorer of any deal's game tree, one web page with nothing to install, and pictures of it |
 | `tools/` | scripts for users: fetching NVRTC for the GPU, seeing a long run through |
 | `docs/` | the documentation ([docs/README.md](docs/README.md)) |
 | `hard-deals/` | the published record: the dossier and proof of every deal the project's runs didn't win, and a gallery of hard wins |

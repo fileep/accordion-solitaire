@@ -1,0 +1,855 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Accordion game trees</title>
+<style>
+html,body{margin:0;height:100%;background:#05060a}
+body.standalone #acc-tree{position:fixed;left:0;top:0;right:0;bottom:0;width:auto;height:auto;border-radius:0;margin:0}
+</style>
+</head>
+<body class="standalone">
+<!-- acc-tree: everything from here to "end of acc-tree" can be pasted into a blog post as it is -->
+<style>
+#acc-tree{position:relative;width:100%;height:680px;margin:1em 0;background:#05060a;color:#d9dce4;border-radius:10px;overflow:hidden;
+  font:13px/1.35 system-ui,-apple-system,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;user-select:none;-webkit-user-select:none;touch-action:none}
+#acc-tree:fullscreen{width:100%;height:100%;margin:0;border-radius:0}
+#acc-tree *{box-sizing:border-box}
+#acc-tree canvas.at-gl{position:absolute;left:0;top:0;width:100%;height:100%;display:block;cursor:grab}
+#acc-tree canvas.at-gl.at-dragging{cursor:grabbing}
+#acc-tree button,#acc-tree select,#acc-tree input{font:inherit;color:#e8eaf0;background:#161a26;border:1px solid #2c3346;border-radius:6px;padding:4px 8px;margin:0}
+#acc-tree button{cursor:pointer}
+#acc-tree button:hover,#acc-tree select:hover{background:#1f2536}
+#acc-tree button.on{background:#2c3a63;border-color:#4d64a8}
+#acc-tree input.at-seed{width:9.5em}
+#acc-tree .at-top{position:absolute;left:8px;right:8px;top:8px;display:flex;flex-wrap:wrap;gap:6px;align-items:center;pointer-events:none}
+#acc-tree .at-top>*{pointer-events:auto}
+#acc-tree .at-top select.at-ex{max-width:22em}
+#acc-tree .at-panel{background:rgba(9,11,18,.82);border:1px solid #232a3b;border-radius:8px;padding:8px 10px}
+#acc-tree .at-side{position:absolute;left:8px;top:var(--tb,48px);width:280px;max-height:calc(100% - 100px);overflow:auto}
+#acc-tree .at-side.at-folded .at-body{display:none}
+#acc-tree .at-title{font-weight:600;font-size:14px;cursor:pointer}
+#acc-tree .at-title::after{content:" \25BE";color:#7d869c;font-weight:400}
+#acc-tree .at-side.at-folded .at-title::after{content:" \25B8"}
+#acc-tree .at-note{color:#aab1c2;margin:4px 0 6px}
+#acc-tree .at-stats{margin:4px 0}
+#acc-tree .at-stats b{color:#fff;font-weight:600}
+#acc-tree canvas.at-chart{width:100%;height:64px;display:block;margin:6px 0 2px}
+#acc-tree .at-chartcap{color:#7d869c;font-size:11px}
+#acc-tree .at-legend{margin-top:6px;display:flex;flex-wrap:wrap;gap:4px 10px;font-size:12px;color:#b9bfcd}
+#acc-tree .at-legend i{display:inline-block;width:10px;height:10px;border-radius:50%;margin-right:4px;vertical-align:-1px}
+#acc-tree .at-tools{position:absolute;right:8px;top:var(--tb,48px);display:flex;flex-direction:column;gap:5px;align-items:stretch;width:150px}
+#acc-tree .at-tools .at-row{display:flex;gap:4px}
+#acc-tree .at-tools .at-row>*{flex:1}
+#acc-tree .at-tools label{font-size:11px;color:#8d96aa;display:flex;align-items:center;gap:4px}
+#acc-tree .at-tools input[type=range]{flex:1;width:60px;padding:0}
+#acc-tree .at-node{position:absolute;right:8px;bottom:8px;width:340px;max-width:calc(100% - 16px);max-height:calc(100% - 330px);min-height:120px;overflow:auto}
+#acc-tree .at-node-head{margin-bottom:6px}
+#acc-tree .at-cards{display:flex;flex-wrap:wrap;gap:3px;margin:6px 0}
+#acc-tree .at-card{width:24px;height:30px;border-radius:4px;background:#f3f1ea;color:#1b1d22;font-weight:700;font-size:11px;line-height:1;display:flex;
+  flex-direction:column;align-items:center;justify-content:center;font-family:Georgia,"Times New Roman",serif}
+#acc-tree .at-card.at-red{color:#c4102a}
+#acc-tree .at-card span{font-size:13px}
+#acc-tree .at-node-btns{display:flex;gap:6px;flex-wrap:wrap}
+#acc-tree .at-crumbs{position:absolute;left:8px;bottom:8px;display:flex;gap:6px;align-items:center;max-width:calc(100% - 370px)}
+#acc-tree .at-crumbs:empty{display:none}
+#acc-tree .at-busy{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);width:320px;text-align:center}
+#acc-tree .at-bar{height:6px;background:#1b2030;border-radius:3px;overflow:hidden;margin-bottom:6px}
+#acc-tree .at-bar i{display:block;height:100%;width:0;background:linear-gradient(90deg,#3d6bff,#38e3a0)}
+#acc-tree .at-tip{position:absolute;pointer-events:none;background:rgba(10,12,20,.92);border:1px solid #2c3346;border-radius:6px;padding:4px 7px;font-size:12px;
+  white-space:nowrap;transform:translate(12px,12px)}
+#acc-tree .at-helpbox{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);width:min(560px,calc(100% - 24px));max-height:calc(100% - 24px);overflow:auto;
+  font-size:13px;line-height:1.45}
+#acc-tree .at-helpbox p{margin:0 0 8px}
+#acc-tree .at-msg{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);max-width:420px;text-align:center}
+#acc-tree [hidden]{display:none !important}
+#acc-tree.at-narrow{font-size:12px}
+#acc-tree.at-narrow .at-side{width:200px;padding:6px 8px}
+#acc-tree.at-narrow .at-tools{width:108px;gap:4px}
+#acc-tree.at-narrow .at-tools button,#acc-tree.at-narrow .at-tools select{padding:3px 4px;font-size:12px}
+#acc-tree.at-narrow input.at-seed{width:7.5em}
+#acc-tree.at-narrow .at-top select.at-ex{max-width:100%}
+#acc-tree.at-narrow .at-node{width:calc(100% - 16px);max-height:42%;min-height:0}
+#acc-tree.at-narrow .at-crumbs{max-width:calc(100% - 140px);bottom:auto;top:calc(var(--tb,48px) + 34px);left:8px}
+@media (max-width:600px){#acc-tree{height:620px}}
+</style>
+<div id="acc-tree"></div>
+<script>
+(function(){
+'use strict';
+var host=document.getElementById('acc-tree');
+if(!host||host.getAttribute('data-ready'))return;
+host.setAttribute('data-ready','1');
+
+// ---------- cards and deals (the same generator as acc and the game) ----------
+var RANKS='A23456789TJQK',SUITS='CDHS',SYM=['\u2663','\u2666','\u2665','\u2660'];
+function cardByte(s){return SUITS.indexOf(s[1])<<4|RANKS.indexOf(s[0]);}
+function cardText(b){return (RANKS[b&15]==='T'?'10':RANKS[b&15])+SYM[b>>4];}
+function isRed(b){var s=b>>4;return s===1||s===2;}
+// <deal>
+var MASK=(1n<<64n)-1n;
+function rotl(x,k){return ((x<<k)|(x>>(64n-k)))&MASK;}
+function dealFromSeed(seed){
+  var st=BigInt(seed);
+  function mix(){st=(st+0x9E3779B97F4A7C15n)&MASK;var z=st;z=((z^(z>>30n))*0xBF58476D1CE4E5B9n)&MASK;z=((z^(z>>27n))*0x94D049BB133111EBn)&MASK;return z^(z>>31n);}
+  var s=[mix(),mix(),mix(),mix()];
+  function next(){var r=(rotl((s[1]*5n)&MASK,7n)*9n)&MASK,t=(s[1]<<17n)&MASK;s[2]^=s[0];s[3]^=s[1];s[1]^=s[2];s[0]^=s[3];s[2]^=t;s[3]=rotl(s[3],45n);return r;}
+  function below(b){var n=BigInt(b);var m=next()*n;if((m&MASK)<n){var t=((1n<<64n)-n)%n;while((m&MASK)<t)m=next()*n;}return Number(m>>64n);}
+  var d=[];for(var u=0;u<4;u++)for(var r=0;r<13;r++)d.push(u<<4|r);
+  for(var i=51;i>0;i--){var j=below(i+1);var x=d[i];d[i]=d[j];d[j]=x;}
+  return d;
+}
+// </deal>
+
+// ---------- the engine: builds a deal's graph of positions in a Web Worker ----------
+// <engine>
+function workerMain(self){
+  'use strict';
+  var now=(typeof performance!=='undefined'&&performance.now)?function(){return performance.now();}:function(){return Date.now();};
+  function grow(a,n){if(n<=a.length)return a;var m=a.length*2||1024;while(m<n)m*=2;var b=new a.constructor(m);b.set(a);return b;}
+  // Positions are rows of top cards (a pile's lower cards never matter again), stored in an arena of bytes.
+  var A,off,len,par,pmv,flag,head,hsh,eto,enext,emv,tab,tmask,N,NE,used,budget,SEEN,gen,lastPost,t0,phase,divesWonRuns;
+  var SC=new Uint8Array(52*104),CM=new Uint8Array(104),WT=new Float64Array(104),UF=new Int32Array(17),rng=1;
+  function rand(){rng^=rng<<13;rng^=rng>>>17;rng^=rng<<5;return (rng>>>0)/4294967296;}
+  function reset(){
+    A=new Uint8Array(1<<20);off=new Uint32Array(1<<14);len=new Uint8Array(1<<14);par=new Int32Array(1<<14);pmv=new Uint8Array(1<<14);
+    flag=new Uint8Array(1<<14);head=new Int32Array(1<<14);hsh=new Uint32Array(1<<14);
+    eto=new Int32Array(1<<16);enext=new Int32Array(1<<16);emv=new Uint8Array(1<<16);
+    tab=new Int32Array(1<<15);tmask=tab.length-1;N=0;NE=0;used=0;SEEN=new Int32Array(1<<14);gen=0;
+  }
+  function hashOf(b,o,n){var h=(0x811c9dc5^n)|0;for(var k=0;k<n;k++)h=Math.imul(h^b[o+k],0x01000193);h^=h>>>16;h=Math.imul(h,0x85ebca6b);h^=h>>>13;h=Math.imul(h,0xc2b2ae35);h^=h>>>16;return h>>>0;}
+  function find(b,o,n,h){
+    var i=h&tmask;
+    for(;;){var v=tab[i];if(v===0)return -1-i;var id=v-1;
+      if(hsh[id]===h&&len[id]===n){var p=off[id],k=0;while(k<n&&A[p+k]===b[o+k])k++;if(k===n)return id;}
+      i=(i+1)&tmask;}
+  }
+  function rehash(){var t=new Int32Array(tab.length*2),m=t.length-1;for(var id=0;id<N;id++){var i=hsh[id]&m;while(t[i])i=(i+1)&m;t[i]=id+1;}tab=t;tmask=m;}
+  function insert(b,o,n,h,slot){
+    if(N>=off.length){var m=N+1;off=grow(off,m);len=grow(len,m);par=grow(par,m);pmv=grow(pmv,m);flag=grow(flag,m);head=grow(head,m);hsh=grow(hsh,m);}
+    if(used+n>A.length)A=grow(A,used+n);
+    for(var k=0;k<n;k++)A[used+k]=b[o+k];
+    off[N]=used;used+=n;len[N]=n;hsh[N]=h;head[N]=-1;par[N]=-1;pmv[N]=0;flag[N]=0;
+    tab[-1-slot]=N+1;var id=N++;
+    if(N*2>tab.length)rehash();
+    return id;
+  }
+  function addEdge(u,v,m){if(NE>=eto.length){var k=NE+1;eto=grow(eto,k);enext=grow(enext,k);emv=grow(emv,k);}eto[NE]=v;emv[NE]=m;enext[NE]=head[u];head[u]=NE;NE++;}
+  function hasEdge(u,v){for(var e=head[u];e>=0;e=enext[e])if(eto[e]===v)return true;return false;}
+  // Every legal move from a position: a pile moves onto the pile 1 or 3 to its left if their top cards share a suit or rank.
+  // The children go into SC (52 bytes apart) and their moves into CM, as pile<<1|leap.
+  function children(id){
+    var n=len[id],p=off[id],k=0;
+    for(var i=1;i<n;i++){var c=A[p+i];
+      for(var leap=0;leap<2;leap++){var d=leap?3:1;if(i<d)continue;var t=A[p+i-d],x=c^t;
+        if((x&0xF0)===0||(x&0x0F)===0){var o=k*52,j;
+          for(j=0;j<i;j++)SC[o+j]=A[p+j];SC[o+i-d]=c;for(j=i+1;j<n;j++)SC[o+j-1]=A[p+j];
+          CM[k]=i<<1|leap;k++;}}}
+    return k;
+  }
+  function expand(id){
+    if(flag[id]&1)return;
+    var k=children(id),n=len[id]-1;
+    for(var j=0;j<k;j++){var o=j*52,h=hashOf(SC,o,n),c=find(SC,o,n,h);
+      if(c<0){c=insert(SC,o,n,h,c);par[c]=id;pmv[c]=CM[j];}
+      if(!hasEdge(id,c))addEdge(id,c,CM[j]);}
+    flag[id]|=1;
+  }
+  // The solver's dead-end test: the top cards other than the leftmost must be linked by shared suits and ranks,
+  // and the leftmost card (which never moves) must match one of them.
+  function uf(x){while(UF[x]!==x){UF[x]=UF[UF[x]];x=UF[x];}return x;}
+  function viable(o,n){
+    if(n<=1)return true;
+    var i,j;for(i=0;i<17;i++)UF[i]=i;
+    for(j=1;j<n;j++){var c=SC[o+j],a=uf(c>>4),b=uf(4+(c&15));if(a!==b)UF[a]=b;}
+    var r=uf(SC[o+1]>>4);for(j=2;j<n;j++)if(uf(SC[o+j]>>4)!==r)return false;
+    var L=SC[o];for(j=1;j<n;j++){var x=SC[o+j]^L;if((x&0xF0)===0||(x&0x0F)===0)return true;}
+    return false;
+  }
+  function progress(force){
+    var t=now();if(!force&&t-lastPost<120)return;lastPost=t;
+    self.postMessage({type:'progress',phase:phase,nodes:N,budget:budget,ms:Math.round(t-t0)});
+  }
+  // Every position below v, in order of depth, until cap new positions have been added. Says whether it met a win.
+  function exhaust(v,cap){
+    gen++;var q=[v],qi=0,start=N,won=false;if(SEEN.length<N+1)SEEN=grow(SEEN,N+1);SEEN[v]=gen;
+    while(qi<q.length){var u=q[qi++];if(len[u]===1)won=true;
+      if(!(flag[u]&1)){if(N-start>=cap)continue;expand(u);if(SEEN.length<N)SEEN=grow(SEEN,N);}
+      for(var e=head[u];e>=0;e=enext[e]){var c=eto[e];if(SEEN[c]!==gen){SEEN[c]=gen;q.push(c);}}
+      if((qi&255)===0)progress(false);}
+    return won;
+  }
+  // A random line down from v, as the solver plays them: leaps 8 times as likely as slides, never into a dead end the
+  // test can see. It stops at E piles, or where every move is such a dead end (then the position is lost: flag 2).
+  function walk(v,E){
+    var path=[v],j;
+    while(len[v]>E){
+      var k=children(v),n=len[v]-1;
+      if(k===0){flag[v]|=1;break;}
+      var tot=0;for(j=0;j<k;j++){var w=viable(j*52,n)?((CM[j]&1)?8:1):0;WT[j]=w;tot+=w;}
+      if(tot===0){flag[v]|=2;break;}
+      var r=rand()*tot,pick=k-1;for(j=0;j<k;j++){r-=WT[j];if(r<0){pick=j;break;}}
+      var next=-1;
+      for(j=0;j<k;j++){var o=j*52,h=hashOf(SC,o,n),c=find(SC,o,n,h);
+        if(c<0){if(j!==pick)continue;c=insert(SC,o,n,h,c);par[c]=v;pmv[c]=CM[j];}
+        if(!hasEdge(v,c))addEdge(v,c,CM[j]);
+        if(j===pick)next=c;}
+      v=next;path.push(v);
+    }
+    return path;
+  }
+  // A group of lines that branch like a tree: the first from the deal, each later one from a random point of the
+  // earlier ones. Each line that reaches E piles gets every position below it searched.
+  function branchOut(E,cap,ends,branches){
+    var pool=[],before=N,won=0;
+    for(var b=0;b<=branches&&N<budget;b++){
+      var s=b?pool[(rand()*pool.length)|0]:0;if(len[s]<=E)continue;
+      var p=walk(s,E),end=p[p.length-1];ends.push(end);
+      if(len[end]<=E&&exhaust(end,Math.min(cap,budget-N)))won++;
+      for(var i=0;i<p.length;i++)pool.push(p[i]);
+    }
+    return {added:N-before,won:won};
+  }
+  // The solver's own kind of search: depth first, moves in a random order that favours leaps, never into a dead end
+  // the test can see, stopping at the first win or after dfsLeft new positions. A position all of whose moves are
+  // shown lost is lost (flag 2). Says 1 for a win, 2 for lost, 0 for not known.
+  var dfsLeft=0;
+  function dfs(u){
+    if(len[u]===1)return 1;
+    if(flag[u]&2)return 2;
+    if(dfsLeft<=0)return 0;
+    var k=children(u),n=len[u]-1,j;
+    if(k===0){flag[u]|=3;return 2;}
+    var ids=[],keys=[];
+    for(j=0;j<k;j++){
+      if(!viable(j*52,n))continue;
+      var o=j*52,h=hashOf(SC,o,n),c=find(SC,o,n,h);
+      if(c<0){c=insert(SC,o,n,h,c);par[c]=u;pmv[c]=CM[j];dfsLeft--;}
+      if(!hasEdge(u,c))addEdge(u,c,CM[j]);
+      ids.push(c);keys.push(-Math.log(rand()+1e-12)/((CM[j]&1)?8:1));
+    }
+    var order=[];for(j=0;j<ids.length;j++)order.push(j);order.sort(function(a,b){return keys[a]-keys[b];});
+    var unknown=false;
+    for(j=0;j<order.length;j++){var r=dfs(ids[order[j]]);if(r===1)return 1;if(r===0)unknown=true;}
+    if(!unknown){flag[u]|=2;return 2;}
+    return 0;
+  }
+  // Groups of such searches: the first from the deal, the rest from random positions the group has reached.
+  function searchOut(cap,runs,branches){
+    var g0=N,before=N,won=0,tried=0;
+    for(var b=0;b<=branches&&N<budget;b++){
+      var s=b?g0+((rand()*(N-g0))|0):0;if(b&&N<=g0)break;if(len[s]<=1||(flag[s]&2))continue;
+      dfsLeft=Math.min(cap,budget-N);tried++;if(dfs(s)===1)won++;progress(false);
+    }
+    runs.tried+=tried;runs.won+=won;
+    return {added:N-before};
+  }
+  // Keeps the first K positions (the search went in order of depth) and the moves between them.
+  function truncate(K){
+    var m=0,cap=Math.max(1024,NE),t2=new Int32Array(cap),n2=new Int32Array(cap),m2=new Uint8Array(cap);
+    for(var u=0;u<K;u++){var e=head[u],lost=false;head[u]=-1;
+      while(e>=0){var c=eto[e],nx=enext[e];if(c<K){t2[m]=c;m2[m]=emv[e];n2[m]=head[u];head[u]=m;m++;}else lost=true;e=nx;}
+      if(lost)flag[u]&=~1;}
+    eto=t2;enext=n2;emv=m2;NE=m;N=K;used=off[K-1]+len[K-1];
+    tab.fill(0);for(var id=0;id<N;id++){var i=hsh[id]&tmask;while(tab[i])i=(i+1)&tmask;tab[i]=id+1;}
+  }
+  function playLine(line){
+    var v=0,path=[0];
+    for(var s=0;s<line.length;s++){
+      var k=children(v),n=len[v]-1,j=-1;for(var t=0;t<k;t++)if(CM[t]===line[s]){j=t;break;}
+      if(j<0)return null;
+      var o=j*52,h=hashOf(SC,o,n),c=find(SC,o,n,h);
+      if(c<0){c=insert(SC,o,n,h,c);par[c]=v;pmv[c]=CM[j];}
+      if(!hasEdge(v,c))addEdge(v,c,CM[j]);
+      v=c;path.push(v);
+    }
+    return path;
+  }
+  function build(q){
+    t0=now();lastPost=0;reset();q2w=q.parentWeight||0;budget=Math.max(16,q.budget|0);rng=(q.rng>>>0)||0x2545F491;
+    var rc=new Uint8Array(q.cards),h0=hashOf(rc,0,rc.length);insert(rc,0,rc.length,h0,find(rc,0,rc.length,h0));
+    var E=q.endPiles||15,top=Math.max(1,Math.floor(budget*(q.top||0.15))),limit=t0+(q.timeLimit||120000);
+    var cap1=q.skipFull?top:budget,u=0;
+    phase='Searching every position';
+    while(u<N&&N<cap1){expand(u);u++;if((u&1023)===0)progress(false);}
+    var complete=u>=N,dives=0,diveEnds=[],linePath=null;divesWonRuns=-1;
+    if(!complete){
+      if(N>top)truncate(top);
+      if(q.line){phase='Adding the known winning line';linePath=playLine(q.line);
+        if(linePath){for(var s=0;s<linePath.length;s++)if(len[linePath[s]]===E+3){exhaust(linePath[s],Math.floor(budget*0.15));break;}}}
+      phase='Playing random lines down the tree';
+      var endCap=q.endCap||Math.max(300,Math.min(8000,Math.floor(budget/150))),idle=0,stop=Math.min(limit,now()+Math.max(6000,budget/50));
+      var runs={tried:0,won:0};
+      while(N<budget&&now()<stop&&idle<300){
+        var r=q.method==='walk'?branchOut(E,endCap,diveEnds,7):searchOut(q.searchCap||Math.max(2000,Math.min(6000,Math.round(budget/170))),runs,q.branches==null?7:q.branches);
+        idle=r.added?0:idle+1;progress(false);}
+      dives=q.method==='walk'?diveEnds.length:runs.tried;if(q.method!=='walk')divesWonRuns=runs.won;
+    }
+    phase='Working out which positions win';progress(true);
+    return finish(complete,dives,diveEnds,linePath);
+  }
+  // Which positions can still win, the fewest piles each can reach, and how many lines win: from the bottom up.
+  var q2w=0;
+  function finish(complete,dives,diveEnds,linePath){
+    var i,e,u,d,rootLen=len[0],cnt=new Int32Array(54),ord=new Int32Array(N);
+    for(i=0;i<N;i++)cnt[len[i]+1]++;for(i=1;i<54;i++)cnt[i]+=cnt[i-1];
+    var fill=cnt.slice();for(i=0;i<N;i++)ord[fill[len[i]]++]=i;
+    var st=new Uint8Array(N),best=new Uint8Array(N),wins=new Float64Array(N),lines=new Float64Array(N);
+    for(var k=0;k<N;k++){u=ord[k];
+      if(len[u]===1){st[u]=1;best[u]=1;wins[u]=1;lines[u]=1;continue;}
+      var anyWin=false,allDead=true,b=len[u],w=0,l=0,deg=0;
+      for(e=head[u];e>=0;e=enext[e]){var c=eto[e];deg++;if(st[c]===1)anyWin=true;if(st[c]!==2)allDead=false;if(best[c]<b)b=best[c];w+=wins[c];l+=lines[c];}
+      best[u]=b;wins[u]=w;lines[u]=deg?l:1;
+      st[u]=anyWin?1:(((flag[u]&1)&&allDead)||(flag[u]&2))?2:0;}
+    // Layout: a ring for each move made, the deal at the centre; each position near the average angle of the
+    // positions it comes from, spread apart along its ring.
+    phase='Laying out';progress(true);
+    var D=new Uint8Array(N),maxD=0;for(i=0;i<N;i++){D[i]=rootLen-len[i];if(D[i]>maxD)maxD=D[i];}
+    var ls=new Int32Array(maxD+2);for(i=0;i<N;i++)ls[D[i]+1]++;for(d=0;d<=maxD;d++)ls[d+1]+=ls[d];
+    var lo=new Int32Array(N),lf=ls.slice();for(i=0;i<N;i++)lo[lf[D[i]]++]=i;
+    var th=new Float64Array(N),ra=new Float32Array(N),cs=new Float64Array(N),sn=new Float64Array(N),key=new Float64Array(N);
+    var TAU=Math.PI*2,S=1,MIN=0.11,FPW=q2w||4;
+    for(d=0;d<maxD;d++){
+      // The parent a position is drawn joined to (the first found) counts four times, which keeps those lines short.
+      for(k=ls[d];k<ls[d+1];k++){u=lo[k];var cu=Math.cos(th[u]),su=Math.sin(th[u]);
+        for(e=head[u];e>=0;e=enext[e]){var wv=par[eto[e]]===u?FPW:1;cs[eto[e]]+=wv*cu;sn[eto[e]]+=wv*su;}}
+      var a0=ls[d+1],n=ls[d+2]-a0;if(n<=0)continue;
+      var R=(d+1)*S,idx=new Int32Array(n);
+      for(k=0;k<n;k++){u=lo[a0+k];idx[k]=u;var t=Math.atan2(sn[u],cs[u]);key[u]=t<0?t+TAU:t;}
+      idx.sort(function(x,y){return key[x]-key[y]||x-y;});
+      placeRing(idx,n,R,S,MIN,key,th,ra,TAU);
+    }
+    var H=0.8,pos=new Float32Array(3*N),bx=[Infinity,-Infinity,Infinity,-Infinity,Infinity,-Infinity];
+    function box(b,x,y,z){if(x<b[0])b[0]=x;if(x>b[1])b[1]=x;if(y<b[2])b[2]=y;if(y>b[3])b[3]=y;if(z<b[4])b[4]=z;if(z>b[5])b[5]=z;}
+    for(i=0;i<N;i++){var x=ra[i]*Math.cos(th[i]),y=-D[i]*H,z=ra[i]*Math.sin(th[i]);pos[3*i]=x;pos[3*i+1]=y;pos[3*i+2]=z;box(bx,x,y,z);}
+    // The spindle: each card covered by a move pushes the position towards that card's place in the deal (its row bent
+    // into a circle). Moves that don't interfere commute, so they draw as parallelograms; with every card but one
+    // covered the sum comes back near the middle.
+    var ux=new Float64Array(64),uz=new Float64Array(64),sx=new Float64Array(N),sz=new Float64Array(N),pos2=new Float32Array(3*N),bx2=[Infinity,-Infinity,Infinity,-Infinity,Infinity,-Infinity];
+    for(k=0;k<rootLen;k++){var cb=A[off[0]+k],an=TAU*k/rootLen;ux[cb]=Math.cos(an);uz[cb]=Math.sin(an);}
+    var XS=2.6,J=0.45;
+    for(i=0;i<N;i++){
+      if(i>0){var pp=par[i],mv=pmv[i],cov=A[off[pp]+(mv>>1)-((mv&1)?3:1)];sx[i]=sx[pp]+ux[cov];sz[i]=sz[pp]+uz[cov];}
+      var hh=hsh[i],ja=TAU*(hh&1023)/1024,jr=i?J*((hh>>>10)&255)/255:0;
+      var x2=sx[i]*XS+jr*Math.cos(ja),y2=-D[i]*H,z2=sz[i]*XS+jr*Math.sin(ja);pos2[3*i]=x2;pos2[3*i+1]=y2;pos2[3*i+2]=z2;box(bx2,x2,y2,z2);}
+    // Moves as lists per position, and each depth's counts.
+    var es=new Int32Array(N+1),et=new Int32Array(NE),em=new Uint8Array(NE);
+    for(u=0;u<N;u++){var c2=0;for(e=head[u];e>=0;e=enext[e])c2++;es[u+1]=es[u]+c2;}
+    for(u=0;u<N;u++){var p=es[u];for(e=head[u];e>=0;e=enext[e]){et[p]=eto[e];em[p]=emv[e];p++;}}
+    var layers=[];for(d=0;d<=maxD;d++)layers.push([0,0,0,0]);
+    var nWin=0,nDead=0,nUnk=0,nOne=0,nStuck=0;
+    for(i=0;i<N;i++){var L=layers[D[i]];L[0]++;L[1+st[i]]++;if(st[i]===1)nWin++;else if(st[i]===2)nDead++;else nUnk++;if(len[i]===1)nOne++;
+      if((flag[i]&1)&&es[i+1]===es[i]&&len[i]>1)nStuck++;}
+    var divesWon=0;for(i=0;i<diveEnds.length;i++)if(st[diveEnds[i]]===1)divesWon++;if(divesWonRuns>=0)divesWon=divesWonRuns;
+    var cards=A.slice(0,used),coff=off.slice(0,N),clen=len.slice(0,N),parent=par.slice(0,N),pmove=pmv.slice(0,N),expanded=new Uint8Array(N);
+    for(i=0;i<N;i++)expanded[i]=flag[i]&3;
+    var msg={type:'graph',n:N,ne:NE,complete:complete,dives:dives,divesWon:divesWon,linePath:linePath?Int32Array.from(linePath):null,
+      pos:pos,bounds:bx,pos2:pos2,bounds2:bx2,depth:D,len:clen,status:st,best:best,wins:wins,lines:lines,parent:parent,pmove:pmove,expanded:expanded,es:es,et:et,em:em,
+      cards:cards,coff:coff,layers:layers,maxDepth:maxD,counts:{win:nWin,dead:nDead,unknown:nUnk,won:nOne,stuck:nStuck},ms:Math.round(now()-t0)};
+    var tr=[pos.buffer,pos2.buffer,D.buffer,clen.buffer,st.buffer,best.buffer,wins.buffer,lines.buffer,parent.buffer,pmove.buffer,expanded.buffer,es.buffer,et.buffer,em.buffer,cards.buffer,coff.buffer];
+    if(msg.linePath)tr.push(msg.linePath.buffer);
+    return {msg:msg,transfer:tr};
+  }
+  function placeRing(idx,n,R,S,MIN,key,th,ra,TAU){
+    var k;
+    if(n===1){th[idx[0]]=key[idx[0]];ra[idx[0]]=R;return;}
+    var gi=n-1,gmax=key[idx[0]]+TAU-key[idx[n-1]];
+    for(k=0;k<n-1;k++){var g=key[idx[k+1]]-key[idx[k]];if(g>gmax){gmax=g;gi=k;}}
+    var seq=new Int32Array(n),kk=new Float64Array(n),p=new Float64Array(n),q2=new Float64Array(n);
+    for(k=0;k<n;k++){var j=gi+1+k,o=0;if(j>=n){j-=n;o=TAU;}seq[k]=idx[j];kk[k]=key[idx[j]]+o;}
+    var delta=MIN/R,even=TAU/n,arc;
+    if(n*delta>=TAU*0.98){var sum=0;for(k=0;k<n;k++)sum+=kk[k]-k*even;var base=sum/n;for(k=0;k<n;k++)p[k]=base+k*even;arc=even*R;}
+    else{p[0]=kk[0];for(k=1;k<n;k++)p[k]=Math.max(kk[k],p[k-1]+delta);
+      q2[n-1]=kk[n-1];for(k=n-2;k>=0;k--)q2[k]=Math.min(kk[k],q2[k+1]-delta);
+      for(k=0;k<n;k++)p[k]=(p[k]+q2[k])/2;arc=delta*R;}
+    var lanes=arc<MIN?Math.min(9,Math.ceil(MIN/arc)):1;
+    for(k=0;k<n;k++){var v=seq[k];th[v]=p[k];ra[v]=R+(lanes>1?((k%lanes)-(lanes-1)/2)*(0.78*S/lanes):0);}
+  }
+  self.onmessage=function(ev){
+    var q=ev.data;
+    if(q&&q.cmd==='build'){
+      try{var out=build(q);self.postMessage(out.msg,out.transfer);}
+      catch(err){self.postMessage({type:'error',message:String(err&&err.message||err)});}
+    }
+  };
+}
+// </engine>
+
+// ---------- examples ----------
+var EXAMPLES=[
+  {g:'Easy to win',k:'e1',seed:'1',note:'Of the first 300 deals, the one whose short searches win most often: 6 to 8 in 10, more at bigger sizes. Like almost every deal it has far too many positions to draw, so this is a sample.'},
+  {g:'Easy to win',k:'e0',seed:'0',note:'The first deal of the run, and nearly as easy: most of its short searches find a win.'},
+  {g:'Hard to win',k:'h3',seed:'3',note:'Of the first 300 deals, the one whose short searches win least often: about 1 in 10. It can be won.'},
+  {g:'Hard to win',k:'h56669828180',seed:'56669828180',note:'Won, but only by the exhaustive search: 9,983 tries and a 50 million position search failed first. The known winning line is drawn in.',
+   line:'5S>AS JC>AC 6S>QS JC>7C 6D>4D 6H>6D 7D>JD 4H>3H QC>9C 5C>2C 6H>JH AH>6H 8S>2S 9D>KD 9S>9D 8S>8H 9S>8S 7S>9S 7S>4S 7S>7D KC>6C 3S>7S 3S>TS 3S>3D 3S>JS QC>4C QC>5C AH>9H QC>QH KC>QC KC>KS AH>7H AD>AH TD>AD TD>QD TD>TC TD>8D 5D>TD 5H>5D 2H>5H 2H>TH 2H>2D 2H>4H KH>2H 6S>5S JC>8C 3S>6S 3C>3S 3C>JC KC>3C KC>KH'},
+  {g:'Hard to win',k:'h125657715076',seed:'125657715076',note:'Won only by the exhaustive search, after 9,983 failed tries. The known winning line is drawn in.',
+   line:'JC>5C 5H>5D 4S>4H 4D>AD JH>TH 6D>2D 7D>7H 4S>6S JC>JH 7C>JC 6C>7C 6C>8C 6H>6C 6H>2H KS>3S QH>6H KD>KS KD>TD 9D>KD 9D>9S QD>9D QD>QC 4C>TC QD>8D QH>KH QH>QD QH>3H 4S>5S AH>QH AH>AC AH>9H AS>AH 4S>AS 4C>4S 3D>JD 4C>KC 4C>4D 2C>4C 2C>2S 2C>9C 7S>TS 3C>2C 8S>QS 3D>3C 3D>6D 7D>3D 8H>5H 8S>8H 7S>8S 7S>7D JS>7S'},
+  {g:'Hard to win',k:'h352038064755',seed:'352038064755',note:'Won only by the exhaustive search, after 9,983 failed tries. The known winning line is drawn in.',
+   line:'TC>7C 2S>8S JS>6S 6D>AD 4S>2S 8C>KC 8C>TC JH>7H AH>3H 9C>QC QD>6D JS>JD 3D>5D 3S>4S JC>2C QH>AH 8H>8C 9S>9H AC>6C QD>3D JH>2H 3S>AS TS>5S QD>TD 3S>3C 7D>QD 9S>3S 7S>7D JS>7S JC>JS JC>5C JH>JC KH>JH KH>6H KH>KS 9S>QS 9C>9S 9C>9D TH>KH 4C>9C 4C>4H TH>5H TH>TS TH>QH 8H>TH 8D>KD 8D>8H 4C>AC 2D>8D 4D>2D 4C>4D'},
+  {g:'Hard to win',k:'h409397665371',seed:'409397665371',note:'Won only by the exhaustive search, after 9,983 failed tries. The known winning line is drawn in.',
+   line:'7C>4C QS>9S QC>QS JS>3S 7H>6H TS>2S 2D>2C TC>7C 6S>7S 8C>6C KH>TH KH>5H 6S>AS 7D>2D 7D>9D 7H>7D QH>7H QH>AH TS>JS QC>QH QC>9C TS>5S TC>QC TD>TS TD>6D 8H>4H TC>TD 5C>TC 5C>KC JD>3D JC>JD 5C>JC 8H>3H 8H>8C KS>6S 8H>2H KS>KD KS>4S AD>QD 5C>3C KS>KH 5C>AC 5D>5C 8H>JH 8S>KS 8H>8S 5D>4D AD>5D 8D>AD 8H>8D 9H>8H'},
+  {g:'Hard to win',k:'h855019547215',seed:'855019547215',note:'Won only by the exhaustive search, after 9,983 failed tries. The known winning line is drawn in.',
+   line:'8H>2H 3S>4S 4H>TH QC>2C QS>8S JS>7S TC>TS KH>5H TC>4C QH>4H 9C>TC 2S>2D AS>KS AS>AC 2S>AS 6H>JH 9C>3C JD>QD JS>2S JD>JS JD>5D 6H>6S KH>6H KH>KC 9H>KH 8D>TD JD>8D 9H>7H 9C>9H 9C>8C 9C>9S 9C>7C 3S>3H JD>7D QC>9C 3S>5S JD>KD JD>9D JD>JC 3D>4D 3D>JD AH>8H QC>5C QC>6C QC>QS QH>QC AD>6D AH>QH AD>AH 3D>AD 3S>3D'},
+  {g:'Lost',k:'l124280819596',seed:'124280819596',total:2,note:'One legal move, then stuck with 51 piles.'},
+  {g:'Lost',k:'l89126101473',seed:'89126101473',total:6,note:'Six positions in all.'},
+  {g:'Lost',k:'l907509586037',seed:'907509586037',total:84,note:'84 positions in all.'},
+  {g:'Lost',k:'l587527261691',seed:'587527261691',total:1512,note:'1,512 positions in all.'},
+  {g:'Lost',k:'l841286473413',seed:'841286473413',total:15059,note:'15,059 positions in all.'},
+  {g:'Lost',k:'l73795501709',seed:'73795501709',total:72198,note:'The middle-sized lost deal: half of the 721 have fewer positions.'},
+  {g:'Lost',k:'l202346720',seed:'202346720',total:74970,note:'The second lost deal found, and the first proved lost.'},
+  {g:'Lost',k:'l146087618593',seed:'146087618593',total:642264,note:'642,264 positions in all.'},
+  {g:'Lost',k:'l106032171823',seed:'106032171823',total:3997296,note:'3,997,296 positions in all: choose 4,000,000 to see every one.'},
+  {g:'Lost',k:'l112249515',seed:'112249515',total:19386305,note:'The first lost deal found. 19,386,305 positions, too many to draw, so this is a sample.'},
+  {g:'Lost',k:'l268817008782',seed:'268817008782',total:22066800,note:'The lost deal with the most positions: 22,066,800, too many to draw, so this is a sample.'}
+];
+var SIZES=[50000,200000,500000,1000000,2000000,4000000];
+
+// ---------- page ----------
+host.innerHTML=
+ '<canvas class="at-gl"></canvas>'+
+ '<div class="at-top"><select class="at-ex" title="Example deals"></select>'+
+ '<input class="at-seed" placeholder="Seed" spellcheck="false" autocomplete="off" title="Any seed: the same deal as acc and the game"><button class="at-go">Show</button>'+
+ '<button class="at-rand">Random deal</button><select class="at-size" title="The most positions to draw"></select></div>'+
+ '<div class="at-side at-panel"><div class="at-title"></div><div class="at-body"><div class="at-note"></div><div class="at-stats"></div>'+
+ '<canvas class="at-chart"></canvas><div class="at-chartcap">Positions after each move (log scale)</div><div class="at-legend"></div></div></div>'+
+ '<div class="at-tools">'+
+ '<div class="at-row"><button data-view="3d">3D</button><button data-view="top">Top</button><button data-view="side">Side</button></div>'+
+ '<div class="at-row"><button class="at-spin">Spin</button><button class="at-fit">Reset</button></div>'+
+ '<select class="at-shape"><option value="rings">Shape: rings</option><option value="spindle">Shape: spindle</option></select>'+
+ '<select class="at-color"><option value="outcome">Colour: win or lose</option><option value="best">Colour: fewest piles</option><option value="depth">Colour: move number</option></select>'+
+ '<select class="at-edges"><option value="tree">Lines: one way in</option><option value="all">Lines: every move</option><option value="none">Lines: none</option></select>'+
+ '<label>Glow<input type="range" class="at-glow" min="-2" max="2" step="0.1" value="0"></label>'+
+ '<div class="at-row"><button class="at-full">Full screen</button></div>'+
+ '<div class="at-row"><button class="at-save">Save picture</button><button class="at-help">?</button></div></div>'+
+ '<div class="at-node at-panel" hidden><div class="at-node-head"></div><div class="at-cards"></div>'+
+ '<div class="at-node-btns"><button class="at-explore">Explore from here</button><button class="at-close">Close</button></div></div>'+
+ '<div class="at-crumbs"></div>'+
+ '<div class="at-busy at-panel" hidden><div class="at-bar"><i></i></div><span></span></div>'+
+ '<div class="at-tip" hidden></div>'+
+ '<div class="at-helpbox at-panel" hidden>'+
+ '<p><b>A game tree of Accordion.</b> Each dot is a position and each line a move. The deal sits at the top (in the middle, seen from above) and every move takes one pile away, so each ring is one move further into the game. A position reached by different orders of moves is drawn once.</p>'+
+ '<p><span style="color:#36e08f">Green</span>: a win can still be reached. <span style="color:#ffd03c">Gold</span>: won, one pile left. <span style="color:#ff8a2a">Orange</span> to <span style="color:#c0182c">red</span>: lost; orange ends with 2 piles at best, red with more. <span style="color:#7f93c9">Blue-grey</span>: not searched.</p>'+
+ '<p>A lost deal has few enough positions to draw them all. A deal that can be won usually has far too many (something like 10<sup>17</sup>), so then every position of the first few moves is drawn, then short searches like the solver\'s: depth first, a few thousand positions each, skipping moves that its dead-end test shows cannot win, each starting from the deal or from a position an earlier one reached. In an easy deal most of them find a win; in a hard one almost none do.</p>'+
+ '<p>Drag to turn, right-drag or shift-drag to move, scroll or pinch to zoom. Click a dot to see its position and the best line from it; <i>Explore from here</i> draws the tree from that position.</p>'+
+ '<p><button class="at-helpclose">Close</button></p></div>'+
+ '<div class="at-msg at-panel" hidden></div>';
+function $(s){return host.querySelector(s);}
+var canvas=$('.at-gl'),chart=$('.at-chart'),tip=$('.at-tip'),busy=$('.at-busy'),nodeBox=$('.at-node'),side=$('.at-side');
+var exSel=$('.at-ex'),seedIn=$('.at-seed'),sizeSel=$('.at-size'),colorSel=$('.at-color'),edgeSel=$('.at-edges'),glowIn=$('.at-glow'),shapeSel=$('.at-shape');
+(function(){
+  var html='',grp='';
+  EXAMPLES.forEach(function(e){if(e.g!==grp){if(grp)html+='</optgroup>';grp=e.g;html+='<optgroup label="'+grp+'">';}
+    html+='<option value="'+e.k+'">'+e.g.replace(' to win','')+': seed '+Number(e.seed).toLocaleString('en-US')+(e.total?' ('+e.total.toLocaleString('en-US')+' positions)':'')+'</option>';});
+  exSel.innerHTML='<option value="">Examples...</option>'+html+'</optgroup>';
+  sizeSel.innerHTML=SIZES.map(function(s){return '<option value="'+s+'">Up to '+(s>=1e6?(s/1e6)+' million':(s/1e3)+',000')+' positions'+(s>=2e6?' (slow, needs a lot of memory)':'')+'</option>';}).join('');
+})();
+var mem=navigator.deviceMemory||8,small=Math.min(screen.width,screen.height)<700;
+sizeSel.value=String(small||mem<4?200000:500000);
+
+// ---------- WebGL ----------
+var gl=canvas.getContext('webgl2',{antialias:true,alpha:false,premultipliedAlpha:false})||canvas.getContext('webgl',{antialias:true,alpha:false})||canvas.getContext('experimental-webgl');
+var GL2=!!(gl&&typeof WebGL2RenderingContext!=='undefined'&&gl instanceof WebGL2RenderingContext);
+function message(t){var m=$('.at-msg');m.textContent=t;m.hidden=!t;}
+if(!gl){message('This browser has WebGL turned off, which the game tree needs.');return;}
+if(!GL2&&!gl.getExtension('OES_element_index_uint')){message('This browser\'s WebGL is too old for the game tree.');return;}
+function shader(type,src){var s=gl.createShader(type);gl.shaderSource(s,src);gl.compileShader(s);if(!gl.getShaderParameter(s,gl.COMPILE_STATUS))throw new Error(gl.getShaderInfoLog(s));return s;}
+function program(vs,fs){var p=gl.createProgram();gl.attachShader(p,shader(gl.VERTEX_SHADER,vs));gl.attachShader(p,shader(gl.FRAGMENT_SHADER,fs));
+  gl.bindAttribLocation(p,0,'p');gl.bindAttribLocation(p,1,'c');gl.linkProgram(p);if(!gl.getProgramParameter(p,gl.LINK_STATUS))throw new Error(gl.getProgramInfoLog(p));
+  return {p:p,m:gl.getUniformLocation(p,'m'),a:gl.getUniformLocation(p,'a'),s:gl.getUniformLocation(p,'s'),lo:gl.getUniformLocation(p,'lo'),hi:gl.getUniformLocation(p,'hi'),ys:gl.getUniformLocation(p,'ys'),off:gl.getUniformLocation(p,'off')};}
+var VS_P='attribute vec3 p;attribute vec4 c;uniform mat4 m;uniform float a;uniform float s;uniform float lo;uniform float hi;uniform float ys;varying vec4 v;'+
+  'void main(){vec4 q=m*vec4(p.x,p.y*ys,p.z,1.0);gl_Position=q;gl_PointSize=clamp(s/q.w,lo,hi);v=vec4(c.rgb,c.a*a);}';
+// Dots and lines add up their light (colour times weight, and weight) in a floating-point buffer; a last pass divides
+// out the colour and turns the total weight into brightness, so crowded places glow brighter but keep their colour.
+var FS_P='precision mediump float;varying vec4 v;void main(){vec2 d=gl_PointCoord-vec2(0.5);float r=dot(d,d);if(r>0.25)discard;float w=v.a*(1.0-3.6*r);gl_FragColor=vec4(v.rgb*w,w);}';
+var VS_L='attribute vec3 p;attribute vec4 c;uniform mat4 m;uniform float a;uniform float ys;uniform vec2 off;varying vec4 v;void main(){gl_Position=m*vec4(p.x,p.y*ys,p.z,1.0);gl_Position.xy+=off*gl_Position.w;v=vec4(c.rgb,c.a*a);}';
+var FS_L='precision mediump float;varying vec4 v;void main(){gl_FragColor=vec4(v.rgb*v.a,v.a);}';
+var FS_H='precision mediump float;varying vec4 v;void main(){vec2 d=gl_PointCoord-vec2(0.5);if(dot(d,d)>0.25)discard;gl_FragColor=v;}';
+var VS_T='attribute vec2 p;varying vec2 uv;void main(){uv=p*0.5+0.5;gl_Position=vec4(p,0.0,1.0);}';
+var FS_T='#ifdef GL_FRAGMENT_PRECISION_HIGH\nprecision highp float;\n#else\nprecision mediump float;\n#endif\n'+
+  'uniform sampler2D t;uniform float k;uniform vec3 bg;varying vec2 uv;void main(){vec4 s=texture2D(t,uv);float a=max(s.a,0.0);vec3 avg=s.rgb/max(a,1e-4);'+
+  'float i=1.0-exp(-k*a);float hot=clamp((k*a-8.0)/60.0,0.0,0.25);gl_FragColor=vec4(mix(bg,mix(avg,vec3(1.0),hot),i),1.0);}';
+var progP=program(VS_P,FS_P),progL=program(VS_L,FS_L),progH=program(VS_P,FS_H),progLH=program(VS_L,FS_H),progT=program(VS_T,FS_T);
+progT.t=gl.getUniformLocation(progT.p,'t');progT.k=gl.getUniformLocation(progT.p,'k');progT.bg=gl.getUniformLocation(progT.p,'bg');
+var bufPos=gl.createBuffer(),bufCol=gl.createBuffer(),bufIdx=gl.createBuffer(),bufHPos=gl.createBuffer(),bufHCol=gl.createBuffer(),bufQuad=gl.createBuffer(),bufWinE=gl.createBuffer(),bufWinP=gl.createBuffer();
+gl.bindBuffer(gl.ARRAY_BUFFER,bufQuad);gl.bufferData(gl.ARRAY_BUFFER,new Float32Array([-1,-1,3,-1,-1,3]),gl.STATIC_DRAW);
+var hdrFmt=(function(){
+  if(GL2)return gl.getExtension('EXT_color_buffer_float')?{i:gl.RGBA16F,f:gl.RGBA,t:gl.HALF_FLOAT}:null;
+  var a=gl.getExtension('OES_texture_half_float'),b=gl.getExtension('EXT_color_buffer_half_float');return a&&b?{i:gl.RGBA,f:gl.RGBA,t:a.HALF_FLOAT_OES}:null;})();
+var hdrTex=null,hdrFb=null,hdrW=0,hdrH=0;
+function ensureHDR(w,h){
+  if(!hdrFmt)return false;if(hdrTex&&hdrW===w&&hdrH===h)return true;
+  if(!hdrTex){hdrTex=gl.createTexture();hdrFb=gl.createFramebuffer();}
+  gl.bindTexture(gl.TEXTURE_2D,hdrTex);gl.texImage2D(gl.TEXTURE_2D,0,hdrFmt.i,w,h,0,hdrFmt.f,hdrFmt.t,null);
+  gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_MIN_FILTER,gl.NEAREST);gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_MAG_FILTER,gl.NEAREST);
+  gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_WRAP_S,gl.CLAMP_TO_EDGE);gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_WRAP_T,gl.CLAMP_TO_EDGE);
+  gl.bindFramebuffer(gl.FRAMEBUFFER,hdrFb);gl.framebufferTexture2D(gl.FRAMEBUFFER,gl.COLOR_ATTACHMENT0,gl.TEXTURE_2D,hdrTex,0);
+  var ok=gl.checkFramebufferStatus(gl.FRAMEBUFFER)===gl.FRAMEBUFFER_COMPLETE;gl.bindFramebuffer(gl.FRAMEBUFFER,null);
+  if(!ok){hdrFmt=null;return false;}hdrW=w;hdrH=h;return true;
+}
+var G=null,edgeCount=0,winEdges=0,winPoints=0,edgeNote='',hl=null,dpr=1,saveScale=1,lastM=null,dirty=true;
+var cam={yaw:0.7,pitch:0.42,dist:100,tx:0,ty:-20,tz:0,ortho:false,oh:50,fov:0.75},view='3d',spin=false,lastT=0;
+
+function perspective(f,asp,n,fa){var t=1/Math.tan(f/2);return [t/asp,0,0,0, 0,t,0,0, 0,0,(fa+n)/(n-fa),-1, 0,0,2*fa*n/(n-fa),0];}
+function orthographic(h,asp,n,fa){return [1/(h*asp),0,0,0, 0,1/h,0,0, 0,0,-2/(fa-n),0, 0,0,-(fa+n)/(fa-n),1];}
+function mul(a,b){var o=new Array(16);for(var c=0;c<4;c++)for(var r=0;r<4;r++)o[c*4+r]=a[r]*b[c*4]+a[4+r]*b[c*4+1]+a[8+r]*b[c*4+2]+a[12+r]*b[c*4+3];return o;}
+function camVectors(){
+  var cp=Math.cos(cam.pitch),sp=Math.sin(cam.pitch),cy=Math.cos(cam.yaw),sy=Math.sin(cam.yaw);
+  return {f:[-cp*sy,-sp,-cp*cy],r:[cy,0,-sy],u:[-sp*sy,cp,-sp*cy],e:[cam.tx+cam.dist*cp*sy,cam.ty+cam.dist*sp,cam.tz+cam.dist*cp*cy]};
+}
+function viewMatrix(){var v=camVectors(),r=v.r,u=v.u,f=v.f,e=v.e;
+  return [r[0],u[0],-f[0],0, r[1],u[1],-f[1],0, r[2],u[2],-f[2],0, -(r[0]*e[0]+r[1]*e[1]+r[2]*e[2]),-(u[0]*e[0]+u[1]*e[1]+u[2]*e[2]),(f[0]*e[0]+f[1]*e[1]+f[2]*e[2]),1];}
+function mvp(){var asp=canvas.width/Math.max(1,canvas.height),n=cam.dist*0.002,fa=cam.dist*6+400;
+  var P=cam.ortho?orthographic(cam.oh,asp,-fa,fa):perspective(cam.fov,asp,n,fa);return mul(P,viewMatrix());}
+function worldPerPixel(){return (cam.ortho?2*cam.oh:2*cam.dist*Math.tan(cam.fov/2))/Math.max(1,canvas.height);}
+function setYs(v){[progP,progL,progH,progLH].forEach(function(o){gl.useProgram(o.p);gl.uniform1f(o.ys,v);});}
+function bindAttribs(pb,cb){gl.bindBuffer(gl.ARRAY_BUFFER,pb);gl.enableVertexAttribArray(0);gl.vertexAttribPointer(0,3,gl.FLOAT,false,0,0);
+  gl.bindBuffer(gl.ARRAY_BUFFER,cb);gl.enableVertexAttribArray(1);gl.vertexAttribPointer(1,4,gl.UNSIGNED_BYTE,true,0,0);}
+function glow(){return Math.pow(2,parseFloat(glowIn.value)||0);}
+var BG=[0.02,0.024,0.04];
+function draw(){
+  dirty=false;var W=canvas.width,H=canvas.height;
+  gl.bindFramebuffer(gl.FRAMEBUFFER,null);gl.viewport(0,0,W,H);gl.clearColor(BG[0],BG[1],BG[2],1);gl.clear(gl.COLOR_BUFFER_BIT);
+  if(!G)return;
+  var M=mvp();lastM=M;var n=G.n,px=dpr*saveScale,g=glow(),hdr=ensureHDR(W,H);
+  var focal=cam.ortho?H/(2*cam.oh):H/(2*Math.tan(cam.fov/2));
+  // Without the float buffer, light adds straight onto the screen, so it is dimmed by how many dots there are.
+  // Half floats overflow at 65,504, which the middle of a big tree can pass, so the float buffer gets 1/32 of the light.
+  var dens=hdr?1/32:Math.min(1,Math.pow(4000/Math.max(n,1),0.32));
+  gl.disable(gl.DEPTH_TEST);gl.enable(gl.BLEND);gl.blendFunc(gl.ONE,gl.ONE);
+  if(hdr){gl.bindFramebuffer(gl.FRAMEBUFFER,hdrFb);gl.viewport(0,0,W,H);gl.clearColor(0,0,0,0);gl.clear(gl.COLOR_BUFFER_BIT);}
+  if(edgeCount){gl.useProgram(progL.p);bindAttribs(bufPos,bufCol);gl.uniformMatrix4fv(progL.m,false,M);
+    gl.uniform1f(progL.a,(edgeSel.value==='all'?0.09:0.2)*dens*(hdr?1:g));gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER,bufIdx);gl.drawElements(gl.LINES,edgeCount*2,gl.UNSIGNED_INT,0);}
+  gl.useProgram(progP.p);bindAttribs(bufPos,bufCol);gl.uniformMatrix4fv(progP.m,false,M);
+  gl.uniform1f(progP.s,focal*0.16);gl.uniform1f(progP.lo,1.3*px);gl.uniform1f(progP.hi,9*px);
+  gl.uniform1f(progP.a,(hdr?dens:Math.max(0.08,dens)*g));gl.drawArrays(gl.POINTS,0,n);
+  if(hdr){gl.bindFramebuffer(gl.FRAMEBUFFER,null);gl.viewport(0,0,W,H);gl.disable(gl.BLEND);gl.useProgram(progT.p);
+    gl.bindBuffer(gl.ARRAY_BUFFER,bufQuad);gl.enableVertexAttribArray(0);gl.vertexAttribPointer(0,2,gl.FLOAT,false,0,0);gl.disableVertexAttribArray(1);
+    gl.activeTexture(gl.TEXTURE0);gl.bindTexture(gl.TEXTURE_2D,hdrTex);gl.uniform1i(progT.t,0);gl.uniform3f(progT.bg,BG[0],BG[1],BG[2]);
+    gl.uniform1f(progT.k,exposure()*g*32);gl.drawArrays(gl.TRIANGLES,0,3);gl.enable(gl.BLEND);}
+  // The winning positions and the moves between them, drawn again on top so that they stand out.
+  if(winPoints&&colorSel.value!=='depth'){gl.blendFunc(gl.SRC_ALPHA,gl.ONE_MINUS_SRC_ALPHA);
+    if(winEdges){gl.useProgram(progLH.p);bindAttribs(bufPos,bufCol);gl.uniformMatrix4fv(progLH.m,false,M);gl.uniform1f(progLH.a,0.5*Math.min(1,g));gl.uniform2f(progLH.off,0,0);
+      gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER,bufWinE);gl.drawElements(gl.LINES,winEdges*2,gl.UNSIGNED_INT,0);}
+    gl.useProgram(progH.p);bindAttribs(bufPos,bufCol);gl.uniformMatrix4fv(progH.m,false,M);gl.uniform1f(progH.a,0.85);
+    gl.uniform1f(progH.s,focal*0.13);gl.uniform1f(progH.lo,1.8*px);gl.uniform1f(progH.hi,6*px);
+    gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER,bufWinP);gl.drawElements(gl.POINTS,winPoints,gl.UNSIGNED_INT,0);}
+  if(hl&&hl.n){gl.blendFunc(gl.SRC_ALPHA,gl.ONE_MINUS_SRC_ALPHA);
+    gl.useProgram(progLH.p);bindAttribs(bufHPos,bufHCol);gl.uniformMatrix4fv(progLH.m,false,M);gl.uniform1f(progLH.a,1);
+    var ox=2*px/W,oy=2*px/H,offs=[[0,0],[ox,0],[-ox,0],[0,oy],[0,-oy]];
+    for(var o=0;o<offs.length;o++){gl.uniform2f(progLH.off,offs[o][0],offs[o][1]);gl.drawArrays(gl.LINE_STRIP,0,hl.n);}
+    gl.uniform2f(progLH.off,0,0);
+    gl.useProgram(progH.p);gl.uniformMatrix4fv(progH.m,false,M);gl.uniform1f(progH.s,focal*0.28);gl.uniform1f(progH.lo,3*px);gl.uniform1f(progH.hi,11*px);gl.uniform1f(progH.a,1);
+    gl.drawArrays(gl.POINTS,0,hl.n);}
+}
+// How bright one dot is: dimmer for big trees, whose dots pile up more, and brighter when zoomed in, which spreads them.
+function exposure(){var z=cam.ortho?(cam.fitOh||cam.oh)/cam.oh:(cam.fitDist||cam.dist)/cam.dist;
+  return Math.min(4,Math.max(0.03,Math.min(2.2,Math.sqrt(50000/Math.max(G.n,1))))*Math.pow(Math.max(0.3,Math.min(50,z)),0.8));}
+function frame(t){
+  var dt=lastT?Math.min(0.1,(t-lastT)/1000):0;lastT=t;
+  if(spin&&G){cam.yaw+=dt*0.18;dirty=true;}
+  if(dirty)draw();
+  requestAnimationFrame(frame);
+}
+function resize(){
+  // Narrow blocks (a phone, or a narrow blog column) get the compact layout; the panels go below the top row(s).
+  var narrow=host.clientWidth<760;host.classList.toggle('at-narrow',narrow);
+  var tb=$('.at-top');host.style.setProperty('--tb',(tb.offsetTop+tb.offsetHeight+8)+'px');
+  if(narrow&&!side.getAttribute('data-touched'))side.classList.add('at-folded');
+  dpr=Math.min(window.devicePixelRatio||1,2);
+  var w=Math.max(1,Math.round(host.clientWidth*dpr)),h=Math.max(1,Math.round(host.clientHeight*dpr));
+  if(canvas.width!==w||canvas.height!==h){canvas.width=w;canvas.height=h;dirty=true;}
+}
+if(window.ResizeObserver)new ResizeObserver(resize).observe(host);else window.addEventListener('resize',resize);
+resize();requestAnimationFrame(frame);
+
+// ---------- colours ----------
+var GOLD=[255,208,60],WIN=[54,224,143],UNK=[95,118,180],WHITE=[255,255,255];
+var TURBO=[[48,18,59],[67,113,232],[38,188,225],[46,238,153],[164,252,60],[239,205,58],[251,126,33],[200,40,10]];
+function ramp(stops,t){t=Math.max(0,Math.min(1,t))*(stops.length-1);var i=Math.min(stops.length-2,Math.floor(t)),f=t-i,a=stops[i],b=stops[i+1];
+  return [a[0]+(b[0]-a[0])*f|0,a[1]+(b[1]-a[1])*f|0,a[2]+(b[2]-a[2])*f|0];}
+var LOSS=[[255,160,40],[245,95,40],[205,30,45],[140,20,70]];
+var BEST=[[255,160,40],[230,70,60],[170,40,140],[90,60,200],[50,90,170]];
+function colourOf(i,mode){
+  if(i===0)return WHITE;
+  if(mode==='depth')return ramp(TURBO,G.depth[i]/Math.max(1,G.maxDepth));
+  var s=G.status[i],b=G.best[i];
+  if(mode==='best'){if(b===1)return GOLD;return ramp(BEST,(b-2)/14);}
+  if(G.len[i]===1)return GOLD;
+  if(s===1)return WIN;if(s===2)return ramp(LOSS,(b-lossBase())/8);return UNK;
+}
+// Lost positions are coloured by how far they fall short of the best the deal allows: 2 piles in a deal that can be
+// won, the deal's own best in a lost one.
+function lossBase(){return G.status[0]===2?G.best[0]:2;}
+function legend(mode){
+  function dot(c,t){return '<span><i style="background:rgb('+c.join(',')+')"></i>'+t+'</span>';}
+  if(mode==='depth')return dot(TURBO[0],'early')+dot(TURBO[3],'middle')+dot(TURBO[7],'late')+dot(WHITE,'the deal');
+  if(mode==='best')return dot(GOLD,'can win')+dot(BEST[0],'2 piles at best')+dot(ramp(BEST,0.5),'9')+dot(BEST[4],'16 or more');
+  var b=lossBase();
+  return dot(WHITE,'the deal')+dot(WIN,'can still win')+dot(GOLD,'won')+dot(LOSS[0],'lost, '+b+' piles at best'+(b>2?' (the best there is)':''))+
+    dot(LOSS[2],'lost, '+(b+4)+' or more')+dot(UNK,'not searched');
+}
+function recolour(){
+  if(!G)return;var n=G.n,mode=colorSel.value,c=new Uint8Array(4*n);
+  // Wins weigh most and unsearched positions least, so the few winning lines stand out of the crowd.
+  for(var i=0;i<n;i++){var k=colourOf(i,mode),s=G.status[i],w=mode==='depth'?200:(i===0||s===1)?255:s===2?(G.complete?150:105):60;
+    c[4*i]=k[0];c[4*i+1]=k[1];c[4*i+2]=k[2];c[4*i+3]=w;}
+  gl.bindBuffer(gl.ARRAY_BUFFER,bufCol);gl.bufferData(gl.ARRAY_BUFFER,c,gl.STATIC_DRAW);
+  $('.at-legend').innerHTML=legend(mode);dirty=true;
+}
+var EDGE_CAP=6000000;
+function rebuildEdges(){
+  edgeCount=0;edgeNote='';if(!G)return;var mode=edgeSel.value,idx,k=0,i;
+  if(mode==='tree'){idx=new Uint32Array(2*Math.max(1,G.n-1));for(i=1;i<G.n;i++){if(G.parent[i]>=0){idx[k++]=G.parent[i];idx[k++]=i;}}}
+  else if(mode==='all'){var ne=Math.min(G.ne,EDGE_CAP);idx=new Uint32Array(2*Math.max(1,ne));
+    for(var u=0;u<G.n&&k<2*ne;u++)for(var e=G.es[u];e<G.es[u+1]&&k<2*ne;e++){idx[k++]=u;idx[k++]=G.et[e];}
+    if(G.ne>ne)edgeNote='Drawing '+fmt(ne)+' of the '+fmt(G.ne)+' moves.';}
+  if(k){gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER,bufIdx);gl.bufferData(gl.ELEMENT_ARRAY_BUFFER,idx.subarray(0,k),gl.STATIC_DRAW);edgeCount=k/2;}
+  // The winning part: positions that can still win, and the drawn moves between two of them.
+  var st=G.status,wp=0,we=0,P=new Uint32Array(Math.max(1,G.counts.win+1)),E2=[];
+  for(i=0;i<G.n;i++)if(st[i]===1)P[wp++]=i;
+  if(mode!=='none')for(i=0;i<k;i+=2)if(st[idx[i]]===1&&st[idx[i+1]]===1){E2.push(idx[i],idx[i+1]);}
+  winPoints=wp;winEdges=E2.length/2;
+  if(wp){gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER,bufWinP);gl.bufferData(gl.ELEMENT_ARRAY_BUFFER,P.subarray(0,wp),gl.STATIC_DRAW);}
+  if(winEdges){gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER,bufWinE);gl.bufferData(gl.ELEMENT_ARRAY_BUFFER,new Uint32Array(E2),gl.STATIC_DRAW);}
+  dirty=true;
+}
+
+// ---------- the camera ----------
+function fit(v){
+  if(!G)return;var b=G.bounds.slice();b[2]*=G.ys;b[3]*=G.ys;var cx=(b[0]+b[1])/2,cy=(b[2]+b[3])/2,cz=(b[4]+b[5])/2;
+  var rx=Math.max(1,(b[1]-b[0])/2,(b[5]-b[4])/2),ry=Math.max(1,(b[3]-b[2])/2),r=Math.sqrt(rx*rx+ry*ry);
+  var asp=canvas.width/Math.max(1,canvas.height);
+  view=v||view;cam.tx=cx;cam.ty=cy;cam.tz=cz;
+  if(view==='top'){cam.yaw=0;cam.pitch=Math.PI/2-1e-4;cam.ortho=true;cam.oh=Math.max(rx,rx/asp)*1.04;cam.dist=r*3;}
+  else if(view==='side'){cam.yaw=0;cam.pitch=0;cam.ortho=true;cam.oh=Math.max(ry,rx/asp)*1.08;cam.dist=r*3;}
+  else{cam.yaw=0.7;cam.pitch=0.42;cam.ortho=false;cam.dist=r/Math.sin(cam.fov/2)*(asp<1?1.05/asp:0.95);}
+  if(cam.ortho)cam.fitOh=cam.oh;else cam.fitDist=cam.dist;
+  host.querySelectorAll('[data-view]').forEach(function(b){b.classList.toggle('on',b.getAttribute('data-view')===view);});
+  dirty=true;
+}
+var drag=null,pointers={},pinch=null;
+canvas.addEventListener('contextmenu',function(e){e.preventDefault();});
+canvas.addEventListener('pointerdown',function(e){
+  canvas.setPointerCapture(e.pointerId);pointers[e.pointerId]={x:e.clientX,y:e.clientY};
+  var ids=Object.keys(pointers);
+  if(ids.length===2){var a=pointers[ids[0]],b=pointers[ids[1]];pinch={d:Math.hypot(a.x-b.x,a.y-b.y),x:(a.x+b.x)/2,y:(a.y+b.y)/2};drag=null;return;}
+  drag={x:e.clientX,y:e.clientY,sx:e.clientX,sy:e.clientY,pan:e.button===2||e.button===1||e.shiftKey,moved:false};
+  canvas.classList.add('at-dragging');hideTip();
+});
+canvas.addEventListener('pointermove',function(e){
+  if(pointers[e.pointerId]){pointers[e.pointerId]={x:e.clientX,y:e.clientY};}
+  if(pinch){var ids=Object.keys(pointers);if(ids.length<2)return;var a=pointers[ids[0]],b=pointers[ids[1]],d=Math.hypot(a.x-b.x,a.y-b.y),mx=(a.x+b.x)/2,my=(a.y+b.y)/2;
+    panBy(mx-pinch.x,my-pinch.y);zoomAt(pinch.d/Math.max(1,d),mx,my);pinch={d:d,x:mx,y:my};return;}
+  if(drag){var dx=e.clientX-drag.x,dy=e.clientY-drag.y;drag.x=e.clientX;drag.y=e.clientY;
+    if(Math.abs(e.clientX-drag.sx)+Math.abs(e.clientY-drag.sy)>4)drag.moved=true;
+    if(drag.pan)panBy(dx,dy);else{cam.yaw-=dx*0.006;cam.pitch=Math.max(-1.5707,Math.min(1.5707,cam.pitch+dy*0.006));if(view!=='3d'){view='3d';fitButtons();}}
+    dirty=true;return;}
+  hoverAt(e);
+});
+function endPointer(e){
+  delete pointers[e.pointerId];
+  if(pinch){if(Object.keys(pointers).length<2)pinch=null;drag=null;return;}
+  if(drag&&!drag.moved&&e.type==='pointerup'){var r=canvas.getBoundingClientRect();var i=pick(e.clientX-r.left,e.clientY-r.top);select(i);}
+  drag=null;canvas.classList.remove('at-dragging');
+}
+canvas.addEventListener('pointerup',endPointer);canvas.addEventListener('pointercancel',endPointer);
+canvas.addEventListener('pointerleave',function(){hideTip();});
+canvas.addEventListener('wheel',function(e){e.preventDefault();zoomAt(Math.exp(e.deltaY*(e.deltaMode?0.05:0.0015)),e.clientX,e.clientY);},{passive:false});
+canvas.addEventListener('dblclick',function(){if(G&&G.sel>=0){var i=G.sel;cam.tx=G.pos[3*i];cam.ty=G.pos[3*i+1]*G.ys;cam.tz=G.pos[3*i+2];if(cam.ortho)cam.oh*=0.5;else cam.dist*=0.5;dirty=true;}});
+function fitButtons(){host.querySelectorAll('[data-view]').forEach(function(b){b.classList.toggle('on',b.getAttribute('data-view')===view);});}
+function panBy(dx,dy){var v=camVectors(),w=worldPerPixel()*dpr;cam.tx+=(-dx*v.r[0]+dy*v.u[0])*w;cam.ty+=(-dx*v.r[1]+dy*v.u[1])*w;cam.tz+=(-dx*v.r[2]+dy*v.u[2])*w;dirty=true;}
+function zoomAt(f,cx,cy){
+  var r=canvas.getBoundingClientRect(),v=camVectors(),w=worldPerPixel()*dpr;
+  var ox=(cx-r.left-r.width/2)*w,oy=(r.height/2-(cy-r.top))*w;
+  f=Math.max(0.2,Math.min(5,f));
+  cam.tx+=(ox*v.r[0]+oy*v.u[0])*(1-f);cam.ty+=(ox*v.r[1]+oy*v.u[1])*(1-f);cam.tz+=(ox*v.r[2]+oy*v.u[2])*(1-f);
+  if(cam.ortho)cam.oh=Math.max(0.05,cam.oh*f);else cam.dist=Math.max(0.2,cam.dist*f);dirty=true;
+}
+function pick(mx,my){
+  if(!G||!lastM)return -1;var ys=G.ys,M=lastM,P=G.pos,W=canvas.width,H=canvas.height,x=mx*dpr,y=my*dpr,best=-1,bd=(9*dpr)*(9*dpr),bz=Infinity;
+  for(var i=0;i<G.n;i++){var px=P[3*i],py=P[3*i+1]*ys,pz=P[3*i+2],w=M[3]*px+M[7]*py+M[11]*pz+M[15];if(w<=0)continue;
+    var sx=((M[0]*px+M[4]*py+M[8]*pz+M[12])/w*0.5+0.5)*W,sy=(0.5-(M[1]*px+M[5]*py+M[9]*pz+M[13])/w*0.5)*H,d=(sx-x)*(sx-x)+(sy-y)*(sy-y);
+    if(d<bd-0.5||(d<bd+0.5&&w<bz)){bd=d;best=i;bz=w;}}
+  return best;
+}
+var hoverTimer=0,hoverEv=null;
+function hoverAt(e){hoverEv=e;if(hoverTimer)return;hoverTimer=setTimeout(function(){hoverTimer=0;if(!G||drag||!hoverEv)return;
+  var r=canvas.getBoundingClientRect(),i=pick(hoverEv.clientX-r.left,hoverEv.clientY-r.top);
+  if(i<0){hideTip();return;}tip.innerHTML=shortInfo(i);tip.style.left=(hoverEv.clientX-r.left)+'px';tip.style.top=(hoverEv.clientY-r.top)+'px';tip.hidden=false;},G&&G.n>1500000?160:70);}
+function hideTip(){tip.hidden=true;}
+
+// ---------- text ----------
+function fmt(x){return Math.round(x).toLocaleString('en-US');}
+function big(x){if(x<1e15)return fmt(x);var e=Math.floor(Math.log10(x));return (x/Math.pow(10,e)).toFixed(1)+'&times;10<sup>'+e+'</sup>';}
+function cardsOf(i){var o=G.coff[i],n=G.len[i],a=[];for(var k=0;k<n;k++)a.push(G.cards[o+k]);return a;}
+function movesIn(i){return cur.base+G.depth[i];}
+function outcome(i){var s=G.status[i],b=G.best[i];
+  if(G.len[i]===1)return 'Won.';
+  if(s===1)return 'A win can still be reached'+(G.complete?' ('+big(G.wins[i])+' winning lines from here).':' (from what is drawn).');
+  if(s===2&&(G.expanded[i]&2)&&!(G.expanded[i]&1))return 'Lost: every move from here leads to a position that the solver\'s dead-end test shows cannot be won.';
+  if(s===2)return 'Lost: the best from here is '+b+' piles.';
+  return 'Not searched to the end'+(b<G.len[i]?'; the fewest piles reached from here so far is '+b+'.':'.');}
+function shortInfo(i){var s=G.status[i];return (i===0?'The deal':'After '+movesIn(i)+' move'+(movesIn(i)===1?'':'s'))+': '+G.len[i]+' pile'+(G.len[i]===1?'':'s')+'. '+
+  (G.len[i]===1?'Won':s===1?'Can still win':s===2?'Lost, '+G.best[i]+' piles at best':'Not searched')+'.';}
+function moveText(i){var p=G.parent[i];if(p<0)return '';var m=G.pmove[i],pi=m>>1,leap=m&1,pc=cardsOf(p),c=pc[pi],t=pc[pi-(leap?3:1)];
+  return cardText(c)+' onto '+cardText(t)+(leap?' (a leap)':' (a slide)');}
+function showStats(m){
+  var h='';
+  if(G.complete)h+='Every position: <b>'+fmt(G.n)+'</b>, joined by <b>'+fmt(G.ne)+'</b> moves, <b>'+G.maxDepth+'</b> moves deep.<br>';
+  else h+='Drawn: <b>'+fmt(G.n)+'</b> positions and <b>'+fmt(G.ne)+'</b> moves, '+G.maxDepth+' moves deep: every position of the first moves, then <b>'+fmt(G.dives)+'</b> short searches like the solver\'s, <b>'+fmt(G.divesWon)+'</b> of which found a win.<br>';
+  var s0=G.status[0];
+  if(G.complete){
+    if(s0===1)h+='Won: <b>'+big(G.wins[0])+'</b> of the '+big(G.lines[0])+' ways to play it to the end win.';
+    else h+='Lost: no line wins. The best leaves <b>'+G.best[0]+'</b> piles.';
+  }else{
+    h+=(s0===1?'Wins found: <b>'+fmt(G.counts.won)+'</b> winning positions drawn.':'No win drawn; the fewest piles reached is <b>'+G.best[0]+'</b>.');
+    if(cur.total)h+='<br>The whole tree has '+fmt(cur.total)+' positions.';
+  }
+  h+='<br><span style="color:#7d869c">Built in '+(G.ms/1000).toFixed(1)+' s.'+(edgeNote?' '+edgeNote:'')+'</span>';
+  $('.at-stats').innerHTML=h;
+}
+function drawChart(){
+  var w=Math.round(chart.clientWidth*dpr)||260,h=Math.round(64*dpr);chart.width=w;chart.height=h;var c=chart.getContext('2d');c.clearRect(0,0,w,h);
+  if(!G)return;var L=G.layers,n=L.length,mx=1;for(var i=0;i<n;i++)if(L[i][0]>mx)mx=L[i][0];
+  var bw=w/n,top=Math.log10(mx+1);
+  for(i=0;i<n;i++){var t=L[i][0];if(!t)continue;var bh=Math.max(1,h*Math.log10(t+1)/top),y=h;
+    var parts=[[L[i][2],WIN],[L[i][3],LOSS[1]],[L[i][1],UNK]];
+    for(var k=0;k<3;k++){if(!parts[k][0])continue;var ph=bh*parts[k][0]/t;c.fillStyle='rgb('+parts[k][1].join(',')+')';c.fillRect(i*bw,y-ph,Math.max(1,bw-0.5),ph);y-=ph;}}
+}
+
+// ---------- selecting a position ----------
+function select(i){
+  if(!G)return;G.sel=i;hl=null;
+  if(i<0){nodeBox.hidden=true;dirty=true;return;}
+  var up=[],v=i;while(v>=0){up.push(v);v=G.parent[v];}up.reverse();
+  var down=[];v=i;
+  for(;;){var bestC=-1,score=-1;for(var e=G.es[v];e<G.es[v+1];e++){var c=G.et[e],sc=(G.status[c]===1?2000:G.status[c]===0?1000:0)+2*(60-G.best[c])+(G.parent[c]===v?1:0);if(sc>score){score=sc;bestC=c;}}
+    if(bestC<0)break;down.push(bestC);v=bestC;}
+  var path=up.concat(down),n=path.length,P=new Float32Array(3*n),C=new Uint8Array(4*n);
+  for(var k=0;k<n;k++){var j=path[k];P[3*k]=G.pos[3*j];P[3*k+1]=G.pos[3*j+1];P[3*k+2]=G.pos[3*j+2];
+    var col=k<up.length?[255,255,255]:(G.status[j]===1?GOLD:[255,120,90]);C[4*k]=col[0];C[4*k+1]=col[1];C[4*k+2]=col[2];C[4*k+3]=k===up.length-1?255:200;}
+  gl.bindBuffer(gl.ARRAY_BUFFER,bufHPos);gl.bufferData(gl.ARRAY_BUFFER,P,gl.DYNAMIC_DRAW);gl.bindBuffer(gl.ARRAY_BUFFER,bufHCol);gl.bufferData(gl.ARRAY_BUFFER,C,gl.DYNAMIC_DRAW);
+  hl={n:n};
+  var cs=cardsOf(i);
+  $('.at-node-head').innerHTML='<b>'+(i===0&&!cur.base?'The deal':'After '+movesIn(i)+' move'+(movesIn(i)===1?'':'s'))+'</b>: '+G.len[i]+' pile'+(G.len[i]===1?'':'s')+'. '+outcome(i)+
+    (i?'<br>Last move: '+moveText(i)+'.':'')+(down.length?'<br><span style="color:#9aa3b5">The '+(G.status[i]===1?'gold':'red')+' line shows the '+(G.status[i]===1?'way to a win':'best line')+' from here.</span>':'');
+  $('.at-cards').innerHTML=cs.map(function(b){return '<div class="at-card'+(isRed(b)?' at-red':'')+'">'+RANKS[b&15].replace('T','10')+'<span>'+SYM[b>>4]+'</span></div>';}).join('');
+  $('.at-explore').hidden=G.len[i]<=1||(i===0);
+  nodeBox.hidden=false;dirty=true;
+}
+
+// ---------- building ----------
+var worker=null,cur={cards:null,title:'',note:'',base:0,total:0,line:null,stack:[]};
+function makeWorker(onPage){
+  if(!onPage)try{var src='('+workerMain.toString()+')(self);',url=URL.createObjectURL(new Blob([src],{type:'text/javascript'}));var w=new Worker(url);
+    setTimeout(function(){URL.revokeObjectURL(url);},60000);return w;}catch(err){}
+  // No workers (an old browser, or a page or file that forbids them): build on the page, which freezes it meanwhile.
+  var fake={postMessage:function(m){setTimeout(function(){if(fake.listener)fake.listener({data:m});},0);}};workerMain(fake);
+  return {postMessage:function(m){setTimeout(function(){fake.onmessage({data:m});},20);},terminate:function(){fake.listener=null;},set onmessage(f){fake.listener=f;}};
+}
+function parseLine(cards,text){
+  var tops=cards.slice(),out=[],ms=text.trim().split(/\s+/);
+  for(var s=0;s<ms.length;s++){var a=cardByte(ms[s].slice(0,2)),b=cardByte(ms[s].slice(3,5)),i=tops.indexOf(a),t=tops.indexOf(b);
+    if(i<0||t<0||(i-t!==1&&i-t!==3))return null;out.push(i<<1|(i-t===3?1:0));tops[t]=a;tops.splice(i,1);}
+  return out;
+}
+var onPage=false,layoutPW=0;
+function run(opts){
+  if(worker)worker.terminate();
+  worker=makeWorker(onPage);
+  var budget=parseInt(sizeSel.value,10)||500000,heard=false,me=worker;
+  busy.hidden=false;$('.at-busy span').textContent='Starting...';$('.at-busy i').style.width='0';message('');
+  worker.onmessage=function(ev){
+    var m=ev.data;heard=true;if(me!==worker)return;
+    if(m.type==='progress'){$('.at-busy i').style.width=Math.min(100,100*m.nodes/m.budget).toFixed(1)+'%';
+      $('.at-busy span').textContent=m.phase+': '+fmt(m.nodes)+' positions';}
+    else if(m.type==='graph'){busy.hidden=true;setGraph(m,opts.keepView);if(host.onbuilt)host.onbuilt(m);}
+    else if(m.type==='error'){busy.hidden=true;message('Could not build this tree: '+m.message+'. A smaller size may work.');}
+  };
+  worker.onerror=function(e){if(me!==worker)return;
+    if(!heard&&!onPage){onPage=true;run(opts);return;} // the worker never started: build on the page instead
+    busy.hidden=true;message('Could not build this tree ('+(e.message||'out of memory?')+'). A smaller size may work.');};
+  worker.postMessage({cmd:'build',cards:cur.cards,budget:budget,top:0.15,endPiles:15,parentWeight:layoutPW,line:cur.line,skipFull:!!(cur.total&&cur.total>budget),
+    rng:(hashStr(cur.title)^budget)>>>0||1});
+}
+function hashStr(s){var h=2166136261;for(var i=0;i<s.length;i++)h=Math.imul(h^s.charCodeAt(i),16777619);return h>>>0;}
+function applyShape(){
+  if(!G)return;var rings=shapeSel.value==='rings';G.pos=rings?G.posR:G.posS;G.bounds=rings?G.boundsR:G.boundsS;
+  var b=G.bounds,w=Math.max(b[1]-b[0],b[5]-b[4],1),hgt=Math.max(b[3]-b[2],0.8);G.ys=rings?1:Math.max(0.4,Math.min(4,1.15*w/hgt));setYs(G.ys);
+  gl.bindBuffer(gl.ARRAY_BUFFER,bufPos);gl.bufferData(gl.ARRAY_BUFFER,G.pos,gl.STATIC_DRAW);
+  if(G.sel>=0)select(G.sel);dirty=true;
+}
+function setGraph(m,keepView){
+  G=m;G.sel=-1;hl=null;nodeBox.hidden=true;G.posR=m.pos;G.posS=m.pos2;G.boundsR=m.bounds;G.boundsS=m.bounds2;
+  applyShape();recolour();rebuildEdges();if(!keepView)fit(view);
+  $('.at-title').textContent=cur.title;$('.at-note').innerHTML=cur.note||'';showStats();drawChart();crumbs();
+  dirty=true;
+}
+function crumbs(){
+  var c=$('.at-crumbs');c.innerHTML='';
+  if(cur.stack.length){var b=document.createElement('button');b.textContent='Back';b.onclick=back;c.appendChild(b);
+    var s=document.createElement('span');s.className='at-panel';s.style.padding='4px 8px';s.textContent=cur.stack.map(function(x){return x.title;}).join(' > ')+' > '+cur.title;c.appendChild(s);}
+}
+function snapshot(){return {cards:cur.cards,title:cur.title,note:cur.note,base:cur.base,total:cur.total,line:cur.line,ex:cur.ex};}
+function loadDeal(o){cur.cards=o.cards;cur.title=o.title;cur.note=o.note||'';cur.base=o.base||0;cur.total=o.total||0;cur.line=o.line||null;cur.ex=o.ex||'';run(o);}
+function loadSeed(seedText,ex){
+  var t=String(seedText).replace(/[\s,]/g,'');if(!/^\d{1,20}$/.test(t)||BigInt(t)>MASK){message('A seed is a whole number from 0 to 18,446,744,073,709,551,615.');return;}
+  var cards=dealFromSeed(t),e=ex||EXAMPLES.filter(function(x){return x.seed===t;})[0];
+  cur.stack=[];seedIn.value=t;exSel.value=e?e.k:'';
+  loadDeal({cards:cards,title:'Deal '+Number(t).toLocaleString('en-US')+(Number(t)>9007199254740991?'':''),note:e?e.note:'',total:e&&e.total,line:e&&e.line?parseLine(cards,e.line):null,ex:e?e.k:''});
+}
+function exploreFrom(i){
+  if(!G||i<0)return;cur.stack.push(snapshot());
+  loadDeal({cards:cardsOf(i),title:'After '+movesIn(i)+' moves',note:'The tree from the chosen position, with '+G.len[i]+' piles.',base:movesIn(i),total:0,line:null});
+}
+function back(){var s=cur.stack.pop();if(!s)return;loadDeal(s);exSel.value=s.ex||'';}
+
+// ---------- controls ----------
+exSel.onchange=function(){var e=EXAMPLES.filter(function(x){return x.k===exSel.value;})[0];if(e)loadSeed(e.seed,e);};
+$('.at-go').onclick=function(){loadSeed(seedIn.value);};
+seedIn.addEventListener('keydown',function(e){if(e.key==='Enter')loadSeed(seedIn.value);});
+$('.at-rand').onclick=function(){loadSeed(String(Math.floor(Math.random()*1e12)));};
+sizeSel.onchange=function(){if(cur.cards)run({keepView:false});};
+colorSel.onchange=function(){recolour();drawChart();};
+shapeSel.onchange=function(){applyShape();fit(view);};
+edgeSel.onchange=function(){rebuildEdges();if(G)showStats();};
+glowIn.oninput=function(){dirty=true;};
+host.querySelectorAll('[data-view]').forEach(function(b){b.onclick=function(){fit(b.getAttribute('data-view'));};});
+$('.at-spin').onclick=function(){spin=!spin;this.classList.toggle('on',spin);};
+$('.at-fit').onclick=function(){fit(view);};
+$('.at-full').onclick=function(){if(document.fullscreenElement)document.exitFullscreen();else if(host.requestFullscreen)host.requestFullscreen();};
+$('.at-help').onclick=function(){$('.at-helpbox').hidden=!$('.at-helpbox').hidden;};
+$('.at-helpclose').onclick=function(){$('.at-helpbox').hidden=true;};
+$('.at-close').onclick=function(){select(-1);};
+$('.at-explore').onclick=function(){if(G)exploreFrom(G.sel);};
+$('.at-title').onclick=function(){side.classList.toggle('at-folded');side.setAttribute('data-touched','1');};
+$('.at-save').onclick=function(){savePicture((cur.title||'tree').replace(/[^A-Za-z0-9]+/g,'-').toLowerCase(),2);};
+document.addEventListener('fullscreenchange',function(){setTimeout(function(){resize();fit(view);drawChart();},50);});
+host.tabIndex=0;
+host.addEventListener('keydown',function(e){if(e.target.tagName==='INPUT'||e.target.tagName==='SELECT')return;
+  if(e.key==='Escape')select(-1);else if(e.key===' '){spin=!spin;$('.at-spin').classList.toggle('on',spin);e.preventDefault();}else if(e.key==='r'||e.key==='R')fit(view);});
+function savePicture(name,scale){
+  if(!G)return;var w0=canvas.width,h0=canvas.height;scale=scale||2;
+  canvas.width=Math.round(w0*scale);canvas.height=Math.round(h0*scale);saveScale=scale;draw();
+  canvas.toBlob(function(b){if(host.onsave)host.onsave(b,name+'.png');else{var a=document.createElement('a');a.href=URL.createObjectURL(b);a.download=name+'.png';document.body.appendChild(a);a.click();
+    setTimeout(function(){URL.revokeObjectURL(a.href);a.remove();},1000);}},'image/png');
+  canvas.width=w0;canvas.height=h0;saveScale=1;dirty=true;
+}
+
+// For testing and for pictures: host.accTree.
+host.accTree={load:function(o){if(o.size)sizeSel.value=String(o.size);if(o.shape)shapeSel.value=o.shape;if(o.color)colorSel.value=o.color;if(o.edges)edgeSel.value=o.edges;if(o.view)view=o.view;
+    if(o.ex){var e=EXAMPLES.filter(function(x){return x.k===o.ex;})[0];if(e)loadSeed(e.seed,e);}else if(o.seed!=null)loadSeed(String(o.seed));},
+  save:savePicture,fit:fit,select:select,explore:exploreFrom,pick:pick,recolour:recolour,rebuildEdges:rebuildEdges,
+  set parentWeight(v){layoutPW=v;},get graph(){return G;},get camera(){return cam;},set glowLevel(v){glowIn.value=String(v);dirty=true;},examples:EXAMPLES,dealFromSeed:dealFromSeed};
+
+// Start: from the address (?ex=, ?seed=, &size=, &view=, &color=, &edges=, &spin=1) on its own page, else the first lost example.
+var qs={};try{if(document.body.classList.contains('standalone'))location.search.slice(1).split('&').forEach(function(p){var kv=p.split('=');if(kv[0])qs[decodeURIComponent(kv[0])]=decodeURIComponent(kv[1]||'');});}catch(err){}
+if(qs.size&&SIZES.indexOf(+qs.size)>=0)sizeSel.value=qs.size;
+if(qs.color)colorSel.value=qs.color;if(qs.shape)shapeSel.value=qs.shape;if(qs.edges)edgeSel.value=qs.edges;if(qs.view)view=qs.view;if(qs.spin==='1'){spin=true;$('.at-spin').classList.add('on');}
+if(qs.seed)loadSeed(qs.seed);else{var ex0=EXAMPLES.filter(function(x){return x.k===(qs.ex||'e1');})[0]||EXAMPLES[0];loadSeed(ex0.seed,ex0);}
+})();
+</script>
+<!-- end of acc-tree -->
+</body>
+</html>
