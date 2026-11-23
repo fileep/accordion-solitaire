@@ -36,6 +36,14 @@ const chosen = certs.filter((r, i) => i < 10 || i % 15 === 0 || i === certs.leng
 let failures = 0;
 const fail = (msg) => { failures++; console.log(`FAIL ${msg}`); };
 
+// The page's list of the 721 losses, with their numbers of positions, must be the proofs' list.
+const listed = new Map(html.match(/var LOSSES='([^']*)'/)[1].split(",").map((p) => p.split(".").map((x) => parseInt(x, 36)))
+  .map(([s, n]) => [String(s), n]));
+const allCerts = readFileSync(join(repo, "research/lean/automaton/certificates.csv"), "utf8").trim().split(/\r?\n/).slice(1).map((l) => l.split(","));
+if (listed.size !== 721 || allCerts.length !== 721 || allCerts.some((r) => listed.get(r[0]) !== Number(r[1])))
+  fail(`the page's list of losses differs from certificates.csv (${listed.size} listed)`);
+else console.log("ok   the page lists the 721 losses with their numbers of positions");
+
 const index = readFileSync(join(repo, "hard-deals/INDEX.md"), "utf8");
 for (const r of chosen) {
   const t = Date.now();
@@ -66,7 +74,7 @@ for (const mv of dossier.solution) {
   line.push((i << 1) | (i - t === 3 ? 1 : 0)); tops[t] = a; tops.splice(i, 1);
 }
 let t = Date.now();
-const h = build({ cards, budget: 200000, top: 0.15, endPiles: 15, line, skipFull: true, rng: 7 });
+const h = build({ cards, budget: 200000, top: 0.15, endPiles: 15, line, total: 1e18, rng: 7 });
 const lp = h.linePath;
 if (!lp || lp.length !== 52 || h.len[lp[51]] !== 1) fail("the winning line did not play to one pile");
 else if (h.status[0] !== 1) fail("the deal does not show as winnable with its winning line drawn");
@@ -74,7 +82,7 @@ else console.log(`ok   seed ${hardSeed}: winning line drawn, ${h.n} positions, $
 
 // A sampled tree: statuses must agree with the moves drawn.
 t = Date.now();
-const s = build({ cards: lib.dealFromSeed("0"), budget: 300000, top: 0.15, endPiles: 15, rng: 1 });
+const s = build({ cards: lib.dealFromSeed("0"), budget: 300000, top: 0.15, endPiles: 15, rng: 1, withEdges: true });
 let bad = 0;
 for (let u = 0; u < s.n; u++) {
   let anyWin = false, allDead = true, deg = 0;
@@ -100,7 +108,14 @@ function trueBest(tops) {
   }
   bestMemo.set(key, b); return b;
 }
-const topsOf = (g, u) => Array.from(g.cards.subarray(g.coff[u], g.coff[u] + g.len[u]));
+// A position's row of top cards, played again from the deal along the moves that first reached it.
+const topsOf = (g, u) => {
+  const moves = [];
+  for (let v = u; v > 0; v = g.parent[v]) moves.push(g.pmove[v]);
+  const row = g.root.slice();
+  for (const m of moves.reverse()) { const i = m >> 1; row[i - (m & 1 ? 3 : 1)] = row[i]; row.splice(i, 1); }
+  return row;
+};
 let exactChecked = 0, lostChecked = 0;
 for (let u = 0; u < s.n && (exactChecked < 60 || lostChecked < 60); u++) {
   if (s.len[u] > 16 || s.len[u] < 2) continue;
