@@ -27,6 +27,7 @@ body.standalone #acc-tree canvas.at-gl,#acc-tree:fullscreen canvas.at-gl,#acc-tr
 #acc-tree button.on{background:#2c3a63;border-color:#4d64a8}
 #acc-tree input.at-seed{width:9.5em}
 #acc-tree input.at-custom{width:8em}
+#acc-tree .at-top select.at-size{max-width:15em}
 #acc-tree .at-top{position:absolute;left:8px;right:8px;top:8px;display:flex;flex-wrap:wrap;gap:6px;align-items:center;pointer-events:none}
 #acc-tree .at-top>*{pointer-events:auto}
 #acc-tree .at-top select.at-ex{max-width:22em}
@@ -59,7 +60,8 @@ body.standalone #acc-tree canvas.at-gl,#acc-tree:fullscreen canvas.at-gl,#acc-tr
 #acc-tree .at-crumbs{display:flex;gap:6px;align-items:center;max-width:100%}
 #acc-tree .at-hint{position:absolute;left:50%;bottom:14px;transform:translateX(-50%);pointer-events:none;font-size:12px;padding:5px 9px}
 #acc-tree .at-crumbs:empty{display:none}
-#acc-tree .at-busy{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);width:320px;text-align:center}
+#acc-tree .at-busy{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);width:320px;text-align:center;pointer-events:none}
+#acc-tree .at-busy.at-low{top:auto;bottom:14px;transform:translateX(-50%)}
 #acc-tree .at-bar{height:6px;background:#1b2030;border-radius:3px;overflow:hidden;margin-bottom:6px}
 #acc-tree .at-bar i{display:block;height:100%;width:0;background:linear-gradient(90deg,#3d6bff,#38e3a0)}
 #acc-tree .at-tip{position:absolute;pointer-events:none;background:rgba(10,12,20,.92);border:1px solid #2c3346;border-radius:6px;padding:4px 7px;font-size:12px;
@@ -79,6 +81,25 @@ body.standalone #acc-tree canvas.at-gl,#acc-tree:fullscreen canvas.at-gl,#acc-tr
 #acc-tree.at-narrow input.at-custom{width:6.5em}
 #acc-tree.at-narrow .at-top select.at-ex{max-width:100%}
 #acc-tree.at-narrow .at-node{width:calc(100% - 16px);max-height:42%;min-height:0}
+#acc-tree .at-play{position:absolute;left:8px;top:var(--tb,48px);width:min(560px,calc(100% - 176px));max-height:calc(100% - var(--tb,48px) - 8px);overflow:auto}
+#acc-tree .at-pcards{display:flex;flex-wrap:wrap;gap:4px;margin:8px 0}
+#acc-tree button.at-pcard{width:30px;height:40px;padding:0;border-radius:5px;background:#f3f1ea;color:#1b1d22;font:700 12px/1 Georgia,"Times New Roman",serif;
+  display:flex;flex-direction:column;align-items:center;justify-content:center;border:2px solid #f3f1ea}
+#acc-tree button.at-pcard span{font-size:15px}
+#acc-tree button.at-pcard.at-red{color:#c4102a}
+#acc-tree button.at-pcard:hover{background:#fff;border-color:#fff}
+#acc-tree button.at-pcard.at-none{opacity:.55}
+#acc-tree button.at-pcard.at-sel{border-color:#ffd03c;box-shadow:0 0 0 2px #ffd03c}
+#acc-tree button.at-pcard.at-tgt{border-color:#36e08f;box-shadow:0 0 0 2px #36e08f}
+#acc-tree .at-pnote{color:#8d96aa;font-size:12px;margin-bottom:6px}
+#acc-tree .at-node-btns button:disabled{opacity:.45;cursor:default}
+#acc-tree.at-narrow .at-play{top:auto;bottom:8px;left:8px;right:8px;width:auto;max-height:46%;padding:6px 8px}
+#acc-tree.at-narrow .at-pcards{flex-wrap:nowrap;overflow-x:auto;margin:6px 0;padding-bottom:2px}
+#acc-tree.at-narrow button.at-pcard{flex:0 0 auto}
+#acc-tree.at-narrow .at-pnote{display:none}
+#acc-tree.at-narrow.at-playing .at-node{bottom:auto;top:var(--tb,48px);left:8px;right:auto;width:calc(100% - 132px)}
+#acc-tree.at-narrow button.at-pcard{width:24px;height:32px;font-size:11px}
+#acc-tree.at-narrow button.at-pcard span{font-size:13px}
 @media (max-width:600px){#acc-tree{height:620px;height:min(620px,80vh)}}
 </style>
 <div id="acc-tree"></div>
@@ -124,13 +145,19 @@ function workerMain(self){
   var len,par,pmv,cov,flag,hsh,hs2,tab,tmask,tmax,N=0,CAP=0,budget=0,root,n0=0,H1=0,H2=0,lastPost=0,t0=0,phase='',rng=1,q2w=0;
   var UF=new Int32Array(17),LV=[],RB=new Uint8Array(52),MV=new Uint8Array(64),QB=null,qr=0,qw=0,ES=null,ET=null,NE=0,rec=false,topMark=0;
   var EM=(1<<22)-1;
+  // Each phase's start, for the build's timings (msg.times, in ms).
+  var times=[];function setPhase(p){phase=p;times.push([p,Math.round(now()-t0)]);}
   function rand(){rng^=rng<<13;rng^=rng>>>17;rng^=rng<<5;return (rng>>>0)/4294967296;}
   function reset(){
     var s=Math.min(CAP,1<<14);
     len=new Uint8Array(s);par=new Int32Array(s);pmv=new Uint8Array(s);cov=new Uint8Array(s);flag=new Uint8Array(s);hsh=new Int32Array(s);hs2=new Int32Array(s);
     tab=new Int32Array(1<<15);tmask=tab.length-1;tmax=(tab.length*0.7)|0;N=0;NE=0;ES=null;ET=null;QB=null;
   }
-  function release(){len=par=pmv=cov=flag=hsh=hs2=tab=null;ES=ET=QB=null;}
+  function release(){len=par=pmv=cov=flag=hsh=hs2=tab=null;ES=ET=QB=TH=RA=null;}
+  // A depth laid out during the search, for the page to show while the rest is built.
+  var TH=null,RA=null;
+  function sendLayer(d,a,b){var P=new Float32Array(3*(b-a));for(var i=a,k=0;i<b;i++,k+=3){P[k]=RA[i]*Math.cos(TH[i]);P[k+1]=-d*0.8;P[k+2]=RA[i]*Math.sin(TH[i]);}
+    self.postMessage({type:'layer',depth:d,start:a,pos:P},[P.buffer]);}
   function room(m){
     var s=m>CAP?Math.ceil(m*1.25):Math.max(m,Math.min(len.length*2,CAP));
     len=bigger(len,s);par=bigger(par,s);pmv=bigger(pmv,s);cov=bigger(cov,s);flag=bigger(flag,s);hsh=bigger(hsh,s);hs2=bigger(hs2,s);
@@ -275,11 +302,12 @@ function workerMain(self){
     if(!unknown){flag[u]|=2;return 2;}
     return 0;
   }
-  // Groups of such searches: the first from the deal, the rest from random positions the group has reached.
-  function searchOut(cap,runs,branches){
-    var g0=N,before=N,won=0,tried=0;
+  // Groups of such searches: the first from the deal (or, every other group, from the position played to), the rest
+  // from random positions the group has reached.
+  function searchOut(cap,runs,branches,focus){
+    var g0=N,before=N,won=0,tried=0,first=focus>=0&&len[focus]>1&&!(flag[focus]&2)&&(runs.groups++&1)?focus:0;
     for(var b=0;b<=branches&&N<budget;b++){
-      var s=b?g0+((rand()*(N-g0))|0):0;if(b&&N<=g0)break;if(len[s]<=1||(flag[s]&2))continue;
+      var s=b?g0+((rand()*(N-g0))|0):first;if(b&&N<=g0)break;if(len[s]<=1||(flag[s]&2))continue;
       dfsLeft=Math.min(cap,budget-N);tried++;if(dfs(s,rowOf(s,RB),0)===1)won++;progress(false);
     }
     runs.tried+=tried;runs.won+=won;
@@ -297,33 +325,46 @@ function workerMain(self){
     return path;
   }
   function build(q){
-    t0=now();lastPost=0;budget=Math.max(16,q.budget|0);CAP=budget+4096;rng=(q.rng>>>0)||0x2545F491;q2w=q.parentWeight||0;reset();
+    t0=now();lastPost=0;times=[];budget=Math.max(16,q.budget|0);CAP=budget+4096;rng=(q.rng>>>0)||0x2545F491;q2w=q.parentWeight||0;reset();
     root=new Uint8Array(q.cards);n0=root.length;hashes(root,0,n0);insert(find(n0),n0,-1,0,0);
     var E=q.endPiles||15,top=Math.max(1,Math.floor(budget*(q.top||0.15))),total=q.total||0;
     // Every position in order of depth, as far as the size allows: the whole tree if it fits. A tree of unknown size is
     // tried up to 4 million positions (losses, the only deals with fewer, almost all have fewer).
-    var cap1=total?(total<=budget?budget+1:top):Math.max(top,Math.min(budget,q.fullTry||4000000));
+    var cap1=total?(total<=budget?budget+1:top):q.bound&&q.bound<=budget?budget+1:Math.max(top,Math.min(budget,q.fullTry||4000000));
     var limit=t0+(q.timeLimit||Math.max(120000,budget/50)),u=0;
     QB=new Uint8Array(1<<20);qr=0;qw=0;qput(root,0,n0);rec=!(total>budget);topMark=top;ES=new Int32Array(1024);ET=[];NE=0;
-    phase='Searching every position';
-    while(u<N&&N<cap1){expand(u);u++;if((u&1023)===0)progress(false);}
-    var complete=u>=N,dives=0,linePath=null,runs={tried:0,won:0};QB=null;
+    setPhase('Searching every position');
+    // Depth d is the positions a..b-1. Once the search has expanded all of them, depth d+1 (b to N-1) is complete with
+    // every move into it, so it is laid out at once (and sent to the page to show, if asked for).
+    var la=0,lb=1,ld=0;TH=new Float32Array(Math.min(CAP,1<<16));RA=new Float32Array(TH.length);
+    if(q.preview)self.postMessage({type:'layer',depth:0,start:0,pos:new Float32Array(3)});
+    while(u<N&&N<cap1){
+      if(u===lb){if(N>TH.length){var gs=Math.min(CAP,Math.max(N,TH.length*2));TH=bigger(TH,gs);RA=bigger(RA,gs);}
+        layLayer(ld,la,lb,N-lb,TH,RA,rec);if(q.preview)sendLayer(ld+1,lb,N);la=lb;lb=N;ld++;}
+      expand(u);u++;if((u&1023)===0)progress(false);}
+    if(!(u>=N&&rec))TH=RA=null;
+    var complete=u>=N,dives=0,linePath=null,playPath=null,focus=-1,runs={tried:0,won:0,groups:0};QB=null;
     if(!complete){
       ES=null;ET=[];NE=0;rec=false;
       if(N>top)truncate(top);
-      if(q.line){phase='Adding the known winning line';linePath=playLine(q.line);
+      if(q.line){setPhase('Adding the known winning line');linePath=playLine(q.line);
         if(linePath){for(var s=0;s<linePath.length;s++)if(len[linePath[s]]===E+3){exhaust(linePath[s],Math.floor(budget*0.15));break;}}}
-      phase='Short searches like the solver\'s';
+      // A game being played: its moves, every position a few moves below where it has got to, and half of the searches
+      // from there.
+      if(q.play&&q.play.length){setPhase('Adding the moves played');playPath=playLine(q.play);
+        if(playPath){var pe=playPath[playPath.length-1];if(len[pe]>1&&N<budget){exhaust(pe,Math.min(budget-N,Math.floor(budget*0.2)));focus=pe;}}}
+      setPhase('Short searches like the solver\'s');
       var idle=0,stop=Math.min(limit,now()+Math.max(6000,budget/50));
       while(N<budget&&now()<stop&&idle<300){
-        var r=searchOut(q.searchCap||Math.max(2000,Math.min(6000,Math.round(budget/170))),runs,q.branches==null?7:q.branches);
+        var r=searchOut(q.searchCap||Math.max(2000,Math.min(6000,Math.round(budget/170))),runs,q.branches==null?7:q.branches,focus);
         idle=r.added?0:idle+1;progress(false);}
       dives=runs.tried;
     }
-    return finish(complete,dives,runs.won,linePath,q);
+    // A whole tree found while its moves weren't being kept (it was thought too big) has them found in finish.
+    return finish(complete,complete&&rec,dives,runs.won,linePath,playPath,q);
   }
   // Which positions can still win, the fewest piles each can reach, and how many lines win: from the bottom up.
-  function finish(complete,dives,divesWon,linePath,q){
+  function finish(complete,haveMoves,dives,divesWon,linePath,playPath,q){
     var i,u,e,c,d,k,j,a,b,n,m,L;
     if(!complete)tab=null; // a sample's moves are found with smaller tables
     var D=new Uint8Array(N),maxD=0;for(i=0;i<N;i++){D[i]=n0-len[i];if(D[i]>maxD)maxD=D[i];}
@@ -332,16 +373,17 @@ function workerMain(self){
     if(!inOrder){
       // The short searches added positions out of order of depth: number them again, so that each depth is a run of
       // numbers and every move goes to a higher one.
-      phase='Sorting the positions by depth';progress(true,0);
+      setPhase('Sorting the positions by depth');progress(true,0);
       var nw=new Int32Array(N),fill=ls.slice();for(i=0;i<N;i++)nw[i]=fill[D[i]]++;
       var p2=new Int32Array(N);for(i=0;i<N;i++)p2[nw[i]]=par[i]<0?-1:nw[par[i]];par=p2;p2=null;
       len=perm(len,nw,N);pmv=perm(pmv,nw,N);cov=perm(cov,nw,N);flag=perm(flag,nw,N);hsh=perm(hsh,nw,N);hs2=perm(hs2,nw,N);D=perm(D,nw,N);
       if(linePath)for(i=0;i<linePath.length;i++)linePath[i]=nw[linePath[i]];
+      if(playPath)for(i=0;i<playPath.length;i++)playPath[i]=nw[playPath[i]];
       nw=fill=null;
     }
-    if(!complete){
-      // A sample's moves: every move from a drawn position to another drawn position.
-      phase='Finding the moves between positions';
+    if(!haveMoves){
+      // The moves of a sample (or of a whole tree found without them): every move from a drawn position to another.
+      setPhase('Finding the moves between positions');
       ES=new Int32Array(N+1);ET=[];NE=0;tab=null;
       // Each depth's moves can only reach the next depth, so a small table of that depth's positions does, and it
       // stays in the processor's cache far better than the whole tree's.
@@ -363,7 +405,7 @@ function workerMain(self){
       cur=nxt=whole=null;
     }
     tab=hsh=hs2=null;
-    phase='Working out which positions win';progress(true,0);
+    setPhase('Working out which positions win');progress(true,0);
     // exact: everything below the position is drawn, so its fewest piles and its counts of lines are exact.
     var st=new Uint8Array(N),best=new Uint8Array(N),ex=new Uint8Array(N),nx=0,xw=0;
     for(u=N-1;u>=0;u--){
@@ -397,22 +439,12 @@ function workerMain(self){
       down[u]=bc;}
     // Layout: a ring for each move made, the deal at the centre; each position near the average angle of the
     // positions it comes from, spread apart along its ring.
-    phase='Laying out';progress(true,0);
-    var th=new Float32Array(N),ra=new Float32Array(N),TAU=Math.PI*2,S=1,MIN=0.11,FPW=q2w||4;
-    for(d=0;d<maxD;d++){
-      var a0=ls[d+1],n1=ls[d+2]-a0;if(n1<=0)continue;
-      var cs=new Float64Array(n1),sn=new Float64Array(n1);
-      // The parent a position is drawn joined to (the first found) counts four times, which keeps those lines short.
-      for(u=ls[d];u<a0;u++){var cu=Math.cos(th[u]),su=Math.sin(th[u]);
-        for(e=ES[u];e<ES[u+1];e++){c=ET[e>>>22][e&EM];var wv=par[c]===u?FPW:1;cs[c-a0]+=wv*cu;sn[c-a0]+=wv*su;}}
-      // In order of angle, ties in order of number: angle and number packed into one float for the browser's own sort.
-      var bits=Math.max(1,Math.ceil(Math.log2(n1+1))),P=Math.pow(2,bits),sc3=Math.pow(2,52-bits)/TAU,key=new Float64Array(n1),pk=new Float64Array(n1);
-      for(k=0;k<n1;k++){var t=Math.atan2(sn[k],cs[k]);if(t<0)t+=TAU;key[k]=t;pk[k]=Math.floor(t*sc3)*P+k;}
-      cs=sn=null;pk.sort();
-      var idx=new Int32Array(n1);for(k=0;k<n1;k++){var pv=pk[k];idx[k]=pv-Math.floor(pv/P)*P;}
-      pk=null;placeRing(idx,n1,(d+1)*S,S,MIN,key,th,ra,TAU,a0);
-      progress(false,d/maxD);
-    }
+    // A whole tree was laid out depth by depth as the search went (the same layout, from the same moves).
+    var th,ra;
+    if(complete&&haveMoves&&TH&&TH.length>=N){th=TH;ra=RA;}
+    else{setPhase('Laying out');progress(true,0);th=new Float32Array(N);ra=new Float32Array(N);
+      for(d=0;d<maxD;d++){var a0=ls[d+1],n1=ls[d+2]-a0;if(n1>0)layLayer(d,ls[d],a0,n1,th,ra,true);progress(false,d/maxD);}}
+    TH=RA=null;
     var H=0.8,pos=new Float32Array(3*N),bx=[Infinity,-Infinity,Infinity,-Infinity,Infinity,-Infinity];
     for(i=0;i<N;i++){var px=ra[i]*Math.cos(th[i]),py=-D[i]*H,pz=ra[i]*Math.sin(th[i]);pos[3*i]=px;pos[3*i+1]=py;pos[3*i+2]=pz;
       if(px<bx[0])bx[0]=px;if(px>bx[1])bx[1]=px;if(py<bx[2])bx[2]=py;if(py>bx[3])bx[3]=py;if(pz<bx[4])bx[4]=pz;if(pz>bx[5])bx[5]=pz;}
@@ -423,17 +455,34 @@ function workerMain(self){
     for(i=0;i<N;i++){var Ly=layers[D[i]];Ly[0]++;Ly[1+st[i]]++;if(st[i]===1)nWin++;else if(st[i]===2)nDead++;else nUnk++;if(len[i]===1)nOne++;
       if((flag[i]&1)&&ES[i+1]===ES[i]&&len[i]>1)nStuck++;
       ex[i]=(flag[i]&7)|(ex[i]?8:0);}
-    var cap2=Math.min(NE,q.edgeCap||6000000),ai=new Uint32Array(2*cap2),k2=0;
-    for(u=0;u<N&&k2<2*cap2;u++)for(e=ES[u];e<ES[u+1]&&k2<2*cap2;e++){ai[k2++]=u;ai[k2++]=ET[e>>>22][e&EM];}
     function sub(x){return x.length===N?x:x.subarray(0,N);}
+    // The moves: position u's go from es[u] to es[u+1], and move e is et[e>>>22][e&4194303].
+    var es=ES.length===N+1?ES:ES.subarray(0,N+1),et=ET.slice(0,Math.ceil(NE/(EM+1)));
     var msg={type:'graph',n:N,ne:NE,complete:complete,dives:dives,divesWon:divesWon,linePath:linePath?Int32Array.from(linePath):null,
-      pos:pos,bounds:bx,depth:D,len:sub(len),status:st,best:best,expanded:ex,parent:sub(par),pmove:sub(pmv),cov:sub(cov),down:down,allIdx:ai,wl:wl,
-      root:Array.from(root),layers:layers,maxDepth:maxD,counts:{win:nWin,dead:nDead,unknown:nUnk,won:nOne,stuck:nStuck},ms:Math.round(now()-t0)};
-    var tr=[pos.buffer,D.buffer,len.buffer,st.buffer,best.buffer,ex.buffer,par.buffer,pmv.buffer,cov.buffer,down.buffer,ai.buffer];
+      pos:pos,bounds:bx,depth:D,len:sub(len),status:st,best:best,expanded:ex,parent:sub(par),pmove:sub(pmv),cov:sub(cov),down:down,es:es,et:et,wl:wl,playPath:playPath?Int32Array.from(playPath):null,
+      root:Array.from(root),layers:layers,maxDepth:maxD,counts:{win:nWin,dead:nDead,unknown:nUnk,won:nOne,stuck:nStuck},times:times,ms:Math.round(now()-t0)};
+    var tr=[pos.buffer,D.buffer,len.buffer,st.buffer,best.buffer,ex.buffer,par.buffer,pmv.buffer,cov.buffer,down.buffer,ES.buffer];
+    for(i=0;i<et.length;i++)tr.push(et[i].buffer);
+    if(msg.playPath)tr.push(msg.playPath.buffer);
     if(wl){if(wl.ids)tr.push(wl.ids.buffer);tr.push(wl.w.buffer,wl.l.buffer);}
     if(msg.linePath)tr.push(msg.linePath.buffer);
-    if(q.withEdges){msg.es=ES.slice(0,N+1);var et=new Int32Array(NE);for(e=0;e<NE;e++)et[e]=ET[e>>>22][e&EM];msg.et=et;}
     return {msg:msg,transfer:tr};
+  }
+  // Layout: a ring for each move made, the deal at the centre; each position near the weighted mean angle of the
+  // positions it comes from, spread apart along its ring. Lays out depth d+1 (numbers a0 to a0+n1-1) from depth d (pa to
+  // a0-1): by every move between them if they are known (the first parent counts four times, which keeps the lines
+  // drawn short), else by the first parent alone (a preview of a sample).
+  function layLayer(d,pa,a0,n1,th,ra,byMoves){
+    var TAU=Math.PI*2,S=1,MIN=0.11,FPW=q2w||4,u,e,c,k,cs=new Float64Array(n1),sn=new Float64Array(n1);
+    if(byMoves){for(u=pa;u<a0;u++){var cu=Math.cos(th[u]),su=Math.sin(th[u]);
+      for(e=ES[u];e<ES[u+1];e++){c=ET[e>>>22][e&EM];var wv=par[c]===u?FPW:1;cs[c-a0]+=wv*cu;sn[c-a0]+=wv*su;}}}
+    else for(k=0;k<n1;k++){var pp=par[a0+k];cs[k]=Math.cos(th[pp]);sn[k]=Math.sin(th[pp]);}
+    // In order of angle, ties in order of number: angle and number packed into one float for the browser's own sort.
+    var bits=Math.max(1,Math.ceil(Math.log2(n1+1))),P=Math.pow(2,bits),sc3=Math.pow(2,52-bits)/TAU,key=new Float64Array(n1),pk=new Float64Array(n1);
+    for(k=0;k<n1;k++){var t=Math.atan2(sn[k],cs[k]);if(t<0)t+=TAU;key[k]=t;pk[k]=Math.floor(t*sc3)*P+k;}
+    cs=sn=null;pk.sort();
+    var idx=new Int32Array(n1);for(k=0;k<n1;k++){var pv=pk[k];idx[k]=pv-Math.floor(pv/P)*P;}
+    pk=null;placeRing(idx,n1,(d+1)*S,S,MIN,key,th,ra,TAU,a0);
   }
   // Spreads a ring's positions (idx, in order of their angles key) at least MIN apart, in lanes where it is crowded.
   function placeRing(idx,n,R,S,MIN,key,th,ra,TAU,a0){
@@ -502,7 +551,8 @@ host.innerHTML=
  '<div class="at-top"><select class="at-ex" title="Example deals"></select>'+
  '<input class="at-seed" placeholder="Seed" spellcheck="false" autocomplete="off" title="Any seed: the same deal as acc and the game"><button class="at-go">Show</button>'+
  '<button class="at-rand">Random deal</button><select class="at-size" title="The most positions to draw"></select>'+
- '<input class="at-custom" placeholder="Positions" spellcheck="false" autocomplete="off" title="Any number of positions from 1,000 to 40 million, such as 2500000 or 2.5m; Enter to draw" hidden><div class="at-crumbs"></div></div>'+
+ '<input class="at-custom" placeholder="Positions" spellcheck="false" autocomplete="off" title="Any number of positions from 1,000 to 40 million, such as 2500000 or 2.5m; Enter to draw" hidden>'+
+ '<button class="at-playbtn" title="Play the deal: the tree from your position on stays lit">Play \u25BE</button><div class="at-crumbs"></div></div>'+
  '<div class="at-side at-panel"><div class="at-title"></div><div class="at-body"><div class="at-note"></div><div class="at-stats"></div>'+
  '<canvas class="at-chart"></canvas><div class="at-chartcap">Positions after each move (log scale)</div><div class="at-legend"></div></div></div>'+
  '<div class="at-tools">'+
@@ -513,6 +563,9 @@ host.innerHTML=
  '<label>Glow<input type="range" class="at-glow" min="-2" max="2" step="0.1" value="0"></label>'+
  '<div class="at-row"><button class="at-full">Full screen</button></div>'+
  '<div class="at-row"><button class="at-help">About</button></div></div>'+
+ '<div class="at-play at-panel" hidden><div class="at-phead"></div><div class="at-pcards"></div>'+
+ '<div class="at-pnote">Click a card to put it on the card 1 or 3 places to its left, if they share a suit or rank. The tree from your position on stays lit, and the white line is your game.</div>'+
+ '<div class="at-node-btns"><button class="at-undo">Undo</button><button class="at-restart">Restart</button><button class="at-phint">Hint</button><button class="at-padd" hidden>Draw this position</button><button class="at-pclose">Close</button></div></div>'+
  '<div class="at-node at-panel" hidden><div class="at-node-head"></div><div class="at-cards"></div>'+
  '<div class="at-node-btns"><button class="at-explore">Explore from here</button><button class="at-close">Close</button></div></div>'+
  '<div class="at-busy at-panel" hidden><div class="at-bar"><i></i></div><span></span></div>'+
@@ -521,7 +574,7 @@ host.innerHTML=
  '<p><b>Accordion game trees.</b> Each dot is a position and each line a move. The deal is at the top, or in the middle seen from above, and each move takes one pile away. A position reached in more than one way is drawn once.</p>'+
  '<p><span style="color:#36e08f">Green</span> can still win, <span style="color:#ffd03c">gold</span> is won, <span style="color:#ff8a2a">orange</span> to <span style="color:#a0144a">dark red</span> is lost (orange comes as close to one pile as the deal allows), <span style="color:#e0405e">red</span> is lost without its fewest piles worked out, and <span style="color:#7f93c9">blue-grey</span> is not settled.</p>'+
  '<p>A tree that fits the size is drawn whole. A bigger one, as almost every deal that can be won is, is a sample: every position of the first few moves, then short searches like the solver\'s.</p>'+
- '<p>Drag to turn, right-drag to move, scroll or pinch to zoom. Click a dot to see its position.</p>'+
+ '<p>Drag to turn, right-drag to move, scroll or pinch to zoom. Click a dot to see its position. <i>Play</i> lets you play the deal, and the tree from your position on stays lit.</p>'+
  '<p class="at-by"><span>Developed by Filip Jander <a href="https://filipjander.com" target="_blank" rel="noopener">filipjander.com</a></span><button class="at-helpclose">Close</button></p></div>'+
  '<div class="at-msg at-panel" hidden></div><div class="at-hint at-panel" hidden></div>';
 function $(s){return host.querySelector(s);}
@@ -536,14 +589,15 @@ var exSel=$('.at-ex'),seedIn=$('.at-seed'),sizeSel=$('.at-size'),customIn=$('.at
     '<option value="custom">Up to a number you choose</option>';
 })();
 function sizeName(s){return 'Up to '+(s>=1e6&&s%1e5===0?(s/1e6)+' million':Math.round(s).toLocaleString('en-US'))+' positions';}
-var mem=navigator.deviceMemory||8,small=Math.min(screen.width,screen.height)<700,customSize=0;
-sizeSel.value=String(small||mem<8?200000:1000000);
+var mem=navigator.deviceMemory||8,small=Math.min(screen.width,screen.height)<700,customSize=0,lastPreset=small||mem<8?200000:1000000;
+sizeSel.value=String(lastPreset);
 // A size typed in: 2500000, 2,500,000, 2.5m, 500k or 1e6.
-function parseSize(t){var m=/^(\d+(?:\.\d+)?(?:e\d+)?)([km]?)$/.exec(String(t).trim().toLowerCase().replace(/[\s,_]/g,''));
+function parseSize(t){t=String(t).trim().toLowerCase().replace(/[\s_]/g,'');if(/,(?!\d{3}(?!\d))/.test(t))return 0;
+  var m=/^(\d+(?:\.\d+)?(?:e\d+)?)([km]?)$/.exec(t.replace(/,/g,''));
   return m?Math.round(parseFloat(m[1])*(m[2]==='k'?1e3:m[2]==='m'?1e6:1)):0;}
-function sizeNow(){return sizeSel.value==='custom'?customSize:parseInt(sizeSel.value,10)||1000000;}
+function sizeNow(){return sizeSel.value==='custom'?customSize||lastPreset:parseInt(sizeSel.value,10)||lastPreset;}
 function setSize(v){
-  if(SIZES.indexOf(v)>=0){sizeSel.value=String(v);customIn.hidden=true;return true;}
+  if(SIZES.indexOf(v)>=0){sizeSel.value=String(v);lastPreset=v;customIn.hidden=true;return true;}
   if(!(v>=1000&&v<=MAX_SIZE))return false;
   customSize=v;sizeSel.value='custom';sizeSel.options[sizeSel.options.length-1].textContent=sizeName(v);customIn.value=fmt(v);customIn.hidden=false;return true;}
 
@@ -555,27 +609,29 @@ if(!gl){message('This browser has WebGL turned off, which the game tree needs.')
 if(!GL2&&!gl.getExtension('OES_element_index_uint')){message('This browser\'s WebGL is too old for the game tree.');return;}
 function shader(type,src){var s=gl.createShader(type);gl.shaderSource(s,src);gl.compileShader(s);if(!gl.getShaderParameter(s,gl.COMPILE_STATUS))throw new Error(gl.getShaderInfoLog(s));return s;}
 function program(vs,fs){var p=gl.createProgram();gl.attachShader(p,shader(gl.VERTEX_SHADER,vs));gl.attachShader(p,shader(gl.FRAGMENT_SHADER,fs));
-  gl.bindAttribLocation(p,0,'p');gl.bindAttribLocation(p,1,'c');gl.linkProgram(p);if(!gl.getProgramParameter(p,gl.LINK_STATUS))throw new Error(gl.getProgramInfoLog(p));
+  gl.bindAttribLocation(p,0,'p');gl.bindAttribLocation(p,1,'c');gl.bindAttribLocation(p,2,'k');gl.linkProgram(p);if(!gl.getProgramParameter(p,gl.LINK_STATUS))throw new Error(gl.getProgramInfoLog(p));
   return {p:p,m:gl.getUniformLocation(p,'m'),a:gl.getUniformLocation(p,'a'),s:gl.getUniformLocation(p,'s'),lo:gl.getUniformLocation(p,'lo'),hi:gl.getUniformLocation(p,'hi'),ys:gl.getUniformLocation(p,'ys'),off:gl.getUniformLocation(p,'off')};}
-var VS_P='attribute vec3 p;attribute vec4 c;uniform mat4 m;uniform float a;uniform float s;uniform float lo;uniform float hi;uniform float ys;varying vec4 v;'+
-  'void main(){vec4 q=m*vec4(p.x,p.y*ys,p.z,1.0);gl_Position=q;gl_PointSize=clamp(s/q.w,lo,hi);v=vec4(c.rgb,c.a*a);}';
+// k is 1 for a position in the tree from where a game has got to and 0 for one outside it, which is dimmed and greyed.
+var DIM='vec3 col=mix(c.rgb*0.45+vec3(0.157,0.18,0.243),c.rgb,k);float al=c.a*mix(0.2,1.0,k);';
+var VS_P='attribute vec3 p;attribute vec4 c;attribute float k;uniform mat4 m;uniform float a;uniform float s;uniform float lo;uniform float hi;uniform float ys;varying vec4 v;'+
+  'void main(){vec4 q=m*vec4(p.x,p.y*ys,p.z,1.0);gl_Position=q;gl_PointSize=clamp(s/q.w,lo,hi);'+DIM+'v=vec4(col,al*a);}';
 // Dots and lines add up their light (colour times weight, and weight) in a floating-point buffer; a last pass divides
 // out the colour and turns the total weight into brightness, so crowded places glow brighter but keep their colour.
 var FS_P='precision mediump float;varying vec4 v;void main(){vec2 d=gl_PointCoord-vec2(0.5);float r=dot(d,d);if(r>0.25)discard;float w=v.a*(1.0-3.6*r);gl_FragColor=vec4(v.rgb*w,w);}';
-var VS_L='attribute vec3 p;attribute vec4 c;uniform mat4 m;uniform float a;uniform float ys;uniform vec2 off;varying vec4 v;void main(){gl_Position=m*vec4(p.x,p.y*ys,p.z,1.0);gl_Position.xy+=off*gl_Position.w;v=vec4(c.rgb,c.a*a);}';
+var VS_L='attribute vec3 p;attribute vec4 c;attribute float k;uniform mat4 m;uniform float a;uniform float ys;uniform vec2 off;varying vec4 v;void main(){gl_Position=m*vec4(p.x,p.y*ys,p.z,1.0);gl_Position.xy+=off*gl_Position.w;'+DIM+'v=vec4(col,al*a);}';
 var FS_L='precision mediump float;varying vec4 v;void main(){gl_FragColor=vec4(v.rgb*v.a,v.a);}';
 var FS_H='precision mediump float;varying vec4 v;void main(){vec2 d=gl_PointCoord-vec2(0.5);if(dot(d,d)>0.25)discard;gl_FragColor=v;}';
 var VS_T='attribute vec2 p;varying vec2 uv;void main(){uv=p*0.5+0.5;gl_Position=vec4(p,0.0,1.0);}';
 var FS_T='#ifdef GL_FRAGMENT_PRECISION_HIGH\nprecision highp float;\n#else\nprecision mediump float;\n#endif\n'+
   'uniform sampler2D t;uniform float k;uniform vec3 bg;varying vec2 uv;void main(){vec4 s=texture2D(t,uv);float a=max(s.a,0.0);vec3 avg=s.rgb/max(a,1e-4);'+
   'float i=1.0-exp(-k*a);float hot=clamp((k*a-8.0)/60.0,0.0,0.25);gl_FragColor=vec4(mix(bg,mix(avg,vec3(1.0),hot),i),1.0);}';
-var progP,progL,progH,progLH,progT,bufPos,bufCol,bufIdx,bufHPos,bufHCol,bufQuad,bufWinE,bufWinP,hdrFmt,hdrTex,hdrFb,hdrW,hdrH,lost=false;
+var progP,progL,progH,progLH,progT,bufPos,bufCol,bufIdx,bufHPos,bufHCol,bufQuad,bufWinE,bufWinP,bufMask,maskOn=false,hdrFmt,hdrTex,hdrFb,hdrW,hdrH,lost=false;
 // Programs, buffers and the float buffer; made again if the browser drops the graphics context and gives it back.
 function initGL(){
   if(!GL2)gl.getExtension('OES_element_index_uint');
 progP=program(VS_P,FS_P),progL=program(VS_L,FS_L),progH=program(VS_P,FS_H),progLH=program(VS_L,FS_H),progT=program(VS_T,FS_T);
 progT.t=gl.getUniformLocation(progT.p,'t');progT.k=gl.getUniformLocation(progT.p,'k');progT.bg=gl.getUniformLocation(progT.p,'bg');
-bufPos=gl.createBuffer(),bufCol=gl.createBuffer(),bufIdx=gl.createBuffer(),bufHPos=gl.createBuffer(),bufHCol=gl.createBuffer(),bufQuad=gl.createBuffer(),bufWinE=gl.createBuffer(),bufWinP=gl.createBuffer();
+bufPos=gl.createBuffer(),bufCol=gl.createBuffer(),bufIdx=gl.createBuffer(),bufHPos=gl.createBuffer(),bufHCol=gl.createBuffer(),bufQuad=gl.createBuffer(),bufWinE=gl.createBuffer(),bufWinP=gl.createBuffer(),bufMask=gl.createBuffer();maskOn=false;
 gl.bindBuffer(gl.ARRAY_BUFFER,bufQuad);gl.bufferData(gl.ARRAY_BUFFER,new Float32Array([-1,-1,3,-1,-1,3]),gl.STATIC_DRAW);
 hdrFmt=(function(){
   if(GL2)return gl.getExtension('EXT_color_buffer_float')?{i:gl.RGBA16F,f:gl.RGBA,t:gl.HALF_FLOAT}:null;
@@ -609,13 +665,17 @@ function mvp(){var asp=canvas.width/Math.max(1,canvas.height),n=cam.dist*0.002,f
   var P=cam.ortho?orthographic(cam.oh,asp,-fa,fa):perspective(cam.fov,asp,n,fa);return mul(P,viewMatrix());}
 function worldPerPixel(){return (cam.ortho?2*cam.oh:2*cam.dist*Math.tan(cam.fov/2))/Math.max(1,canvas.height);}
 function setYs(v){[progP,progL,progH,progLH].forEach(function(o){gl.useProgram(o.p);gl.uniform1f(o.ys,v);});}
-function bindAttribs(pb,cb){gl.bindBuffer(gl.ARRAY_BUFFER,pb);gl.enableVertexAttribArray(0);gl.vertexAttribPointer(0,3,gl.FLOAT,false,0,0);
+function bindAttribs(pb,cb,nodes){
+  if(nodes&&maskOn){gl.bindBuffer(gl.ARRAY_BUFFER,bufMask);gl.enableVertexAttribArray(2);gl.vertexAttribPointer(2,1,gl.UNSIGNED_BYTE,true,0,0);}
+  else{gl.disableVertexAttribArray(2);gl.vertexAttrib1f(2,1);}
+  gl.bindBuffer(gl.ARRAY_BUFFER,pb);gl.enableVertexAttribArray(0);gl.vertexAttribPointer(0,3,gl.FLOAT,false,0,0);
   gl.bindBuffer(gl.ARRAY_BUFFER,cb);gl.enableVertexAttribArray(1);gl.vertexAttribPointer(1,4,gl.UNSIGNED_BYTE,true,0,0);}
 function glow(){return Math.pow(2,parseFloat(glowIn.value)||0);}
 var BG=[0.02,0.024,0.04];
 function draw(){
   dirty=false;if(lost)return;var W=gl.drawingBufferWidth,H=gl.drawingBufferHeight;
   gl.bindFramebuffer(gl.FRAMEBUFFER,null);gl.viewport(0,0,W,H);gl.clearColor(BG[0],BG[1],BG[2],1);gl.clear(gl.COLOR_BUFFER_BIT);
+  if(PV&&PV.n){drawPreview(W,H);return;}
   if(!G)return;
   var M=mvp();lastM=M;var n=G.n,px=dpr*saveScale,g=glow(),hdr=ensureHDR(W,H);
   var focal=cam.ortho?H/(2*cam.oh):H/(2*Math.tan(cam.fov/2));
@@ -624,20 +684,20 @@ function draw(){
   var dens=hdr?1/32:Math.min(1,Math.pow(4000/Math.max(n,1),0.32));
   gl.disable(gl.DEPTH_TEST);gl.enable(gl.BLEND);gl.blendFunc(gl.ONE,gl.ONE);
   if(hdr){gl.bindFramebuffer(gl.FRAMEBUFFER,hdrFb);gl.viewport(0,0,W,H);gl.clearColor(0,0,0,0);gl.clear(gl.COLOR_BUFFER_BIT);}
-  if(edgeCount){gl.useProgram(progL.p);bindAttribs(bufPos,bufCol);gl.uniformMatrix4fv(progL.m,false,M);
+  if(edgeCount){gl.useProgram(progL.p);bindAttribs(bufPos,bufCol,true);gl.uniformMatrix4fv(progL.m,false,M);
     gl.uniform1f(progL.a,(edgeSel.value==='all'?0.09:0.2)*dens*(hdr?1:g));gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER,bufIdx);gl.drawElements(gl.LINES,edgeCount*2,gl.UNSIGNED_INT,0);}
-  gl.useProgram(progP.p);bindAttribs(bufPos,bufCol);gl.uniformMatrix4fv(progP.m,false,M);
+  gl.useProgram(progP.p);bindAttribs(bufPos,bufCol,true);gl.uniformMatrix4fv(progP.m,false,M);
   gl.uniform1f(progP.s,focal*0.16);gl.uniform1f(progP.lo,1.3*px);gl.uniform1f(progP.hi,9*px);
   gl.uniform1f(progP.a,(hdr?dens:Math.max(0.08,dens)*g));gl.drawArrays(gl.POINTS,0,n);
   if(hdr){gl.bindFramebuffer(gl.FRAMEBUFFER,null);gl.viewport(0,0,W,H);gl.disable(gl.BLEND);gl.useProgram(progT.p);
-    gl.bindBuffer(gl.ARRAY_BUFFER,bufQuad);gl.enableVertexAttribArray(0);gl.vertexAttribPointer(0,2,gl.FLOAT,false,0,0);gl.disableVertexAttribArray(1);
+    gl.bindBuffer(gl.ARRAY_BUFFER,bufQuad);gl.enableVertexAttribArray(0);gl.vertexAttribPointer(0,2,gl.FLOAT,false,0,0);gl.disableVertexAttribArray(1);gl.disableVertexAttribArray(2);
     gl.activeTexture(gl.TEXTURE0);gl.bindTexture(gl.TEXTURE_2D,hdrTex);gl.uniform1i(progT.t,0);gl.uniform3f(progT.bg,BG[0],BG[1],BG[2]);
-    gl.uniform1f(progT.k,exposure()*g*32);gl.drawArrays(gl.TRIANGLES,0,3);gl.enable(gl.BLEND);}
+    gl.uniform1f(progT.k,exposure(G.n)*g*32);gl.drawArrays(gl.TRIANGLES,0,3);gl.enable(gl.BLEND);}
   // The winning positions and the moves between them, drawn again on top so that they stand out.
   if(winPoints&&colorSel.value!=='depth'){gl.blendFunc(gl.SRC_ALPHA,gl.ONE_MINUS_SRC_ALPHA);
-    if(winEdges){gl.useProgram(progLH.p);bindAttribs(bufPos,bufCol);gl.uniformMatrix4fv(progLH.m,false,M);gl.uniform1f(progLH.a,0.5*Math.min(1,g));gl.uniform2f(progLH.off,0,0);
+    if(winEdges){gl.useProgram(progLH.p);bindAttribs(bufPos,bufCol,true);gl.uniformMatrix4fv(progLH.m,false,M);gl.uniform1f(progLH.a,0.5*Math.min(1,g));gl.uniform2f(progLH.off,0,0);
       gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER,bufWinE);gl.drawElements(gl.LINES,winEdges*2,gl.UNSIGNED_INT,0);}
-    gl.useProgram(progH.p);bindAttribs(bufPos,bufCol);gl.uniformMatrix4fv(progH.m,false,M);gl.uniform1f(progH.a,0.85);
+    gl.useProgram(progH.p);bindAttribs(bufPos,bufCol,true);gl.uniformMatrix4fv(progH.m,false,M);gl.uniform1f(progH.a,0.85);
     gl.uniform1f(progH.s,focal*0.13);gl.uniform1f(progH.lo,1.8*px);gl.uniform1f(progH.hi,6*px);
     gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER,bufWinP);gl.drawElements(gl.POINTS,winPoints,gl.UNSIGNED_INT,0);}
   if(hl&&hl.n){gl.blendFunc(gl.SRC_ALPHA,gl.ONE_MINUS_SRC_ALPHA);
@@ -649,8 +709,43 @@ function draw(){
     gl.drawArrays(gl.POINTS,0,hl.n);}
 }
 // How bright one dot is: dimmer for big trees, whose dots pile up more, and brighter when zoomed in, which spreads them.
-function exposure(){var z=cam.ortho?(cam.fitOh||cam.oh)/cam.oh:(cam.fitDist||cam.dist)/cam.dist;
-  return Math.min(4,Math.max(0.03,Math.min(2.2,Math.sqrt(50000/Math.max(G.n,1))))*Math.pow(Math.max(0.3,Math.min(50,z)),0.8));}
+// While a big tree is built, the depths laid out so far are drawn as they come (PV), in the colour of positions not
+// settled yet; picking waits for the finished tree.
+var PV=null,bufPV=null,camMoved=false;
+function drawPreview(W,H){
+  var M=mvp();lastM=null;var px=dpr*saveScale,g=glow(),hdr=ensureHDR(W,H),focal=cam.ortho?H/(2*cam.oh):H/(2*Math.tan(cam.fov/2));
+  var dens=hdr?1/32:Math.min(1,Math.pow(4000/Math.max(PV.n,1),0.32));
+  gl.disable(gl.DEPTH_TEST);gl.enable(gl.BLEND);gl.blendFunc(gl.ONE,gl.ONE);
+  if(hdr){gl.bindFramebuffer(gl.FRAMEBUFFER,hdrFb);gl.viewport(0,0,W,H);gl.clearColor(0,0,0,0);gl.clear(gl.COLOR_BUFFER_BIT);}
+  gl.useProgram(progP.p);gl.bindBuffer(gl.ARRAY_BUFFER,bufPV);gl.enableVertexAttribArray(0);gl.vertexAttribPointer(0,3,gl.FLOAT,false,0,0);
+  gl.disableVertexAttribArray(1);gl.vertexAttrib4f(1,UNK[0]/255,UNK[1]/255,UNK[2]/255,110/255);gl.disableVertexAttribArray(2);gl.vertexAttrib1f(2,1);
+  gl.uniformMatrix4fv(progP.m,false,M);gl.uniform1f(progP.ys,1);gl.uniform1f(progP.s,focal*0.16);gl.uniform1f(progP.lo,1.3*px);gl.uniform1f(progP.hi,9*px);
+  gl.uniform1f(progP.a,hdr?dens:Math.max(0.08,dens)*g);gl.drawArrays(gl.POINTS,0,PV.n);
+  if(G)gl.uniform1f(progP.ys,G.ys||1);
+  if(hdr){gl.bindFramebuffer(gl.FRAMEBUFFER,null);gl.viewport(0,0,W,H);gl.disable(gl.BLEND);gl.useProgram(progT.p);
+    gl.bindBuffer(gl.ARRAY_BUFFER,bufQuad);gl.enableVertexAttribArray(0);gl.vertexAttribPointer(0,2,gl.FLOAT,false,0,0);
+    gl.activeTexture(gl.TEXTURE0);gl.bindTexture(gl.TEXTURE_2D,hdrTex);gl.uniform1i(progT.t,0);gl.uniform3f(progT.bg,BG[0],BG[1],BG[2]);
+    gl.uniform1f(progT.k,exposure(PV.n)*g*32);gl.drawArrays(gl.TRIANGLES,0,3);gl.enable(gl.BLEND);}
+  gl.enableVertexAttribArray(1);
+}
+// A depth laid out by the worker: kept on the page (growing), sent to the graphics card, and the view fitted to it
+// unless the reader has moved it.
+function addLayer(m){
+  if(!PV){PV={n:0,pos:new Float32Array(3*4096),cap:0,b:[Infinity,-Infinity,Infinity,-Infinity,Infinity,-Infinity]};if(!bufPV)bufPV=gl.createBuffer();
+    nodeBox.hidden=true;hideTip();busy.classList.add('at-low');}
+  var P=m.pos,k=P.length/3,need=m.start+k,b=PV.b;
+  if(3*need>PV.pos.length){var g2=new Float32Array(3*Math.max(need,PV.pos.length/3*2));g2.set(PV.pos.subarray(0,3*PV.n));PV.pos=g2;}
+  PV.pos.set(P,3*m.start);PV.n=Math.max(PV.n,need);
+  for(var i=0;i<P.length;i+=3){var x=P[i],y=P[i+1],z=P[i+2];if(x<b[0])b[0]=x;if(x>b[1])b[1]=x;if(y<b[2])b[2]=y;if(y>b[3])b[3]=y;if(z<b[4])b[4]=z;if(z>b[5])b[5]=z;}
+  gl.bindBuffer(gl.ARRAY_BUFFER,bufPV);
+  if(12*PV.n>PV.cap){PV.cap=PV.pos.length*4;gl.bufferData(gl.ARRAY_BUFFER,PV.cap,gl.DYNAMIC_DRAW);gl.bufferSubData(gl.ARRAY_BUFFER,0,PV.pos.subarray(0,3*PV.n));}
+  else gl.bufferSubData(gl.ARRAY_BUFFER,12*m.start,P);
+  if(!camMoved)fit(view);
+  dirty=true;
+}
+function endPreview(){if(!PV)return;PV=null;busy.classList.remove('at-low');if(bufPV){gl.bindBuffer(gl.ARRAY_BUFFER,bufPV);gl.bufferData(gl.ARRAY_BUFFER,4,gl.STATIC_DRAW);}dirty=true;}
+function exposure(n){var z=cam.ortho?(cam.fitOh||cam.oh)/cam.oh:(cam.fitDist||cam.dist)/cam.dist;
+  return Math.min(4,Math.max(0.03,Math.min(2.2,Math.sqrt(50000/Math.max(n,1))))*Math.pow(Math.max(0.3,Math.min(50,z)),0.8));}
 // Nothing is drawn while the tree is scrolled out of view or the tab is hidden.
 var onScreen=true;
 if(window.IntersectionObserver)new IntersectionObserver(function(es){onScreen=es[es.length-1].isIntersecting;if(onScreen)dirty=true;}).observe(host);
@@ -710,24 +805,36 @@ function recolour(){
   gl.bindBuffer(gl.ARRAY_BUFFER,bufCol);gl.bufferData(gl.ARRAY_BUFFER,c,gl.STATIC_DRAW);
   $('.at-legend').innerHTML=legend(mode);dirty=true;
 }
+var EDGE_CAP=6000000;
+// Move e of the tree (its moves are kept in chunks of 4 million).
+function edgeAt(e){return G.et[e>>>22][e&4194303];}
 function rebuildEdges(){
   edgeCount=0;edgeNote='';if(!G)return;var mode=edgeSel.value,idx,k=0,i;
   if(mode==='tree'){idx=new Uint32Array(2*Math.max(1,G.n-1));for(i=1;i<G.n;i++){if(G.parent[i]>=0){idx[k++]=G.parent[i];idx[k++]=i;}}}
-  else if(mode==='all'){idx=G.allIdx;k=idx.length;if(G.ne>k/2)edgeNote='Drawing '+fmt(k/2)+' of the '+fmt(G.ne)+' moves.';}
+  else if(mode==='all'){var ne=Math.min(G.ne,EDGE_CAP);idx=new Uint32Array(2*Math.max(1,ne));
+    for(var u=0;u<G.n&&k<2*ne;u++)for(var e=G.es[u];e<G.es[u+1]&&k<2*ne;e++){idx[k++]=u;idx[k++]=edgeAt(e);}
+    if(G.ne>ne)edgeNote='Drawing '+fmt(ne)+' of the '+fmt(G.ne)+' moves.';}
   if(k){gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER,bufIdx);gl.bufferData(gl.ELEMENT_ARRAY_BUFFER,idx.subarray(0,k),gl.STATIC_DRAW);edgeCount=k/2;}
-  // The winning part: positions that can still win, and the drawn moves between two of them.
-  var st=G.status,wp=0,we=0,P=new Uint32Array(Math.max(1,G.counts.win+1)),E2=[];
-  for(i=0;i<G.n;i++)if(st[i]===1)P[wp++]=i;
-  if(mode!=='none')for(i=0;i<k;i+=2)if(st[idx[i]]===1&&st[idx[i+1]]===1){E2.push(idx[i],idx[i+1]);}
-  winPoints=wp;winEdges=E2.length/2;
+  rebuildOverlay();
+}
+// The winning part, drawn again on top: positions that can still win, and the drawn moves between two of them (while
+// playing, only those in the tree from the position played to).
+function rebuildOverlay(){
+  if(!G)return;var st=G.status,mk=play.on?play.mask:null,mode=edgeSel.value,wp=0,we=0,i,u,e,v;
+  var P=new Uint32Array(Math.max(1,G.counts.win+1)),E2=new Uint32Array(mode==='all'?2*Math.max(1,Math.min(G.ne,EDGE_CAP)):2*Math.max(1,G.counts.win));
+  for(i=0;i<G.n;i++)if(st[i]===1&&(!mk||mk[i]))P[wp++]=i;
+  if(mode==='tree'){for(i=1;i<G.n;i++){u=G.parent[i];if(u>=0&&st[i]===1&&st[u]===1&&(!mk||(mk[i]&&mk[u]))){E2[we++]=u;E2[we++]=i;}}}
+  else if(mode==='all'){var cap=Math.min(G.ne,EDGE_CAP),c=0;
+    for(u=0;u<G.n&&c<cap;u++)for(e=G.es[u];e<G.es[u+1]&&c<cap;e++,c++){v=edgeAt(e);if(st[u]===1&&st[v]===1&&(!mk||(mk[u]&&mk[v]))){E2[we++]=u;E2[we++]=v;}}}
+  winPoints=wp;winEdges=we/2;
   if(wp){gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER,bufWinP);gl.bufferData(gl.ELEMENT_ARRAY_BUFFER,P.subarray(0,wp),gl.STATIC_DRAW);}
-  if(winEdges){gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER,bufWinE);gl.bufferData(gl.ELEMENT_ARRAY_BUFFER,new Uint32Array(E2),gl.STATIC_DRAW);}
+  if(winEdges){gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER,bufWinE);gl.bufferData(gl.ELEMENT_ARRAY_BUFFER,E2.subarray(0,we),gl.STATIC_DRAW);}
   dirty=true;
 }
 
 // ---------- the camera ----------
 function fit(v){
-  if(!G)return;var b=G.bounds.slice();b[2]*=G.ys;b[3]*=G.ys;var cx=(b[0]+b[1])/2,cy=(b[2]+b[3])/2,cz=(b[4]+b[5])/2;
+  var pv=PV&&PV.n;if(!G&&!pv)return;var ys=pv?1:G.ys,b=(pv?PV.b:G.bounds).slice();b[2]*=ys;b[3]*=ys;var cx=(b[0]+b[1])/2,cy=(b[2]+b[3])/2,cz=(b[4]+b[5])/2;
   var rx=Math.max(1,(b[1]-b[0])/2,(b[5]-b[4])/2),ry=Math.max(1,(b[3]-b[2])/2),r=Math.sqrt(rx*rx+ry*ry);
   var asp=canvas.width/Math.max(1,canvas.height);
   view=v||view;cam.tx=cx;cam.ty=cy;cam.tz=cz;
@@ -753,7 +860,7 @@ canvas.addEventListener('pointermove',function(e){
     panBy(mx-pinch.x,my-pinch.y);zoomAt(pinch.d/Math.max(1,d),mx,my);pinch={d:d,x:mx,y:my};return;}
   if(drag){var dx=e.clientX-drag.x,dy=e.clientY-drag.y;drag.x=e.clientX;drag.y=e.clientY;
     if(Math.abs(e.clientX-drag.sx)+Math.abs(e.clientY-drag.sy)>4)drag.moved=true;
-    if(drag.pan)panBy(dx,dy);else{cam.yaw-=dx*0.006;cam.pitch=Math.max(-1.5707,Math.min(1.5707,cam.pitch+dy*0.006));if(view!=='3d'){view='3d';fitButtons();}}
+    camMoved=true;if(drag.pan)panBy(dx,dy);else{cam.yaw-=dx*0.006;cam.pitch=Math.max(-1.5707,Math.min(1.5707,cam.pitch+dy*0.006));if(view!=='3d'){view='3d';fitButtons();}}
     dirty=true;return;}
   hoverAt(e);
 });
@@ -775,7 +882,7 @@ canvas.addEventListener('wheel',function(e){
   if(!(document.body.classList.contains('standalone')||fullNow()||engaged||e.ctrlKey||e.metaKey)){hint('Click the tree first, or hold Ctrl, to zoom with the wheel');return;}
   e.preventDefault();zoomAt(Math.exp(e.deltaY*(e.deltaMode?0.05:0.0015)),e.clientX,e.clientY);},{passive:false});
 canvas.addEventListener('webglcontextlost',function(e){e.preventDefault();lost=true;message('The graphics were reset; they should come back by themselves, or after reloading the page.');},false);
-canvas.addEventListener('webglcontextrestored',function(){lost=false;initGL();message('');if(G){var s=G.sel;applyShape();recolour();rebuildEdges();if(s>=0)select(s);}dirty=true;},false);
+canvas.addEventListener('webglcontextrestored',function(){lost=false;initGL();message('');if(G){var s=G.sel;applyShape();recolour();rebuildEdges();if(play.on)updatePlay();if(s>=0)select(s);}dirty=true;},false);
 canvas.addEventListener('dblclick',function(){if(G&&G.sel>=0){var i=G.sel;cam.tx=G.pos[3*i];cam.ty=G.pos[3*i+1]*G.ys;cam.tz=G.pos[3*i+2];if(cam.ortho)cam.oh*=0.5;else cam.dist*=0.5;dirty=true;}});
 function fitButtons(){host.querySelectorAll('[data-view]').forEach(function(b){b.classList.toggle('on',b.getAttribute('data-view')===view);});}
 function panBy(dx,dy){var v=camVectors(),w=worldPerPixel()*dpr;cam.tx+=(-dx*v.r[0]+dy*v.u[0])*w;cam.ty+=(-dx*v.r[1]+dy*v.u[1])*w;cam.tz+=(-dx*v.r[2]+dy*v.u[2])*w;dirty=true;}
@@ -784,10 +891,10 @@ function zoomAt(f,cx,cy){
   var ox=(cx-r.left-r.width/2)*w,oy=(r.height/2-(cy-r.top))*w;
   f=Math.max(0.2,Math.min(5,f));
   cam.tx+=(ox*v.r[0]+oy*v.u[0])*(1-f);cam.ty+=(ox*v.r[1]+oy*v.u[1])*(1-f);cam.tz+=(ox*v.r[2]+oy*v.u[2])*(1-f);
-  if(cam.ortho)cam.oh=Math.max(0.05,cam.oh*f);else cam.dist=Math.max(0.2,cam.dist*f);dirty=true;
+  if(cam.ortho)cam.oh=Math.max(0.05,cam.oh*f);else cam.dist=Math.max(0.2,cam.dist*f);camMoved=true;dirty=true;
 }
 function pick(mx,my){
-  if(!G||!lastM)return -1;var ys=G.ys,M=lastM,P=G.pos,W=canvas.width,H=canvas.height,x=mx*dpr,y=my*dpr,best=-1,bd=(9*dpr)*(9*dpr),bz=Infinity;
+  if(!G||!lastM||PV)return -1;var ys=G.ys,M=lastM,P=G.pos,W=canvas.width,H=canvas.height,x=mx*dpr,y=my*dpr,best=-1,bd=(9*dpr)*(9*dpr),bz=Infinity;
   for(var i=0;i<G.n;i++){var px=P[3*i],py=P[3*i+1]*ys,pz=P[3*i+2],w=M[3]*px+M[7]*py+M[11]*pz+M[15];if(w<=0)continue;
     var sx=((M[0]*px+M[4]*py+M[8]*pz+M[12])/w*0.5+0.5)*W,sy=(0.5-(M[1]*px+M[5]*py+M[9]*pz+M[13])/w*0.5)*H,d=(sx-x)*(sx-x)+(sy-y)*(sy-y);
     if(d<bd-0.5||(d<bd+0.5&&w<bz)){bd=d;best=i;bz=w;}}
@@ -847,7 +954,7 @@ function drawChart(){
 // ---------- selecting a position ----------
 function select(i){
   if(!G)return;G.sel=i;hl=null;
-  if(i<0){nodeBox.hidden=true;dirty=true;return;}
+  if(i<0){nodeBox.hidden=true;if(play.on)showPlayPath();dirty=true;return;}
   var up=[],v=i;while(v>=0){up.push(v);v=G.parent[v];}up.reverse();
   // Down: from a winnable position the way to a win; otherwise towards the fewest piles drawn, unsettled positions first
   // among equals; the move it is drawn joined by breaks ties.
@@ -880,27 +987,33 @@ function parseLine(cards,text){
     if(i<0||t<0||(i-t!==1&&i-t!==3))return null;out.push(i<<1|(i-t===3?1:0));tops[t]=a;tops.splice(i,1);}
   return out;
 }
-var onPage=false,layoutPW=0;
+var onPage=false,layoutPW=0,pendingLoad=false;
+function failed(text){busy.hidden=true;endPreview();message(text);pendingLoad=false;if(play.busy){play.busy=false;renderPlay();}}
 function run(opts){
   if(worker)worker.terminate();
   var budget=sizeNow();
   // A big tree isn't kept on the screen while another big one is built: both at once can run out of memory.
   if(budget>4000000&&G&&G.n>4000000)dropGraph();
+  endPreview();camMoved=false;
+  // Big trees are shown depth by depth while they are built (not when redrawn for a game, which keeps the view).
+  var preview=budget>1000000&&shapeSel.value==='rings'&&!opts.keepView;
   worker=makeWorker(onPage);
   var heard=false,me=worker;
   busy.hidden=false;$('.at-busy span').textContent='Starting...';$('.at-busy i').style.width='0';message('');
   worker.onmessage=function(ev){
     var m=ev.data;heard=true;if(me!==worker)return;
+    if(m.type==='layer'){addLayer(m);return;}
     if(m.type==='progress'){var f=m.frac!=null?m.frac:m.nodes/m.budget;$('.at-busy i').style.width=Math.min(100,100*f).toFixed(1)+'%';
       $('.at-busy span').textContent=m.phase+(m.frac!=null?'':': '+fmt(m.nodes)+' positions');}
-    else if(m.type==='graph'){busy.hidden=true;setGraph(m,opts);if(host.onbuilt)host.onbuilt(m);}
-    else if(m.type==='error'){busy.hidden=true;message('Could not build this tree: '+m.message+'. A smaller size may work.');}
+    else if(m.type==='graph'){busy.hidden=true;if(PV&&camMoved)opts.keepView=true;endPreview();setGraph(m,opts);if(host.onbuilt)host.onbuilt(m);}
+    else if(m.type==='error')failed('Could not build this tree: '+m.message+'. A smaller size may work.');
   };
   worker.onerror=function(e){if(me!==worker)return;
     if(!heard&&!onPage){onPage=true;run(opts);return;} // the worker never started: build on the page instead
-    busy.hidden=true;message('Could not build this tree ('+(e.message||'out of memory?')+'). A smaller size may work.');};
+    failed('Could not build this tree ('+(e.message||'out of memory?')+'). A smaller size may work.');};
   // total: the tree's size if known; a deal known to be winnable has far too many positions to draw whole.
-  worker.postMessage({cmd:'build',cards:opts.cards,budget:budget,top:0.15,endPiles:15,parentWeight:layoutPW,line:opts.line||null,total:opts.total||(opts.win?1e18:0),
+  var pm=play.on&&play.moves.length&&sameRow(play.rows[0],opts.cards)?play.moves.slice():null;opts.playSent=pm||[];pendingLoad=!opts.forPlay;
+  worker.postMessage({cmd:'build',cards:opts.cards,budget:budget,top:0.15,endPiles:15,parentWeight:layoutPW,line:opts.line||null,play:pm,preview:preview,fullTry:opts.tryWhole?budget:0,total:opts.total||(opts.win?1e18:0),bound:opts.bound||0,
     rng:(hashStr(opts.title)^budget)>>>0||1});
 }
 function dropGraph(){
@@ -928,18 +1041,21 @@ function applyShape(){
   G.pos=rings?G.posR:G.posS;G.bounds=rings?G.boundsR:G.boundsS;if(rings&&G.n>4000000)G.posS=null;
   var b=G.bounds,w=Math.max(b[1]-b[0],b[5]-b[4],1),hgt=Math.max(b[3]-b[2],0.8);G.ys=rings?1:Math.max(0.4,Math.min(4,1.15*w/hgt));setYs(G.ys);
   gl.bindBuffer(gl.ARRAY_BUFFER,bufPos);gl.bufferData(gl.ARRAY_BUFFER,G.pos,gl.STATIC_DRAW);
-  if(G.sel>=0)select(G.sel);dirty=true;
+  if(G.sel>=0)select(G.sel);else if(play.on)showPlayPath();dirty=true;
 }
 // The deal's details (cur) change only when its tree arrives, so a slow or failed build leaves the page describing the
 // tree on the screen.
 function setGraph(m,o){
-  cur.cards=o.cards;cur.title=o.title;cur.note=o.note||'';cur.base=o.base||0;cur.total=o.total||0;cur.win=!!o.win;cur.line=o.line||null;cur.ex=o.ex||'';
+  cur.cards=o.cards;cur.title=o.title;cur.note=o.note||'';cur.base=o.base||0;cur.total=o.total||0;cur.bound=o.bound||0;cur.tryWhole=!!o.tryWhole;cur.win=!!o.win;cur.line=o.line||null;cur.ex=o.ex||'';
   if(o.resetStack)cur.stack=[];if(o.push)cur.stack.push(o.push);if(o.pop)cur.stack.pop();exSel.value=cur.ex;
-  G=m;G.sel=-1;hl=null;nodeBox.hidden=true;G.posR=m.pos;G.posS=null;G.boundsR=m.bounds;G.boundsS=null;
+  G=m;G.sel=-1;hl=null;nodeBox.hidden=true;G.posR=m.posR||m.pos;G.boundsR=m.boundsR||m.bounds;G.posS=m.posS||null;G.boundsS=m.boundsS||null;
   var ne=0,ni=0,nx=0;for(var i=0;i<G.n;i++){var x=G.expanded[i]&8;if(G.status[i]===2){if(x)ne++;else ni++;}if(!x&&G.status[i]!==1)nx++;}
   G.nExactLoss=ne;G.nInexactLoss=ni;G.nInexact=nx;
+  // A game being played carries on in the new tree if it is the same deal, else it starts again from the new deal.
+  pendingLoad=false;if(play.on){play.busy=false;if(sameRow(play.rows[0],G.root))resolvePlay();else resetPlay();}playMask();
   applyShape();recolour();rebuildEdges();if(!o.keepView)fit(view);
-  $('.at-title').textContent=cur.title;$('.at-note').innerHTML=cur.note||'';showStats();drawChart();crumbs();
+  $('.at-title').textContent=cur.title;$('.at-note').innerHTML=cur.note||'';showStats();drawChart();crumbs();renderPlay();
+  if(play.on&&!sameRow(play.moves,o.playSent||[])&&needsMore()&&sizeNow()<=4000000)rebuildForPlay();
   dirty=true;
 }
 function crumbs(){
@@ -948,10 +1064,11 @@ function crumbs(){
     var s=document.createElement('span');s.className='at-panel';s.style.padding='4px 8px';s.textContent=cur.stack.map(function(x){return x.title;}).join(' > ')+' > '+cur.title;c.appendChild(s);}
   resize();
 }
-function snapshot(){return {cards:cur.cards,title:cur.title,note:cur.note,base:cur.base,total:cur.total,win:cur.win,line:cur.line,ex:cur.ex};}
+function snapshot(){return {cards:cur.cards,title:cur.title,note:cur.note,base:cur.base,total:cur.total,bound:cur.bound,tryWhole:cur.tryWhole,win:cur.win,line:cur.line,ex:cur.ex};}
 function loadDeal(o){select(-1);run(o);}
 function loadSeed(seedText,ex){
   var t=String(seedText).replace(/[\s,]/g,'');if(!/^\d{1,20}$/.test(t)||BigInt(t)>MASK){message('A seed is a whole number from 0 to 18,446,744,073,709,551,615.');return;}
+  t=BigInt(t).toString();
   var cards=dealFromSeed(t),e=ex||EXAMPLES.filter(function(x){return x.seed===t;})[0],lostN=lostTotal(t);
   seedIn.value=t;
   loadDeal({cards:cards,title:'Deal '+BigInt(t).toLocaleString('en-US'),note:e?e.note:lostN?'One of the 721 deals of the first trillion that cannot be won: '+fmt(lostN)+' positions in all.':'',
@@ -959,9 +1076,123 @@ function loadSeed(seedText,ex){
 }
 function exploreFrom(i){
   if(!G||i<0)return;
-  loadDeal({cards:cardsOf(i),title:'After '+movesIn(i)+' move'+(movesIn(i)===1?'':'s'),note:'The tree from the chosen position, with '+G.len[i]+' piles.',base:movesIn(i),total:0,line:null,ex:'',push:snapshot()});
+  loadDeal({cards:cardsOf(i),title:'After '+movesIn(i)+' move'+(movesIn(i)===1?'':'s'),note:'The tree from the chosen position, with '+G.len[i]+' piles.',base:movesIn(i),total:0,
+    bound:G.complete?G.n:(cur.bound||(!cur.win&&cur.total)||0),tryWhole:G.status[i]===2||cur.tryWhole||(!cur.win&&cur.total>0),line:null,ex:'',push:keepForBack()});
 }
-function back(){var s=cur.stack[cur.stack.length-1];if(!s)return;var o={};for(var k in s)o[k]=s[k];o.pop=true;loadDeal(o);}
+// Back to the tree explored from is instant: the last one (up to 4 million positions) is kept, if the size is the same.
+function keepForBack(){var sn=snapshot();cur.stack.forEach(function(x){x.graph=null;});if(G&&G.n<=4000000){sn.graph=G;sn.size=sizeNow();}return sn;}
+function back(){var s=cur.stack[cur.stack.length-1];if(!s)return;var o={};for(var k in s)if(k!=='graph'&&k!=='size')o[k]=s[k];o.pop=true;
+  if(s.graph&&s.size===sizeNow()){select(-1);if(worker){worker.terminate();worker=null;}endPreview();busy.hidden=true;message('');setGraph(s.graph,o);return;}
+  loadDeal(o);}
+
+// ---------- playing ----------
+// The game: its moves, the rows of cards after each, and the drawn position each reached (-1 once it leaves the drawn
+// tree). After each move the tree from the position reached stays lit (mask) and the rest is dimmed.
+var play={on:false,moves:[],rows:[],path:[],node:0,sel:-1,targets:[],busy:false,mask:null,maskBuf:null,count:0};
+function rowNow(){return play.rows[play.rows.length-1];}
+function sameRow(a,b){if(!a||!b||a.length!==b.length)return false;for(var k=0;k<a.length;k++)if(a[k]!==b[k])return false;return true;}
+// Where the card at i can go: the card 1 or 3 to its left, if they share a suit or rank.
+function legal(row,i){var c=row[i],t=[];for(var d=1;d<=3;d+=2){if(i-d<0)continue;var x=c^row[i-d];if((x&0xF0)===0||(x&0x0F)===0)t.push(i-d);}return t;}
+function applyMove(row,m){var i=m>>1,r=row.slice();r[i-((m&1)?3:1)]=r[i];r.splice(i,1);return r;}
+// The drawn position that move m (giving row) leads to from drawn position u, or -1.
+function childBy(u,m,row){
+  var e,c;for(e=G.es[u];e<G.es[u+1];e++){c=edgeAt(e);if(G.parent[c]===u&&G.pmove[c]===m)return c;}
+  for(e=G.es[u];e<G.es[u+1];e++){c=edgeAt(e);if(sameRow(cardsOf(c),row))return c;}
+  return -1;
+}
+function resetPlay(){play.moves=[];play.rows=[(G?G.root:play.rows[0]).slice()];play.path=[0];play.node=0;play.sel=-1;play.targets=[];}
+function resolvePlay(){var u=0;play.path=[0];for(var k=0;k<play.moves.length;k++){u=u>=0?childBy(u,play.moves[k],play.rows[k+1]):-1;play.path.push(u);}play.node=u;}
+// The tree from the position played to: it and every drawn position below it (moves only go to higher numbers).
+// It goes to the graphics card as one byte per position (255 lit, 0 dimmed); a position not drawn dims everything.
+function playMask(){
+  play.mask=null;play.count=G?G.n:0;
+  if(play.on&&G&&play.node!==0){
+    var N=G.n,m=play.maskBuf&&play.maskBuf.length===N?play.maskBuf:(play.maskBuf=new Uint8Array(N)),p=play.node,cnt=0;m.fill(0);
+    if(p>0){var last=p;m[p]=255;
+      for(var u=p;u<=last;u++)if(m[u]){cnt++;for(var e=G.es[u],e1=G.es[u+1];e<e1;e++){var c=edgeAt(e);m[c]=255;if(c>last)last=c;}}}
+    play.mask=m;play.count=cnt;}
+  maskOn=!!play.mask;if(maskOn){gl.bindBuffer(gl.ARRAY_BUFFER,bufMask);gl.bufferData(gl.ARRAY_BUFFER,play.mask,gl.DYNAMIC_DRAW);}
+  dirty=true;
+}
+// The game's line through the tree, in white, as far as it is drawn.
+function showPlayPath(){
+  hl=null;dirty=true;if(!play.on||!G)return;
+  var ids=[];for(var k=0;k<play.path.length&&play.path[k]>=0;k++)ids.push(play.path[k]);
+  var n=ids.length,P=new Float32Array(3*n),C=new Uint8Array(4*n);
+  for(k=0;k<n;k++){var j=ids[k];P[3*k]=G.pos[3*j];P[3*k+1]=G.pos[3*j+1];P[3*k+2]=G.pos[3*j+2];C[4*k]=C[4*k+1]=C[4*k+2]=255;C[4*k+3]=k===n-1?255:190;}
+  gl.bindBuffer(gl.ARRAY_BUFFER,bufHPos);gl.bufferData(gl.ARRAY_BUFFER,P,gl.DYNAMIC_DRAW);gl.bindBuffer(gl.ARRAY_BUFFER,bufHCol);gl.bufferData(gl.ARRAY_BUFFER,C,gl.DYNAMIC_DRAW);
+  hl={n:n};
+}
+function playText(){
+  var row=rowNow(),n=cur.base+play.moves.length,u=play.node,any=false;
+  var h='<b>'+(play.moves.length?'After '+n+' move'+(n===1?'':'s'):cur.base?'The position explored':'The deal')+'</b>: '+row.length+' pile'+(row.length===1?'':'s')+'. ';
+  for(var i=1;i<row.length&&!any;i++)if(legal(row,i).length)any=true;
+  if(row.length===1)return h+'You won!';
+  if(!any)return h+'No moves left.';
+  if(play.busy)return h+'Drawing the tree from here...';
+  if(u<0||!G)return h+'This position is not in the drawn tree.';
+  if(needsMore())return h+outcome(u)+' Little is drawn below it.';
+  return h+outcome(u);
+}
+function renderPlay(){
+  var box=$('.at-play');box.hidden=!play.on;$('.at-playbtn').classList.toggle('on',play.on);side.hidden=play.on;host.classList.toggle('at-playing',play.on);
+  if(!play.on)return;
+  var ae=document.activeElement,fi=ae&&ae.classList&&ae.classList.contains('at-pcard')?+ae.getAttribute('data-i'):-1;
+  $('.at-phead').innerHTML=playText();
+  var row=rowNow(),h='';
+  for(var i=0;i<row.length;i++){var b=row[i];
+    h+='<button class="at-pcard'+(isRed(b)?' at-red':'')+(legal(row,i).length?'':' at-none')+(i===play.sel?' at-sel':'')+(play.targets.indexOf(i)>=0?' at-tgt':'')+
+      '" data-i="'+i+'" title="'+cardText(b)+'">'+RANKS[b&15].replace('T','10')+'<span>'+SYM[b>>4]+'</span></button>';}
+  $('.at-pcards').innerHTML=h;
+  // Keys keep their place: the focus goes back to the card at the same place, or to the place a card can go.
+  if(fi>=0){var cs=$('.at-pcards').children,ti=play.targets.length?play.targets[0]:Math.min(fi,cs.length-1);if(cs[ti])cs[ti].focus();}
+  $('.at-undo').disabled=$('.at-restart').disabled=!play.moves.length;$('.at-phint').disabled=!(G&&play.node>=0&&G.down[play.node]>=0);
+  $('.at-padd').hidden=!needsMore();
+}
+// A sample shows too little of the game's position when it isn't drawn, or almost nothing is drawn below it while
+// it is neither finished nor shown lost.
+function needsMore(){
+  if(!play.on||!G||G.complete||play.busy||pendingLoad)return false;var row=rowNow(),u=play.node,any=false;
+  for(var i=1;i<row.length&&!any;i++)if(legal(row,i).length)any=true;
+  // An exact position (everything below it drawn) has all there is.
+  return any&&(u<0||(G.status[u]!==2&&!(G.expanded[u]&8)&&play.count<Math.max(500,sizeNow()*0.002)));
+}
+function updatePlay(){playMask();if(G){rebuildOverlay();if(G.sel<0)showPlayPath();}renderPlay();}
+function doMove(m){
+  var row=applyMove(rowNow(),m),u=play.path[play.path.length-1],c=G&&u>=0?childBy(u,m,row):-1;
+  play.moves.push(m);play.rows.push(row);play.path.push(c);play.node=c;play.sel=-1;play.targets=[];
+  updatePlay();
+  // Too little of a sample around it: draw the tree again with the game's moves in and half of the searches from where
+  // it has got to (by hand past 4 million positions, which takes long).
+  if(needsMore()&&sizeNow()<=4000000)rebuildForPlay();
+}
+function rebuildForPlay(){var o=snapshot();o.keepView=true;o.forPlay=true;play.busy=true;run(o);renderPlay();}
+function undoMove(){if(!play.moves.length)return;play.moves.pop();play.rows.pop();play.path.pop();play.node=play.path[play.path.length-1];play.sel=-1;play.targets=[];updatePlay();}
+// A hint: the next move of the line shown down from here (to a win if there is one).
+function hintMove(){
+  var u=play.node;if(!G||u<0)return;var c=G.down[u];if(c<0)return;
+  // From an unsettled position, an unsettled move (which may still win) before one shown lost.
+  if(G.status[u]===0&&G.status[c]===2){var bb=99;for(var e=G.es[u];e<G.es[u+1];e++){var x=edgeAt(e);if(G.status[x]===0&&G.best[x]<bb){bb=G.best[x];c=x;}}}
+  var want=cardsOf(c),row=rowNow();
+  for(var i=1;i<row.length;i++){var ts=legal(row,i);for(var k=0;k<ts.length;k++)if(sameRow(applyMove(row,i<<1|(i-ts[k]===3?1:0)),want)){
+    play.sel=i;play.targets=[ts[k]];hint(cardText(row[i])+' onto '+cardText(row[ts[k]]));renderPlay();return;}}
+}
+function startPlay(){if(!G)return;play.on=true;resetPlay();select(-1);updatePlay();}
+function stopPlay(){play.on=false;play.busy=false;play.mask=null;hl=null;if(G){recolour();rebuildOverlay();}if(G&&G.sel>=0)select(G.sel);renderPlay();dirty=true;}
+$('.at-pcards').addEventListener('click',function(e){
+  var b=e.target.closest('.at-pcard');if(!b)return;var i=+b.getAttribute('data-i'),row=rowNow();
+  if(play.sel>=0&&play.targets.indexOf(i)>=0){doMove(play.sel<<1|(play.sel-i===3?1:0));return;}
+  var ts=legal(row,i);play.sel=-1;play.targets=[];
+  if(!ts.length){hint('That card has no move');renderPlay();return;}
+  if(ts.length===1){doMove(i<<1|(i-ts[0]===3?1:0));return;}
+  play.sel=i;play.targets=ts;hint('Two places it can go: click one');renderPlay();
+});
+$('.at-playbtn').onclick=function(){if(play.on)stopPlay();else startPlay();};
+$('.at-pclose').onclick=stopPlay;
+$('.at-undo').onclick=undoMove;
+$('.at-restart').onclick=function(){resetPlay();updatePlay();};
+$('.at-phint').onclick=hintMove;
+$('.at-padd').onclick=function(){if(G&&!play.busy)rebuildForPlay();};
 
 // ---------- controls ----------
 exSel.onchange=function(){var e=EXAMPLES.filter(function(x){return x.k===exSel.value;})[0];if(e)loadSeed(e.seed,e);};
@@ -970,7 +1201,7 @@ seedIn.addEventListener('keydown',function(e){if(e.key==='Enter')loadSeed(seedIn
 $('.at-rand').onclick=function(){loadSeed(String(Math.floor(Math.random()*1e12)));};
 sizeSel.onchange=function(){
   if(sizeSel.value==='custom'){customIn.hidden=false;resize();customIn.focus();customIn.select();if(customSize&&cur.cards)run(snapshot());return;}
-  customIn.hidden=true;resize();if(cur.cards)run(snapshot());};
+  lastPreset=parseInt(sizeSel.value,10)||lastPreset;customIn.hidden=true;resize();if(cur.cards)run(snapshot());};
 function applyCustom(){if(!setSize(parseSize(customIn.value))){hint('Choose from 1,000 to 40,000,000 positions');return;}resize();if(cur.cards)run(snapshot());}
 customIn.addEventListener('keydown',function(e){if(e.key==='Enter')applyCustom();});
 customIn.addEventListener('change',function(){if(parseSize(customIn.value)!==customSize)applyCustom();});
@@ -1005,15 +1236,17 @@ function savePicture(name,scale){
 }
 
 // For testing and for pictures: host.accTree.
-host.accTree={load:function(o){started=true;if(o.size)setSize(+o.size);if(o.shape)shapeSel.value=o.shape;if(o.color)colorSel.value=o.color;if(o.edges)edgeSel.value=o.edges;if(o.view)view=o.view;
-    if(o.ex){var e=EXAMPLES.filter(function(x){return x.k===o.ex;})[0];if(e)loadSeed(e.seed,e);}else if(o.seed!=null)loadSeed(String(o.seed));},
+host.accTree={load:function(o){if(o.size)setSize(parseSize(o.size));if(o.shape)shapeSel.value=o.shape;if(o.color)colorSel.value=o.color;if(o.edges)edgeSel.value=o.edges;if(o.view)view=o.view;
+    var e=o.ex&&EXAMPLES.filter(function(x){return x.k===o.ex;})[0];if(e){started=true;loadSeed(e.seed,e);}else if(o.seed!=null){started=true;loadSeed(String(o.seed));}},
   save:savePicture,fit:fit,select:select,explore:exploreFrom,pick:pick,recolour:recolour,rebuildEdges:rebuildEdges,
-  set parentWeight(v){layoutPW=v;},get graph(){return G;},get camera(){return cam;},set glowLevel(v){glowIn.value=String(v);dirty=true;},examples:EXAMPLES,dealFromSeed:dealFromSeed};
+  set parentWeight(v){layoutPW=v;},get graph(){return G;},get camera(){return cam;},set glowLevel(v){glowIn.value=String(v);dirty=true;},examples:EXAMPLES,dealFromSeed:dealFromSeed,
+  play:{start:startPlay,stop:stopPlay,move:doMove,undo:undoMove,hint:hintMove,legal:legal,get state(){return play;}}};
 
 // Start: from the address (?ex=, ?seed=, &size=, &view=, &shape=, &color=, &edges=), else the easy example. In a page the
 // first tree is built only when the block comes near the screen.
 var qs={},started=false;try{location.search.slice(1).split('&').forEach(function(p){var kv=p.split('=');if(kv[0])qs[decodeURIComponent(kv[0])]=decodeURIComponent(kv[1]||'');});}catch(err){}
-if(qs.size)setSize(parseSize(qs.size));
+// A big size in the address of a blog page applies only on a computer with the memory for it.
+if(qs.size){var qv=parseSize(qs.size);if(qv>4000000&&!document.body.classList.contains('standalone')&&(small||mem<8))qv=Math.min(qv,1000000);setSize(qv);}
 if(qs.color)colorSel.value=qs.color;if(qs.shape)shapeSel.value=qs.shape;if(qs.edges)edgeSel.value=qs.edges;if(qs.view)view=qs.view;
 function start(){if(started)return;started=true;
   if(qs.seed)loadSeed(qs.seed);else{var ex0=EXAMPLES.filter(function(x){return x.k===(qs.ex||'e185');})[0]||EXAMPLES[0];loadSeed(ex0.seed,ex0);}}

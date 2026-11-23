@@ -52,6 +52,12 @@ The address can choose what to show: `?ex=l202346720` (an example, by the key in
   win, red to the fewest piles drawn). **Explore from here** draws the tree from that position, which is complete once
   it is small enough: from the 20-pile position on seed 185's way to a win, for example, all 89,801 positions, where
   4,974,472 of the 1,198,856,684 ways to play on win.
+- **Play** opens the deal (or the position explored) as a game: click a card to put it on the card 1 or 3 places to its
+  left with the same suit or rank. After each move the tree from your position on stays lit and the rest is dimmed, and
+  your game is drawn as a white line; Hint shows the next move of the best line drawn. When a sample shows too little
+  of where you are (the position isn't drawn, or almost nothing below it is), the tree is drawn again with your moves in,
+  every position a few moves below where you have got to, and half of the short searches starting there (by hand, with
+  a button, above 4 million positions). A complete tree has every position already.
 - **In a blog post** the first tree is drawn when the block comes near the screen. One finger scrolls the page up and
   down, two fingers turn and zoom the tree, and the wheel scrolls the page until the tree is clicked (or with Ctrl held).
   On its own page, or full screen, every touch and the wheel drive the tree.

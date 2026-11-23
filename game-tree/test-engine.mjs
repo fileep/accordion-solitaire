@@ -47,7 +47,8 @@ else console.log("ok   the page lists the 721 losses with their numbers of posit
 const index = readFileSync(join(repo, "hard-deals/INDEX.md"), "utf8");
 for (const r of chosen) {
   const t = Date.now();
-  const g = build({ cards: lib.dealFromSeed(r.seed), budget: r.positions + 10, top: 0.15, endPiles: 15 });
+  // The page tells the engine the size of a known loss, as here; a tree of unknown size is only tried whole up to 4 million.
+  const g = build({ cards: lib.dealFromSeed(r.seed), budget: r.positions + 10, top: 0.15, endPiles: 15, total: r.positions });
   const proof = JSON.parse(readFileSync(join(repo, `hard-deals/proofs/seed-${r.seed}-loss.json`), "utf8"));
   const moves = proof.stats.proof.plain.positions;
   const row = index.split("\n").find((l) => l.startsWith(`| [seed-${r.seed}]`));
@@ -75,18 +76,50 @@ for (const mv of dossier.solution) {
 }
 let t = Date.now();
 const h = build({ cards, budget: 200000, top: 0.15, endPiles: 15, line, total: 1e18, rng: 7 });
+// A small lost deal built as if it were huge (as a typed seed once was): it is still found whole, with its moves.
+{ const g = build({ cards: lib.dealFromSeed("587527261691"), budget: 1000000, top: 0.15, endPiles: 15, total: 1e18 });
+  if (!g.complete || g.n !== 1512 || g.ne !== 5940 || g.best[0] !== 39) fail(`seed 587527261691 built as huge: ${g.n} positions, ${g.ne} moves, best ${g.best[0]}`);
+  else console.log("ok   seed 587527261691 built as if huge: still whole, 1512 positions, 5940 moves, best 39"); }
 const lp = h.linePath;
 if (!lp || lp.length !== 52 || h.len[lp[51]] !== 1) fail("the winning line did not play to one pile");
 else if (h.status[0] !== 1) fail("the deal does not show as winnable with its winning line drawn");
 else console.log(`ok   seed ${hardSeed}: winning line drawn, ${h.n} positions, ${h.counts.won} winning positions, ${h.dives} dives (${h.divesWon} won), ${Date.now() - t} ms`);
 
+// A game being played: its moves must be drawn, each joined to the next by a move, with every position a few moves
+// below where it has got to.
+{
+  const cards185 = lib.dealFromSeed("185"), row = cards185.slice(), played = [];
+  for (let s = 0; s < 20; s++) { // the first legal move each time, leaps first
+    let m = -1;
+    for (let i = 1; i < row.length && m < 0; i++) for (const d of [3, 1]) {
+      if (i < d || m >= 0) continue; const c = row[i], t = row[i - d];
+      if ((c >> 4) === (t >> 4) || (c & 15) === (t & 15)) m = (i << 1) | (d === 3 ? 1 : 0);
+    }
+    if (m < 0) break; played.push(m); const i = m >> 1; row[i - (m & 1 ? 3 : 1)] = row[i]; row.splice(i, 1);
+  }
+  const t1 = Date.now(), g = build({ cards: cards185, budget: 200000, top: 0.15, endPiles: 15, total: 1e18, play: played, rng: 3 });
+  const pp = g.playPath, edge = (e) => g.et[e >>> 22][e & 4194303];
+  let okPath = pp && pp.length === played.length + 1;
+  for (let k = 0; okPath && k < played.length; k++) {
+    let joined = false; for (let e = g.es[pp[k]]; e < g.es[pp[k] + 1]; e++) if (edge(e) === pp[k + 1]) joined = true;
+    if (!joined || g.len[pp[k + 1]] !== g.len[pp[k]] - 1) okPath = false;
+  }
+  const rowAt = (u) => { const mv = []; for (let v = u; v > 0; v = g.parent[v]) mv.push(g.pmove[v]); const r = g.root.slice();
+    for (const m of mv.reverse()) { const i = m >> 1; r[i - (m & 1 ? 3 : 1)] = r[i]; r.splice(i, 1); } return r; };
+  const end = pp && pp[pp.length - 1], tops = end != null ? rowAt(end) : [];
+  if (!okPath) fail("the moves played are not drawn as a line");
+  else if (tops.join() !== row.join()) fail("the position played to has the wrong cards");
+  else if (g.es[end + 1] - g.es[end] < 1) fail("nothing is drawn below the position played to");
+  else console.log(`ok   seed 185 played ${played.length} moves: drawn as a line, ${g.es[end + 1] - g.es[end]} moves drawn from where it got to, ${g.n} positions, ${Date.now() - t1} ms`);
+}
+
 // A sampled tree: statuses must agree with the moves drawn.
 t = Date.now();
-const s = build({ cards: lib.dealFromSeed("0"), budget: 300000, top: 0.15, endPiles: 15, rng: 1, withEdges: true });
+const s = build({ cards: lib.dealFromSeed("0"), budget: 300000, top: 0.15, endPiles: 15, rng: 1 });
 let bad = 0;
 for (let u = 0; u < s.n; u++) {
   let anyWin = false, allDead = true, deg = 0;
-  for (let e = s.es[u]; e < s.es[u + 1]; e++) { const c = s.et[e]; deg++; if (s.status[c] === 1) anyWin = true; if (s.status[c] !== 2) allDead = false;
+  for (let e = s.es[u]; e < s.es[u + 1]; e++) { const c = s.et[e >>> 22][e & 4194303]; deg++; if (s.status[c] === 1) anyWin = true; if (s.status[c] !== 2) allDead = false;
     if (s.len[c] !== s.len[u] - 1) bad++; }
   const want = s.len[u] === 1 ? 1 : anyWin ? 1 : ((s.expanded[u] & 1) && allDead) || (s.expanded[u] & 2) ? 2 : 0;
   if (s.status[u] !== want) bad++;
