@@ -136,24 +136,32 @@ function workerMain(self){
   'use strict';
   var now=(typeof performance!=='undefined'&&performance.now)?function(){return performance.now();}:function(){return Date.now();};
   function bigger(a,n){var b=new a.constructor(n);b.set(a);return b;}
-  function perm(a,nw,n){var b=new a.constructor(n);for(var j=0;j<n;j++)b[nw[j]]=a[j];return b;}
   // A position keeps only its number of piles, the position it was first reached from, the move that reached it
   // (pile<<1|leap), the card that move covered, some flags and two 32-bit hashes of its row of top cards (a pile's lower
   // cards never matter again). Rows are played again from the deal when they are needed, and a position is recognised by
-  // its two hashes: two different positions of the same size share both with odds of 1 in 2^64, so even among 40 million
-  // positions the odds that any two are mixed up are under 1 in 10,000.
+  // its two hashes: two different positions share both with odds of 1 in 2^64, so even among 40 million positions the
+  // odds that any two are mixed up are under 1 in 10,000.
+  // The hashes are of the row's pairs of neighbours: a row's cards all differ, so its first card and which card follows
+  // which fix it. With a mark (63) before the first card and after the last, a row is fixed by its set of pairs alone,
+  // and each hash is the exclusive or of a random 32-bit number per pair (ZT, one table for each hash). Two different
+  // rows have different sets, and the exclusive or of the numbers of the pairs only one of them has is random: so they
+  // share a hash with odds of exactly 1 in 2^32, and both with 1 in 2^64. A move changes only the pairs next to the two
+  // piles it touches, so a child's hashes come from its parent's with at most 7 numbers (dh), whatever the row's length.
+  var ZT=new Int32Array(8192);
+  (function(){var s=0x6a09e667|0;for(var k=0;k<8192;k++){s=(s+0x9e3779b9)|0;var z=s;
+    z^=z>>>16;z=Math.imul(z,0x7feb352d);z^=z>>>15;z=Math.imul(z,0x846ca68b);z^=z>>>16;ZT[k]=z;}})();
   var len,par,pmv,cov,flag,hsh,hs2,tab,tmask,tmax,N=0,CAP=0,budget=0,root,n0=0,H1=0,H2=0,lastPost=0,t0=0,phase='',rng=1,q2w=0;
-  var UF=new Int32Array(17),LV=[],RB=new Uint8Array(52),MV=new Uint8Array(64),QB=null,qr=0,qw=0,ES=null,ET=null,NE=0,rec=false,topMark=0;
-  var EM=(1<<22)-1;
+  var LV=[],RB=new Uint8Array(52),MV=new Uint8Array(64),QB=null,qr=0,qw=0,ES=null,ET=null,NE=0,rec=false,topMark=0;
+  var EM=(1<<22)-1,grow=0;
   // Each phase's start, for the build's timings (msg.times, in ms).
   var times=[];function setPhase(p){phase=p;times.push([p,Math.round(now()-t0)]);}
   function rand(){rng^=rng<<13;rng^=rng>>>17;rng^=rng<<5;return (rng>>>0)/4294967296;}
   function reset(){
     var s=Math.min(CAP,1<<14);
     len=new Uint8Array(s);par=new Int32Array(s);pmv=new Uint8Array(s);cov=new Uint8Array(s);flag=new Uint8Array(s);hsh=new Int32Array(s);hs2=new Int32Array(s);
-    tab=new Int32Array(1<<15);tmask=tab.length-1;tmax=(tab.length*0.7)|0;N=0;NE=0;ES=null;ET=null;QB=null;
+    tab=new Int32Array(1<<15);tmask=tab.length-1;tmax=(tab.length*0.7)|0;grow=0;N=0;NE=0;ES=null;ET=null;QB=null;
   }
-  function release(){len=par=pmv=cov=flag=hsh=hs2=tab=null;ES=ET=QB=TH=RA=null;}
+  function release(){len=par=pmv=cov=flag=hsh=hs2=tab=DT=null;ES=ET=QB=TH=RA=null;}
   // A depth laid out during the search, for the page to show while the rest is built.
   var TH=null,RA=null;
   function sendLayer(d,a,b){var P=new Float32Array(3*(b-a));for(var i=a,k=0;i<b;i++,k+=3){P[k]=RA[i]*Math.cos(TH[i]);P[k+1]=-d*0.8;P[k+2]=RA[i]*Math.sin(TH[i]);}
@@ -162,51 +170,130 @@ function workerMain(self){
     var s=m>CAP?Math.ceil(m*1.25):Math.max(m,Math.min(len.length*2,CAP));
     len=bigger(len,s);par=bigger(par,s);pmv=bigger(pmv,s);cov=bigger(cov,s);flag=bigger(flag,s);hsh=bigger(hsh,s);hs2=bigger(hs2,s);
   }
+  // A row's hashes, from scratch. The pair of cards a then b is numbered a<<7|b<<1 (|1 for the second hash).
   function hashes(b,o,n){
-    var h=(0x811c9dc5^n)|0,g=(0x2545f491+n)|0;
-    for(var k=0;k<n;k++){var x=b[o+k];h=Math.imul(h^x,0x01000193);g=Math.imul(g^x,0x9e3779b1);g=g<<13|g>>>19;}
-    h^=h>>>16;h=Math.imul(h,0x85ebca6b);h^=h>>>13;h=Math.imul(h,0xc2b2ae35);h^=h>>>16;
-    g^=g>>>15;g=Math.imul(g,0x2c1b3c6d);g^=g>>>12;g=Math.imul(g,0x297a2d39);g^=g>>>15;
-    H1=h|0;H2=g|0;
+    var h=0,g=0,p=63,q;
+    for(var k=0;k<n;k++){var x=b[o+k];q=p<<7|x<<1;h^=ZT[q];g^=ZT[q|1];p=x;}
+    q=p<<7|126;H1=h^ZT[q];H2=g^ZT[q|1];
+  }
+  // How move mv changes hash f (0 or 1) of the row of n cards at b[o]: the card c at i goes onto the one at t.
+  // A step drops the pairs (l,x) and (x,c) and makes (l,c); a leap drops (l,x), (x,y), (z,c) and (c,r) and makes (l,c),
+  // (c,y) and (z,r).
+  function dh(b,o,n,mv,f){
+    var i=mv>>1,c=b[o+i],t,l,x;
+    if(mv&1){t=i-3;l=t?b[o+t-1]:63;x=b[o+t];var y=b[o+t+1],z=b[o+i-1],r=i+1<n?b[o+i+1]:63;
+      return ZT[l<<7|c<<1|f]^ZT[l<<7|x<<1|f]^ZT[x<<7|y<<1|f]^ZT[c<<7|y<<1|f]^ZT[z<<7|c<<1|f]^ZT[c<<7|r<<1|f]^ZT[z<<7|r<<1|f];}
+    t=i-1;l=t?b[o+t-1]:63;x=b[o+t];
+    return ZT[l<<7|c<<1|f]^ZT[l<<7|x<<1|f]^ZT[x<<7|c<<1|f];
   }
   function find(n){var i=H1&tmask;for(;;){var v=tab[i];if(v===0)return -1-i;var id=v-1;if(hsh[id]===H1&&hs2[id]===H2&&len[id]===n)return id;i=(i+1)&tmask;}}
   function rehash(size){var t=new Int32Array(size),m=size-1;for(var id=0;id<N;id++){var i=hsh[id]&m;while(t[i])i=(i+1)&m;t[i]=id+1;}tab=t;tmask=m;tmax=(size*0.7)|0;}
   function insert(slot,n,p,m,c){
     if(N>=len.length)room(N+1);
     len[N]=n;par[N]=p;pmv[N]=m;cov[N]=c;flag[N]=0;hsh[N]=H1;hs2[N]=H2;
-    tab[-1-slot]=N+1;var id=N++;if(N>tmax)rehash(tab.length*2);return id;
+    tab[-1-slot]=N+1;var id=N++;if(N>tmax)rehash(grow>tab.length?grow:tab.length*2);return id;
   }
-  function level(n){var L=LV[n];if(!L)L=LV[n]={sc:new Uint8Array(52*104),cm:new Uint8Array(104),cv:new Uint8Array(104),h1:new Int32Array(104),id:new Int32Array(104),jx:new Int32Array(104),key:new Float64Array(104)};return L;}
-  // The same moves without writing the rows out: each row's first hash, from the hashes of the row's beginnings.
-  var PF=new Int32Array(53),PR=new Uint8Array(52);
-  function moves(b,o,n,L){
-    var m=n-1,h=(0x811c9dc5^m)|0,j,k=0,cm=L.cm,cv=L.cv,h1=L.h1;
-    PF[0]=h;for(j=0;j<n;j++){h=Math.imul(h^b[o+j],0x01000193);PF[j+1]=h;}
+  function level(n){var L=LV[n];if(!L)L=LV[n]={sc:new Uint8Array(52*104),cm:new Uint8Array(104),cv:new Uint8Array(104),h1:new Int32Array(104),id:new Int32Array(104),jx:new Int32Array(104),h2:new Int32Array(104),key:new Float64Array(104)};return L;}
+  // The same moves without writing the rows out: each row's first hash, from the first hash hp of the row b[o].
+  function moves(b,o,n,L,hp){
+    var k=0,cm=L.cm,cv=L.cv,h1=L.h1;
     for(var i=1;i<n;i++){var c=b[o+i];
       for(var leap=0;leap<2;leap++){var d=leap?3:1;if(i<d)continue;var t=i-d,x=c^b[o+t];
         if((x&0xF0)!==0&&(x&0x0F)!==0)continue;
-        h=Math.imul(PF[t]^c,0x01000193);
-        for(j=t+1;j<i;j++)h=Math.imul(h^b[o+j],0x01000193);
-        for(j=i+1;j<n;j++)h=Math.imul(h^b[o+j],0x01000193);
-        h^=h>>>16;h=Math.imul(h,0x85ebca6b);h^=h>>>13;h=Math.imul(h,0xc2b2ae35);h^=h>>>16;
-        cm[k]=i<<1|leap;cv[k]=b[o+t];h1[k]=h;k++;}}
+        var mv=i<<1|leap;cm[k]=mv;cv[k]=b[o+t];h1[k]=hp^dh(b,o,n,mv,0);k++;}}
     return k;
   }
-  // The second hash of the row after move mv from the row b[o].
-  function h2of(b,o,n,mv){
-    var i=mv>>1,t=i-((mv&1)?3:1),c=b[o+i],g=(0x2545f491+n-1)|0,x;
-    for(var j=0;j<n;j++){if(j===i)continue;x=j===t?c:b[o+j];g=Math.imul(g^x,0x9e3779b1);g=g<<13|g>>>19;}
-    g^=g>>>15;g=Math.imul(g,0x2c1b3c6d);g^=g>>>12;g=Math.imul(g,0x297a2d39);g^=g>>>15;return g|0;
+  // The search in order of depth looks positions up in a table of the next depth's alone (a move from depth d can
+  // only reach depth d+1), made afresh as each depth starts, so it is far smaller than one of every position. Slot s
+  // holds a row's two hashes and its number plus one (0: empty) in DT[3s], DT[3s+1] and DT[3s+2], so a look-up reads
+  // one place in memory. The table has dS=c*2^k slots, c from 4 to 7 (so it can be made close to the size it needs),
+  // and hash h starts at slot (h>>>(29-k))*c>>>3.
+  var DT=null,dS=0,dsh=0,dcm=0,dmax=0,dcnt=0;
+  function dsize(s){var k=29-Math.clz32(s);dS=s;dsh=29-k;dcm=s>>>k;dmax=Math.floor(s*0.75);}
+  // An empty table for about m positions (in the last one's memory, if it is big enough).
+  function newDT(m){
+    m=Math.max(1<<15,Math.ceil(m/0.75)+1);var k=0;while((8<<k)<m)k++;var c=Math.ceil(m/(1<<k));if(c<4)c=4;if(c===8){c=4;k++;}
+    var sz=c<<k,w=3*sz,buf=DT&&DT.buffer;
+    if(buf&&buf.byteLength>=4*w){DT=new Int32Array(buf,0,w);DT.fill(0);}else DT=new Int32Array(w);
+    dsize(sz);dcnt=0;
   }
-  // Looks up the row after move j of L (from the row b[o]); says -1-slot if it isn't there, and then, if need, sets
-  // H1 and H2 for inserting it.
-  function findc(b,o,n,L,j,need){
-    var h=L.h1[j],m=n-1,s=h&tmask,g=0,got=false;
-    for(;;){var v=tab[s];if(v===0)break;var id=v-1;
-      if(hsh[id]===h&&len[id]===m){if(!got){g=h2of(b,o,n,L.cm[j]);got=true;}if(hs2[id]===g)return id;}
-      s=(s+1)&tmask;}
-    if(need){H1=h;H2=got?g:h2of(b,o,n,L.cm[j]);}
+  function rehashD(size){
+    var o=DT,e=o.length,t=new Int32Array(3*size);dsize(size);
+    for(var p=0;p<e;p+=3){var v=o[p+2];if(v===0)continue;var h=o[p],i=Math.imul(h>>>dsh,dcm)>>>3;while(t[3*i+2]){if(++i===size)i=0;}
+      var q=3*i;t[q]=h;t[q+1]=o[p+1];t[q+2]=v;}
+    DT=t;
+  }
+  // Looks up the row after move j of L (from the row b[o], whose second hash is gp); says -1-slot if it isn't there,
+  // and then sets H1 and H2 for inserting it.
+  function findc(b,o,n,L,j,gp){
+    var h=L.h1[j],s=Math.imul(h>>>dsh,dcm)>>>3,g=0,got=false;
+    for(;;){var p=3*s,v=DT[p+2];if(v===0)break;
+      if(DT[p]===h){if(!got){g=gp^dh(b,o,n,L.cm[j],1);got=true;}if(DT[p+1]===g)return v-1;}
+      if(++s===dS)s=0;}
+    H1=h;H2=got?g:gp^dh(b,o,n,L.cm[j],1);
     return -1-s;
+  }
+  function insertd(slot,n,p,m,c){
+    if(N>=len.length)room(N+1);
+    len[N]=n;par[N]=p;pmv[N]=m;cov[N]=c;flag[N]=0;hsh[N]=H1;hs2[N]=H2;
+    var q=-3*(1+slot);DT[q]=H1;DT[q+1]=H2;DT[q+2]=N+1;var id=N++;if(++dcnt>dmax)rehashD(2*dS);return id;
+  }
+  // The keys finish finds the moves with: a row's key is the xor of a number for each (place, card), so the keys of
+  // all the rows a move away come from a few running xors along the row. The numbers are a counter mixed (not a
+  // linear generator's, whose numbers can cancel out under xor). MT[a^b]: whether cards a and b share a suit or rank.
+  // CK, CI, CP, SV: one position's moves (key, pile<<6|target, those the filter lets through, slot found).
+  var ZK=null,MT=new Uint8Array(256),CK=new Int32Array(104),CI=new Int32Array(104),CP=new Int32Array(104),SV=new Int32Array(104),sink=0;
+  for(var x0=0;x0<256;x0++)MT[x0]=((x0&0xF0)===0||(x0&0x0F)===0)?1:0;
+  function zkeys(){if(!ZK){ZK=new Int32Array(52*64);for(var i=0;i<ZK.length;i++){var z=Math.imul(i+1,0x9e3779b1);
+    z^=z>>>16;z=Math.imul(z,0x85ebca6b);z^=z>>>13;z=Math.imul(z,0xc2b2ae35);z^=z>>>16;ZK[i]=z;}}return ZK;}
+  // Whether the row after moving the pile at i onto t (from the row b[o] of n cards) is the row r[q].
+  function samerow(b,o,n,i,t,r,q){
+    var j;if(r[q+t]!==b[o+i])return false;
+    for(j=0;j<t;j++)if(r[q+j]!==b[o+j])return false;
+    for(j=t+1;j<i;j++)if(r[q+j]!==b[o+j])return false;
+    for(j=i+1;j<n;j++)if(r[q+j-1]!==b[o+j])return false;
+    return true;
+  }
+  // The next depth's rows (positions b to b2, each from its first parent's row in cur, n cards each), a table of
+  // their keys (a key beside its position, in T) and a filter that tells most of the rows not there from two bits
+  // of one word of F.
+  function rowsBelow(cur,a,n,b,b2,nxt,T,tm,F,fm){
+    var Z=ZK,m=n-1,j;
+    for(var v=b;v<b2;v++){var po=(par[v]-a)*n,no=(v-b)*m,mv=pmv[v],ii=mv>>1,t=ii-((mv&1)?3:1),hk=0,x;
+      for(j=0;j<t;j++){x=cur[po+j];nxt[no+j]=x;hk^=Z[j<<6|x];}
+      x=cur[po+ii];nxt[no+t]=x;hk^=Z[t<<6|x];
+      for(j=t+1;j<ii;j++){x=cur[po+j];nxt[no+j]=x;hk^=Z[j<<6|x];}
+      for(j=ii+1;j<n;j++){x=cur[po+j];nxt[no+j-1]=x;hk^=Z[(j-1)<<6|x];}
+      F[hk&fm]|=(1<<(hk>>>27))|(1<<((hk>>>22)&31));
+      var s=hk&tm;while(T[2*s+1])s=(s+1)&tm;T[2*s]=hk;T[2*s+1]=v+1;}
+  }
+  // Every move from positions a to b (rows in cur) to one in the table. First every move's key, in one pass along
+  // the row with no branches the processor can guess wrong: with h the key of the first j cards (hp of the first
+  // j-1), g the key of cards 1 to j each one place to the left and G the whole row's g, the row after the pile at j
+  // goes onto j-1 has the key hp^g^G before card j is added to g, and the row after it goes onto j-3 has
+  // h^g^G^(card j-3 at place j-3)^(card j at place j-3) after. Then the filter's word for each move, a read of
+  // the table for those it lets through and a read of the rows those match, each all at once so that they come from
+  // memory together, and then the moves found are checked against their rows.
+  function movesFound(cur,a,b,n,nxt,T,tm,F,fm){
+    var Z=ZK,M=MT,K=CK,KI=CI,KP=CP,KS=SV,m=n-1,u,j,k,k2,o,x,acc=0;
+    for(u=a;u<b;u++){o=(u-a)*n;
+      x=cur[o];var p1=x,p2=0,p3=0,zh=Z[x],z1=zh,z2=0,z3=0,hp=0,h=zh,g=0,g1;k=0;
+      for(j=1;j<n;j++){x=cur[o+j];g1=g;g^=Z[(j-1)<<6|x];
+        K[k]=hp^g1;KI[k]=j<<6|(j-1);k+=M[x^p1];
+        if(j>=3){K[k]=h^g^z3^Z[(j-3)<<6|x];KI[k]=j<<6|(j-3);k+=M[x^p3];}
+        zh=Z[j<<6|x];hp=h;h^=zh;z3=z2;z2=z1;z1=zh;p3=p2;p2=p1;p1=x;}
+      k2=0;
+      for(j=0;j<k;j++){var ck=K[j]^g,mm=(1<<(ck>>>27))|(1<<((ck>>>22)&31));K[j]=ck;x=(F[ck&fm]&mm)^mm;KP[k2]=j;k2+=((x|-x)>>>31)^1;}
+      for(j=0;j<k2;j++)acc|=T[2*(K[KP[j]]&tm)+1];
+      for(j=0;j<k2;j++){var ck=K[KP[j]],s=ck&tm,f=-1;
+        for(;;){var tv=T[2*s+1];if(tv===0)break;if(T[2*s]===ck){f=s;var q=(tv-1-b)*m;acc|=nxt[q]|nxt[q+m-1];break;}s=(s+1)&tm;}
+        KS[j]=f;}
+      for(j=0;j<k2;j++){var s=KS[j];if(s<0)continue;var jj=KP[j],ck=K[jj],i=KI[jj]>>6,t=KI[jj]&63;
+        for(;;){var tv=T[2*s+1];if(tv===0)break;
+          if(T[2*s]===ck&&samerow(cur,o,n,i,t,nxt,(tv-1-b)*m)){epush(tv-1);break;}
+          s=(s+1)&tm;}}
+      ES[u+1]=NE;if((u&4095)===0)progress(false,u/N);}
+    sink|=acc;
   }
   function rowc(b,o,n,mv,out,q){var i=mv>>1,j;for(j=0;j<i;j++)out[q+j]=b[o+j];out[q+i-((mv&1)?3:1)]=b[o+i];for(j=i+1;j<n;j++)out[q+j-1]=b[o+j];}
   // Every legal move from the row of n top cards at b[o]: a pile moves onto the pile 1 or 3 to its left if their top
@@ -228,17 +315,6 @@ function workerMain(self){
     while(k>0){var m=MV[--k],i=m>>1;out[i-((m&1)?3:1)]=out[i];for(j=i+1;j<n;j++)out[j-1]=out[j];n--;}
     return out;
   }
-  // The solver's dead-end test: the top cards other than the leftmost must be linked by shared suits and ranks,
-  // and the leftmost card (which never moves) must match one of them.
-  function uf(x){while(UF[x]!==x){UF[x]=UF[UF[x]];x=UF[x];}return x;}
-  function viable(sc,o,n){
-    if(n<=1)return true;
-    var i,j;for(i=0;i<17;i++)UF[i]=i;
-    for(j=1;j<n;j++){var c=sc[o+j],a=uf(c>>4),b=uf(4+(c&15));if(a!==b)UF[a]=b;}
-    var r=uf(sc[o+1]>>4);for(j=2;j<n;j++)if(uf(sc[o+j]>>4)!==r)return false;
-    var L=sc[o];for(j=1;j<n;j++){var x=sc[o+j]^L;if((x&0xF0)===0||(x&0x0F)===0)return true;}
-    return false;
-  }
   function progress(force,frac){
     var t=now();if(!force&&t-lastPost<120)return;lastPost=t;
     self.postMessage({type:'progress',phase:phase,nodes:N,budget:budget,frac:frac==null?null:frac,ms:Math.round(t-t0)});
@@ -250,11 +326,20 @@ function workerMain(self){
     if(qw+n>QB.length){if(qr>=QB.length>>2){QB.copyWithin(0,qr,qw);qw-=qr;qr=0;}else QB=bigger(QB,QB.length*2);}
     for(var k=0;k<n;k++)QB[qw+k]=b[o+k];qw+=n;
   }
-  function expand(u){
-    var n=len[u],L=level(n),m=n-1,j;for(j=0;j<n;j++)PR[j]=QB[qr+j];qr+=n;
-    var k=moves(PR,0,n,L);
-    for(j=0;j<k;j++){var c=findc(PR,0,n,L,j,true);
-      if(c<0){c=insert(c,m,u,L.cm[j],L.cv[j]);rowc(PR,0,n,L.cm[j],L.sc,0);qput(L.sc,0,m);}
+  // The search works on a few positions at a time: their rows and moves first, then the first table slot of every
+  // one of their moves is read, all at once, so that the processor waits for memory once for them all.
+  var XNB=4,XS=[],XK=new Int32Array(XNB);
+  for(var xi=0;xi<XNB;xi++)XS.push({sc:new Uint8Array(52),cm:new Uint8Array(104),cv:new Uint8Array(104),h1:new Int32Array(104)});
+  function ahead(u,nb){
+    var i,j,t=0;
+    for(i=0;i<nb;i++){var X=XS[i],n=len[u+i],sc=X.sc;for(j=0;j<n;j++)sc[j]=QB[qr+j];qr+=n;XK[i]=moves(sc,0,n,X,hsh[u+i]);}
+    for(i=0;i<nb;i++){var h1=XS[i].h1;for(j=0;j<XK[i];j++)t^=DT[3*(Math.imul(h1[j]>>>dsh,dcm)>>>3)+2];}
+    TQ^=t;
+  }
+  function expand(u,X,k){
+    var n=len[u],L=level(n),m=n-1,j,R=X.sc,gu=hs2[u];
+    for(j=0;j<k;j++){var c=findc(R,0,n,X,j,gu);
+      if(c<0){c=insertd(c,m,u,X.cm[j],X.cv[j]);rowc(R,0,n,X.cm[j],L.sc,0);qput(L.sc,0,m);}
       if(c>=topMark)flag[u]|=16;
       if(rec)epush(c);}
     if(rec){if(u+2>ES.length)ES=bigger(ES,Math.max(u+2,Math.min(ES.length*2,CAP+1)));ES[u+1]=NE;}
@@ -262,7 +347,9 @@ function workerMain(self){
   }
   // Keeps the first K positions (the search went in order of depth). One with a move to a later one is no longer
   // fully expanded.
-  function truncate(K){for(var u=0;u<K;u++){if(flag[u]&16)flag[u]&=~1;flag[u]&=~16;}N=K;rehash(tab.length);}
+  function truncate(K){for(var u=0;u<K;u++){if(flag[u]&16)flag[u]&=~1;flag[u]&=~16;}N=K;}
+  // The table of every position, for the searches after the one in order of depth.
+  function wholeTable(){var s=1<<15;while(((s*0.7)|0)<N)s*=2;rehash(s);}
   // Every position below v, in order of depth, until cap new positions have been added.
   function exhaust(v,cap){
     var start=N,q=new Int32Array(1024),qn=0,qi=0,rows=new Uint8Array(1<<16),rw=0,rr=0,i;
@@ -271,8 +358,10 @@ function workerMain(self){
     push(v,rowOf(v,RB),0,len[v]);
     while(qi<qn){var u=q[qi++],n=len[u],o=rr;rr+=n;
       if(n===1||(!(flag[u]&1)&&N-start>=cap))continue;
-      var L=level(n),k=children(rows,o,n,L),m=n-1;
-      for(var j=0;j<k;j++){var qq=j*52;hashes(L.sc,qq,m);var c=find(m);if(c<0)c=insert(c,m,u,L.cm[j],L.cv[j]);if(!(flag[c]&32))push(c,L.sc,qq,m);}
+      var L=level(n),k=children(rows,o,n,L),m=n-1,hu=hsh[u],gu=hs2[u],h1=L.h1,h2=L.h2,j,t=0;
+      for(j=0;j<k;j++){var mv=L.cm[j];h1[j]=hu^dh(rows,o,n,mv,0);h2[j]=gu^dh(rows,o,n,mv,1);t^=tab[h1[j]&tmask];}
+      TQ^=t;
+      for(j=0;j<k;j++){var qq=j*52;H1=h1[j];H2=h2[j];var c=find(m);if(c<0)c=insert(c,m,u,L.cm[j],L.cv[j]);if(!(flag[c]&32))push(c,L.sc,qq,m);}
       flag[u]|=1;
       if((qi&255)===0)progress(false);}
     for(i=0;i<qn;i++)flag[q[i]]&=~32;
@@ -280,25 +369,66 @@ function workerMain(self){
   // The solver's own kind of search: depth first, moves in a random order that favours leaps, never into a dead end
   // the test can see, stopping at the first win or after dfsLeft new positions. A position all of whose moves are
   // shown lost is lost (flag 2). Says 1 for a win, 2 for lost, 0 for not known. b[o] holds u's row.
-  var dfsLeft=0;
+  // The solver's dead-end test: the top cards other than the leftmost must be linked by shared suits and ranks, and
+  // the leftmost card (which never moves) must match one of them. A move takes one card away from the cards right of
+  // the leftmost (the card it covers, or the moved card itself when it goes onto the leftmost), so the test of each
+  // move's row comes from a mask of ranks for each suit of the row: the cards are linked if the suits left are,
+  // through the ranks they share. CONN[z|p<<4] says whether the suits z (a bit for each one with cards) are linked by
+  // the pairs p that share a rank (01, 02, 03, 12, 13, 23).
+  // A move's hashes come from its row's (dh), and a row is written out only for a position that is searched below.
+  // RC holds the positions the search met last, by their first hash: nearly every position it meets again is one of
+  // them, and this small table stays in the processor's cache where the big one does not.
+  var CONN=new Uint8Array(1024),PAIR=[0,1,0,2,0,3,1,2,1,3,2,3];
+  (function(){var p=new Int32Array(4);function f(a){while(p[a]!==a)a=p[a];return a;}
+    for(var x=0;x<1024;x++){var z=x&15,s,r=-1,ok=1;for(s=0;s<4;s++)p[s]=s;
+      for(s=0;s<6;s++)if((x>>(4+s))&1)p[f(PAIR[2*s])]=f(PAIR[2*s+1]);
+      for(s=0;s<4;s++)if((z>>s)&1){if(r<0)r=f(s);else if(f(s)!==r)ok=0;}
+      CONN[x]=ok;}})();
+  var RCM=(1<<14)-1,RC=new Int32Array(RCM+1),TQ=0;
+  var dfsLeft=0,RS=new Int32Array(4);
   function dfs(u,b,o){
     var n=len[u];
     if(n===1)return 1;
     if(flag[u]&2)return 2;
     if(dfsLeft<=0)return 0;
-    var L=level(n),k=children(b,o,n,L),m=n-1,j,cnt=0,ids=L.id,jx=L.jx,key=L.key,sc=L.sc;
+    var L=level(n),m=n-1,i,j,k=0,cnt=0,ids=L.id,jx=L.jx,key=L.key,sc=L.sc,h1=L.h1,h2=L.h2,cm=L.cm,x,c,t,e,lf,h,g,mv,touch=0,hu=hsh[u],gu=hs2[u];
+    // Every legal move, without a branch for each pile: a pile moves onto the pile 1 or 3 to its left if their top
+    // cards share a suit or rank.
+    for(i=1;i<n;i++){c=b[o+i];x=c^b[o+i-1];cm[k]=i<<1;k+=(((x&0xF0)-1)>>>31)|(((x&0x0F)-1)>>>31);
+      if(i>=3){x=c^b[o+i-3];cm[k]=i<<1|1;k+=(((x&0xF0)-1)>>>31)|(((x&0x0F)-1)>>>31);}}
     if(k===0){flag[u]|=3;return 2;}
-    for(j=0;j<k;j++){
-      var q=j*52;if(!viable(sc,q,m))continue;
-      hashes(sc,q,m);var c=find(m);
-      if(c<0){c=insert(c,m,u,L.cm[j],L.cv[j]);dfsLeft--;}
-      ids[cnt]=c;jx[cnt]=q;key[cnt]=-Math.log(rand()+1e-12)/((L.cm[j]&1)?8:1);cnt++;
+    // The dead-end test of each move's row; the moves that pass go to jx.
+    if(m===1){for(j=0;j<k;j++)jx[j]=cm[j];cnt=k;}
+    else{
+      RS[0]=0;RS[1]=0;RS[2]=0;RS[3]=0;for(j=1;j<n;j++){x=b[o+j];RS[x>>4]|=1<<(x&15);}
+      var A0=RS[0],A1=RS[1],A2=RS[2],A3=RS[3],l0=b[o];
+      for(j=0;j<k;j++){mv=cm[j];i=mv>>1;t=i-((mv&1)?3:1);c=b[o+i];
+        if(t>0){e=b[o+t];lf=l0;}else{e=c;lf=c;}
+        var es=e>>4,eb=1<<(e&15);
+        var a0=A0&~(eb&((es-1)>>31)),a1=A1&~(eb&(((es^1)-1)>>31)),a2=A2&~(eb&(((es^2)-1)>>31)),a3=A3&~(eb&(((es^3)-1)>>31));
+        var z=((a0+8191)>>13)|(((a1+8191)>>13)<<1)|(((a2+8191)>>13)<<2)|(((a3+8191)>>13)<<3);
+        var pr=(((a0&a1)+8191)>>13)|((((a0&a2)+8191)>>13)<<1)|((((a0&a3)+8191)>>13)<<2)|((((a1&a2)+8191)>>13)<<3)|((((a1&a3)+8191)>>13)<<4)|((((a2&a3)+8191)>>13)<<5);
+        jx[cnt]=mv;cnt+=CONN[z|pr<<4]&((z>>(lf>>4))|((a0|a1|a2|a3)>>(lf&15)));}
     }
     if(!cnt){flag[u]|=6;return 2;} // every move fails the dead-end test
-    for(j=1;j<cnt;j++){var kv=key[j],iv=ids[j],xv=jx[j],i=j-1;
+    // Each move's hashes (H1, H2 of its row), from the row's; the recent ones looked up.
+    for(j=0;j<cnt;j++){mv=jx[j];h=hu^dh(b,o,n,mv,0);g=gu^dh(b,o,n,mv,1);var id=RC[h&RCM]-1;
+      if(id<0||id>=N||hsh[id]!==h||hs2[id]!==g||len[id]!==m){id=-1;touch^=tab[h&tmask];}
+      ids[j]=id;h1[j]=h;h2[j]=g;}
+    // The rest in the big table, once every one's slot has been asked for, so that they come from memory together.
+    for(j=0;j<cnt;j++){mv=jx[j];
+      if(ids[j]<0){H1=h=h1[j];H2=h2[j];var id2=find(m);
+        if(id2<0){i=mv>>1;id2=insert(id2,m,u,mv,b[o+i-((mv&1)?3:1)]);dfsLeft--;}ids[j]=id2;RC[h&RCM]=id2+1;}
+      key[j]=-Math.log(rand()+1e-12)/((mv&1)?8:1);}
+    TQ^=touch;
+    for(j=1;j<cnt;j++){var kv=key[j],iv=ids[j],xv=jx[j];i=j-1;
       while(i>=0&&key[i]>kv){key[i+1]=key[i];ids[i+1]=ids[i];jx[i+1]=jx[i];i--;}key[i+1]=kv;ids[i+1]=iv;jx[i+1]=xv;}
+    if(m===1)return 1;
     var unknown=false;
-    for(j=0;j<cnt;j++){var r=dfs(ids[j],sc,jx[j]);if(r===1)return 1;if(r===0)unknown=true;}
+    for(j=0;j<cnt;j++){c=ids[j];
+      if(flag[c]&2)continue;
+      if(dfsLeft<=0){unknown=true;continue;}
+      rowc(b,o,n,jx[j],sc,0);var r=dfs(c,sc,0);if(r===1)return 1;if(r===0)unknown=true;}
     if(!unknown){flag[u]|=2;return 2;}
     return 0;
   }
@@ -318,7 +448,7 @@ function workerMain(self){
     for(var s=0;s<line.length;s++){
       var n=len[v],L=level(n),k=children(b,o,n,L),j=-1;for(var t=0;t<k;t++)if(L.cm[t]===line[s]){j=t;break;}
       if(j<0)return null;
-      var q=j*52;hashes(L.sc,q,n-1);var c=find(n-1);
+      var q=j*52;H1=hsh[v]^dh(b,o,n,line[s],0);H2=hs2[v]^dh(b,o,n,line[s],1);var c=find(n-1);
       if(c<0)c=insert(c,n-1,v,L.cm[j],L.cv[j]);
       v=c;path.push(v);b=L.sc;o=q;
     }
@@ -336,24 +466,32 @@ function workerMain(self){
     setPhase('Searching every position');
     // Depth d is the positions a..b-1. Once the search has expanded all of them, depth d+1 (b to N-1) is complete with
     // every move into it, so it is laid out at once (and sent to the page to show, if asked for).
-    var la=0,lb=1,ld=0;TH=new Float32Array(Math.min(CAP,1<<16));RA=new Float32Array(TH.length);
+    // Each depth's table is sized from how much the last depth grew.
+    var la=0,lb=1,ld=0,dc=1;TH=new Float32Array(Math.min(CAP,1<<16));RA=new Float32Array(TH.length);newDT(64);
     if(q.preview)self.postMessage({type:'layer',depth:0,start:0,pos:new Float32Array(3)});
     while(u<N&&N<cap1){
       if(u===lb){if(N>TH.length){var gs=Math.min(CAP,Math.max(N,TH.length*2));TH=bigger(TH,gs);RA=bigger(RA,gs);}
-        layLayer(ld,la,lb,N-lb,TH,RA,rec);if(q.preview)sendLayer(ld+1,lb,N);la=lb;lb=N;ld++;}
-      expand(u);u++;if((u&1023)===0)progress(false);}
-    if(!(u>=N&&rec))TH=RA=null;
+        layLayer(ld,la,lb,N-lb,TH,RA,rec);if(q.preview)sendLayer(ld+1,lb,N);
+        var c0=N-lb;newDT(c0*Math.min(8,Math.max(0.25,c0/dc))*1.05);dc=c0;la=lb;lb=N;ld++;}
+      var nb=1;while(nb<XNB&&u+nb<lb)nb++;
+      ahead(u,nb);
+      for(var xb=0;xb<nb&&N<cap1;xb++){expand(u,XS[xb],XK[xb]);u++;if((u&1023)===0)progress(false);}}
+    DT=null;if(!(u>=N&&rec))TH=RA=null;
     var complete=u>=N,dives=0,linePath=null,playPath=null,focus=-1,runs={tried:0,won:0,groups:0};QB=null;
     if(!complete){
       ES=null;ET=[];NE=0;rec=false;
       if(N>top)truncate(top);
+      wholeTable();
       if(q.line){setPhase('Adding the known winning line');linePath=playLine(q.line);
         if(linePath){for(var s=0;s<linePath.length;s++)if(len[linePath[s]]===E+3){exhaust(linePath[s],Math.floor(budget*0.15));break;}}}
       // A game being played: its moves, every position a few moves below where it has got to, and half of the searches
       // from there.
       if(q.play&&q.play.length){setPhase('Adding the moves played');playPath=playLine(q.play);
         if(playPath){var pe=playPath[playPath.length-1];if(len[pe]>1&&N<budget){exhaust(pe,Math.min(budget-N,Math.floor(budget*0.2)));focus=pe;}}}
-      setPhase('Short searches like the solver\'s');
+      setPhase('Short searches like the solver\'s');RC.fill(0);
+      // A tree known to be bigger than the size will fill it: the table, when it has to grow, grows at once to the size
+      // it will end at, since each time it grows every position is moved again.
+      if(total>budget){grow=tab.length;while(((grow*0.7)|0)<budget)grow*=2;}
       var idle=0,stop=Math.min(limit,now()+Math.max(6000,budget/50));
       while(N<budget&&now()<stop&&idle<300){
         var r=searchOut(q.searchCap||Math.max(2000,Math.min(6000,Math.round(budget/170))),runs,q.branches==null?7:q.branches,focus);
@@ -365,8 +503,8 @@ function workerMain(self){
   }
   // Which positions can still win, the fewest piles each can reach, and how many lines win: from the bottom up.
   function finish(complete,haveMoves,dives,divesWon,linePath,playPath,q){
-    var i,u,e,c,d,k,j,a,b,n,m,L;
-    if(!complete)tab=null; // a sample's moves are found with smaller tables
+    var i,u,e,c,d,k,a,b,n,m;
+    tab=hsh=hs2=null; // the moves are found again with each depth's rows and keys of their own
     var D=new Uint8Array(N),maxD=0;for(i=0;i<N;i++){D[i]=n0-len[i];if(D[i]>maxD)maxD=D[i];}
     var ls=new Int32Array(maxD+2);for(i=0;i<N;i++)ls[D[i]+1]++;for(d=0;d<=maxD;d++)ls[d+1]+=ls[d];
     var inOrder=true;for(i=1;i<N;i++)if(D[i]<D[i-1]){inOrder=false;break;}
@@ -376,7 +514,11 @@ function workerMain(self){
       setPhase('Sorting the positions by depth');progress(true,0);
       var nw=new Int32Array(N),fill=ls.slice();for(i=0;i<N;i++)nw[i]=fill[D[i]]++;
       var p2=new Int32Array(N);for(i=0;i<N;i++)p2[nw[i]]=par[i]<0?-1:nw[par[i]];par=p2;p2=null;
-      len=perm(len,nw,N);pmv=perm(pmv,nw,N);cov=perm(cov,nw,N);flag=perm(flag,nw,N);hsh=perm(hsh,nw,N);hs2=perm(hs2,nw,N);D=perm(D,nw,N);
+      // Each depth is now a run of numbers, so the depths and sizes are written run by run; the rest in one pass.
+      var nl=new Uint8Array(N),nD=new Uint8Array(N),npm=new Uint8Array(N),ncv=new Uint8Array(N),nfl=new Uint8Array(N);
+      for(d=0;d<=maxD;d++){nD.fill(d,ls[d],ls[d+1]);nl.fill(n0-d,ls[d],ls[d+1]);}
+      for(i=0;i<N;i++){var t=nw[i];npm[t]=pmv[i];ncv[t]=cov[i];nfl[t]=flag[i];}
+      len=nl;D=nD;pmv=npm;cov=ncv;flag=nfl;nl=nD=npm=ncv=nfl=null;
       if(linePath)for(i=0;i<linePath.length;i++)linePath[i]=nw[linePath[i]];
       if(playPath)for(i=0;i<playPath.length;i++)playPath[i]=nw[playPath[i]];
       nw=fill=null;
@@ -384,61 +526,70 @@ function workerMain(self){
     if(!haveMoves){
       // The moves of a sample (or of a whole tree found without them): every move from a drawn position to another.
       setPhase('Finding the moves between positions');
-      ES=new Int32Array(N+1);ET=[];NE=0;tab=null;
+      ES=new Int32Array(N+1);ET=[];NE=0;
       // Each depth's moves can only reach the next depth, so a small table of that depth's positions does, and it
-      // stays in the processor's cache far better than the whole tree's.
-      var cur=root.slice(),nxt=null,big=0,whole;for(d=1;d<=maxD;d++)big=Math.max(big,ls[d+1]-ls[d]);
-      var ts=1024;while(ts<big*2)ts*=2;whole=new Int32Array(ts);
+      // stays in the processor's cache far better than the whole tree's. The next depth's rows are written out first,
+      // with a key of each; a key found is checked against the row itself, so no two positions are ever mixed up here.
+      zkeys();var cur=root.slice(),nxt=null,big=0,whole,T;
+      for(d=1;d<=maxD;d++)big=Math.max(big,ls[d+1]-ls[d]);
+      var ts=1024;while(ts<big*2)ts*=2;whole=new Int32Array(2*ts);var fw=256;while(fw*4<big)fw*=2;var fwhole=new Int32Array(fw),F;
       for(d=0;d<=maxD;d++){
-        a=ls[d];b=ls[d+1];n=n0-d;m=n-1;L=level(n);
+        a=ls[d];b=ls[d+1];n=n0-d;m=n-1;
         if(d===maxD){for(u=a;u<b;u++)ES[u+1]=NE;break;}
-        var b2=ls[d+2];ts=1024;while(ts<(b2-b)*2)ts*=2;tab=whole.subarray(0,ts);tab.fill(0);tmask=ts-1;
-        for(var v0=b;v0<b2;v0++){var s0=hsh[v0]&tmask;while(tab[s0])s0=(s0+1)&tmask;tab[s0]=v0+1;}
-        for(u=a;u<b;u++){var o=(u-a)*n;k=moves(cur,o,n,L);
-          for(j=0;j<k;j++){c=findc(cur,o,n,L,j,false);if(c>=0)epush(c);}
-          ES[u+1]=NE;if((u&4095)===0)progress(false,u/N);}
-        {nxt=new Uint8Array((b2-b)*m);
-          for(var v=b;v<b2;v++){var po=(par[v]-a)*n,no=(v-b)*m,mv=pmv[v],ii=mv>>1;
-            for(j=0;j<ii;j++)nxt[no+j]=cur[po+j];nxt[no+ii-((mv&1)?3:1)]=cur[po+ii];for(j=ii+1;j<n;j++)nxt[no+j-1]=cur[po+j];}
-          cur=nxt;}
+        var b2=ls[d+2];ts=1024;while(ts<(b2-b)*2)ts*=2;T=whole.subarray(0,2*ts);T.fill(0);
+        fw=256;while(fw*4<b2-b)fw*=2;F=fwhole.subarray(0,fw);F.fill(0);
+        nxt=new Uint8Array((b2-b)*m);rowsBelow(cur,a,n,b,b2,nxt,T,ts-1,F,fw-1);
+        movesFound(cur,a,b,n,nxt,T,ts-1,F,fw-1);
+        cur=nxt;
       }
-      cur=nxt=whole=null;
+      cur=nxt=whole=T=fwhole=F=null;
     }
-    tab=hsh=hs2=null;
     setPhase('Working out which positions win');progress(true,0);
-    // exact: everything below the position is drawn, so its fewest piles and its counts of lines are exact.
-    var st=new Uint8Array(N),best=new Uint8Array(N),ex=new Uint8Array(N),nx=0,xw=0;
+    // exact: everything below the position is drawn, so its fewest piles and its counts of lines are exact (bit 8 of
+    // ex, beside the flags kept for drawing). In the same pass, from the bottom up: the line shown down from each
+    // position (from one that can win the way to a win; otherwise towards the fewest piles, unsettled positions first
+    // among equals; the move it is drawn joined by breaks ties), each depth's counts, and the exact positions while
+    // they are few.
+    var st=new Uint8Array(N),best=new Uint8Array(N),ex=new Uint8Array(N),down=new Int32Array(N),nx=0,xw=0;
+    var LC=new Int32Array(4*(maxD+1)),nWin=0,nDead=0,nUnk=0,nOne=0,nStuck=0,xcap=N>>3,XL=new Int32Array(Math.max(1,Math.min(1024,xcap+1)));
     for(u=N-1;u>=0;u--){
-      if(len[u]===1){st[u]=1;best[u]=1;ex[u]=1;nx++;xw++;continue;}
-      var anyWin=false,allDead=true,bb=len[u],x=flag[u]&1;
-      for(e=ES[u];e<ES[u+1];e++){c=ET[e>>>22][e&EM];if(st[c]===1)anyWin=true;if(st[c]!==2)allDead=false;if(best[c]<bb)bb=best[c];if(!ex[c])x=0;}
-      best[u]=bb;ex[u]=x;st[u]=anyWin?1:(((flag[u]&1)&&allDead)||(flag[u]&2))?2:0;
-      if(x){nx++;if(st[u]===1)xw++;}
+      var fu=flag[u],e0=ES[u],e1=ES[u+1],lu=len[u],anyWin=false,allDead=true,bb=lu,x=fu&1,bw=-1,sw=-Infinity,bl=-1,sl=-Infinity,s;
+      for(e=e0;e<e1;e++){c=ET[e>>>22][e&EM];var sc=st[c],bk=best[c],pc=par[c]===u?1:0;
+        if(sc===1)anyWin=true;if(sc!==2)allDead=false;if(bk<bb)bb=bk;if(!(ex[c]&8))x=0;
+        var s1=(sc===1?1000:0)+pc;if(s1>sw){sw=s1;bw=c;}
+        var s2=-4*bk+(sc===0?2:0)+pc;if(s2>sl){sl=s2;bl=c;}}
+      if(lu===1){s=1;bb=1;x=1;nOne++;}else{s=anyWin?1:(((fu&1)&&allDead)||(fu&2))?2:0;if((fu&1)&&e1===e0)nStuck++;}
+      best[u]=bb;st[u]=s;ex[u]=(fu&7)|(x?8:0);down[u]=s===1?bw:bl;
+      if(x){if(XL&&nx<=xcap){if(nx>=XL.length)XL=bigger(XL,Math.min(XL.length*2,xcap+1));XL[nx]=u;}nx++;if(s===1)xw++;}
+      var lq=D[u]*4;LC[lq]++;LC[lq+1+s]++;if(s===1)nWin++;else if(s===2)nDead++;else nUnk++;
     }
+    var layers=[];for(d=0;d<=maxD;d++)layers.push([LC[4*d],LC[4*d+1],LC[4*d+2],LC[4*d+3]]);
     // How many ways to play on from an exact position win, and how many there are: kept only for those that can win.
     var wl=null;
     if(xw){
-      var dense=nx>N/8,rk=null,W,LN,r=0;
-      if(!dense){rk=new Int32Array(N);for(u=0;u<N;u++)rk[u]=ex[u]?r++:-1;}
+      var dense=nx>N/8,rk=null,W,LN,iu,ic,q2;
       W=new Float64Array(dense?N:nx);LN=new Float64Array(dense?N:nx);
-      for(u=N-1;u>=0;u--){if(!ex[u])continue;var iu=dense?u:rk[u];
-        if(len[u]===1){W[iu]=1;LN[iu]=1;continue;}
-        var w=0,l=0,deg=0;for(e=ES[u];e<ES[u+1];e++){c=ET[e>>>22][e&EM];var ic=dense?c:rk[c];w+=W[ic];l+=LN[ic];deg++;}
-        W[iu]=w;LN[iu]=deg?l:1;}
+      if(dense){
+        for(u=N-1;u>=0;u--){if(!(ex[u]&8))continue;
+          if(len[u]===1){W[u]=1;LN[u]=1;continue;}
+          var w=0,l=0,deg=0;for(e=ES[u];e<ES[u+1];e++){c=ET[e>>>22][e&EM];w+=W[c];l+=LN[c];deg++;}
+          W[u]=w;LN[u]=deg?l:1;}
+      }else{
+        // The exact positions were listed from the last; each one's rank among them in order of number.
+        rk=new Int32Array(N);for(q2=0;q2<nx;q2++)rk[XL[q2]]=nx-1-q2;
+        for(q2=0;q2<nx;q2++){u=XL[q2];iu=nx-1-q2;
+          if(len[u]===1){W[iu]=1;LN[iu]=1;continue;}
+          var w=0,l=0,deg=0;for(e=ES[u];e<ES[u+1];e++){c=ET[e>>>22][e&EM];ic=rk[c];w+=W[ic];l+=LN[ic];deg++;}
+          W[iu]=w;LN[iu]=deg?l:1;}
+      }
       if(dense&&xw>N*0.8)wl={ids:null,w:W,l:LN};
       else{var ids=new Int32Array(xw),ww=new Float64Array(xw),ll=new Float64Array(xw),t2=0;
-        for(u=0;u<N;u++)if(ex[u]&&st[u]===1){var i2=dense?u:rk[u];ids[t2]=u;ww[t2]=W[i2];ll[t2]=LN[i2];t2++;}
+        if(dense){for(u=0;u<N;u++)if((ex[u]&8)&&st[u]===1){ids[t2]=u;ww[t2]=W[u];ll[t2]=LN[u];t2++;}}
+        else for(q2=nx-1;q2>=0;q2--){u=XL[q2];if(st[u]===1){iu=nx-1-q2;ids[t2]=u;ww[t2]=W[iu];ll[t2]=LN[iu];t2++;}}
         wl={ids:ids,w:ww,l:ll};}
       W=LN=rk=null;
     }
-    // The line shown down from each position: from one that can win the way to a win; otherwise towards the fewest
-    // piles, unsettled positions first among equals; the move it is drawn joined by breaks ties.
-    var down=new Int32Array(N);
-    for(u=0;u<N;u++){var bc=-1,sc2=-Infinity,win=st[u]===1;
-      for(e=ES[u];e<ES[u+1];e++){c=ET[e>>>22][e&EM];var s2=(win?(st[c]===1?1000:0):(-4*best[c]+(st[c]===0?2:0)))+(par[c]===u?1:0);if(s2>sc2){sc2=s2;bc=c;}}
-      down[u]=bc;}
-    // Layout: a ring for each move made, the deal at the centre; each position near the average angle of the
-    // positions it comes from, spread apart along its ring.
+    XL=null;
     // A whole tree was laid out depth by depth as the search went (the same layout, from the same moves).
     var th,ra;
     if(complete&&haveMoves&&TH&&TH.length>=N){th=TH;ra=RA;}
@@ -449,12 +600,6 @@ function workerMain(self){
     for(i=0;i<N;i++){var px=ra[i]*Math.cos(th[i]),py=-D[i]*H,pz=ra[i]*Math.sin(th[i]);pos[3*i]=px;pos[3*i+1]=py;pos[3*i+2]=pz;
       if(px<bx[0])bx[0]=px;if(px>bx[1])bx[1]=px;if(py<bx[2])bx[2]=py;if(py>bx[3])bx[3]=py;if(pz<bx[4])bx[4]=pz;if(pz>bx[5])bx[5]=pz;}
     th=ra=null;
-    // Each depth's counts, and the first moves for drawing every move.
-    var layers=[];for(d=0;d<=maxD;d++)layers.push([0,0,0,0]);
-    var nWin=0,nDead=0,nUnk=0,nOne=0,nStuck=0;
-    for(i=0;i<N;i++){var Ly=layers[D[i]];Ly[0]++;Ly[1+st[i]]++;if(st[i]===1)nWin++;else if(st[i]===2)nDead++;else nUnk++;if(len[i]===1)nOne++;
-      if((flag[i]&1)&&ES[i+1]===ES[i]&&len[i]>1)nStuck++;
-      ex[i]=(flag[i]&7)|(ex[i]?8:0);}
     function sub(x){return x.length===N?x:x.subarray(0,N);}
     // The moves: position u's go from es[u] to es[u+1], and move e is et[e>>>22][e&4194303].
     var es=ES.length===N+1?ES:ES.subarray(0,N+1),et=ET.slice(0,Math.ceil(NE/(EM+1)));
