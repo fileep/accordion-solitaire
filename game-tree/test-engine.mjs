@@ -84,8 +84,31 @@ for (let u = 0; u < s.n; u++) {
   if (s.status[u] !== want) bad++;
   if ((s.expanded[u] & 1) && deg === 0 && s.len[u] > 1 && s.status[u] !== 2) bad++;
 }
+// "Exact" (8 in expanded) promises that everything below is drawn, so the fewest piles shown is the true one. Check it
+// with a separate exhaustive search (its own move generator, on strings) for exact positions of up to 16 piles, and
+// that a position marked lost without being exact really cannot win.
+const bestMemo = new Map();
+function trueBest(tops) {
+  if (tops.length === 1) return 1;
+  const key = tops.join(","); if (bestMemo.has(key)) return bestMemo.get(key);
+  let b = tops.length;
+  for (let i = 1; i < tops.length; i++) for (const d of [1, 3]) {
+    if (i < d) continue; const c = tops[i], t = tops[i - d];
+    if ((c >> 4) !== (t >> 4) && (c & 15) !== (t & 15)) continue;
+    const next = tops.slice(); next[i - d] = c; next.splice(i, 1);
+    b = Math.min(b, trueBest(next)); if (b === 1) break;
+  }
+  bestMemo.set(key, b); return b;
+}
+const topsOf = (g, u) => Array.from(g.cards.subarray(g.coff[u], g.coff[u] + g.len[u]));
+let exactChecked = 0, lostChecked = 0;
+for (let u = 0; u < s.n && (exactChecked < 60 || lostChecked < 60); u++) {
+  if (s.len[u] > 16 || s.len[u] < 2) continue;
+  if ((s.expanded[u] & 8) && exactChecked < 60) { exactChecked++; if (trueBest(topsOf(s, u)) !== s.best[u]) bad++; }
+  else if (s.status[u] === 2 && lostChecked < 60) { lostChecked++; if (trueBest(topsOf(s, u)) === 1) bad++; }
+}
 if (bad) fail(`seed 0 sampled tree: ${bad} inconsistencies`);
-else console.log(`ok   seed 0 sampled: ${s.n} positions, ${s.ne} moves, ${s.maxDepth} deep, ${s.dives} dives (${s.divesWon} won), ${s.counts.won} winning positions, ${Date.now() - t} ms`);
+else console.log(`ok   seed 0 sampled (and ${exactChecked} exact, ${lostChecked} lost positions checked by a separate search): ${s.n} positions, ${s.ne} moves, ${s.maxDepth} deep, ${s.dives} dives (${s.divesWon} won), ${s.counts.won} winning positions, ${Date.now() - t} ms`);
 
 console.log(failures ? `${failures} failed` : "all passed");
 process.exit(failures ? 1 : 0);

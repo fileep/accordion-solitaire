@@ -3,6 +3,16 @@
 What changes between releases, newest first. The program's history before the first release is in
 [docs/PLAN.md](docs/PLAN.md) and [docs/BENCHMARKS.md](docs/BENCHMARKS.md).
 
+## Unreleased
+
+### Added
+
+- `game-tree/game-tree.html`: a 3D explorer of any deal's game tree, one web page with nothing to install, which can be
+  pasted into a blog post. Trees that fit the chosen size (up to 4 million positions) are drawn whole, so 701 of the
+  721 lost deals can be seen complete; bigger trees are samples made by short solver-like searches. Click a position to
+  see it and its best line, and redraw the tree from it. `node game-tree/test-engine.mjs` checks its engine against
+  the proofs. Pictures of the examples are in `game-tree/screenshots/`.
+
 ## 0.1.2, 2026-11-21
 
 For archiving on Zenodo. The links of the paper "The win rate of open Accordion solitaire" point at this release. The

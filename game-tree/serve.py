@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """Serves game-tree/ at http://127.0.0.1:8781/game-tree.html for testing the explorer.
 
-POST /save/<name>.png writes a picture into game-tree/screenshots/, so pictures saved from the page land beside it.
+POST /save/<name>.png writes a picture into game-tree/screenshots/full/ (not committed; smaller JPEGs of the
+chosen ones go in game-tree/screenshots/).
 Only this computer can reach it (it listens on 127.0.0.1).
 
     python game-tree/serve.py [port]
@@ -29,7 +30,7 @@ class Handler(http.server.SimpleHTTPRequestHandler):
         if not data.startswith(b"\x89PNG"):
             self.send_error(400, "not a PNG")
             return
-        folder = os.path.join(ROOT, "screenshots")
+        folder = os.path.join(ROOT, "screenshots", "full")
         os.makedirs(folder, exist_ok=True)
         with open(os.path.join(folder, m.group(1)), "wb") as f:
             f.write(data)

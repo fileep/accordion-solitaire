@@ -13,10 +13,13 @@ body.standalone #acc-tree{position:fixed;left:0;top:0;right:0;bottom:0;width:aut
 <!-- acc-tree: everything from here to "end of acc-tree" can be pasted into a blog post as it is -->
 <style>
 #acc-tree{position:relative;width:100%;height:680px;margin:1em 0;background:#05060a;color:#d9dce4;border-radius:10px;overflow:hidden;
-  font:13px/1.35 system-ui,-apple-system,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;user-select:none;-webkit-user-select:none;touch-action:none}
+  font:13px/1.35 system-ui,-apple-system,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;user-select:none;-webkit-user-select:none}
 #acc-tree:fullscreen{width:100%;height:100%;margin:0;border-radius:0}
+#acc-tree:-webkit-full-screen{width:100%;height:100%;margin:0;border-radius:0}
 #acc-tree *{box-sizing:border-box}
-#acc-tree canvas.at-gl{position:absolute;left:0;top:0;width:100%;height:100%;display:block;cursor:grab}
+#acc-tree canvas.at-gl{position:absolute;left:0;top:0;width:100%;height:100%;display:block;cursor:grab;touch-action:pan-y}
+/* In a page, one finger scrolls the page up and down; on its own page or full screen every touch drives the tree. */
+body.standalone #acc-tree canvas.at-gl,#acc-tree:fullscreen canvas.at-gl,#acc-tree:-webkit-full-screen canvas.at-gl{touch-action:none}
 #acc-tree canvas.at-gl.at-dragging{cursor:grabbing}
 #acc-tree button,#acc-tree select,#acc-tree input{font:inherit;color:#e8eaf0;background:#161a26;border:1px solid #2c3346;border-radius:6px;padding:4px 8px;margin:0}
 #acc-tree button{cursor:pointer}
@@ -27,7 +30,7 @@ body.standalone #acc-tree{position:fixed;left:0;top:0;right:0;bottom:0;width:aut
 #acc-tree .at-top>*{pointer-events:auto}
 #acc-tree .at-top select.at-ex{max-width:22em}
 #acc-tree .at-panel{background:rgba(9,11,18,.82);border:1px solid #232a3b;border-radius:8px;padding:8px 10px}
-#acc-tree .at-side{position:absolute;left:8px;top:var(--tb,48px);width:280px;max-height:calc(100% - 100px);overflow:auto}
+#acc-tree .at-side{position:absolute;left:8px;top:var(--tb,48px);width:280px;max-height:calc(100% - var(--tb,48px) - 8px);overflow:auto}
 #acc-tree .at-side.at-folded .at-body{display:none}
 #acc-tree .at-title{font-weight:600;font-size:14px;cursor:pointer}
 #acc-tree .at-title::after{content:" \25BE";color:#7d869c;font-weight:400}
@@ -52,7 +55,8 @@ body.standalone #acc-tree{position:fixed;left:0;top:0;right:0;bottom:0;width:aut
 #acc-tree .at-card.at-red{color:#c4102a}
 #acc-tree .at-card span{font-size:13px}
 #acc-tree .at-node-btns{display:flex;gap:6px;flex-wrap:wrap}
-#acc-tree .at-crumbs{position:absolute;left:8px;bottom:8px;display:flex;gap:6px;align-items:center;max-width:calc(100% - 370px)}
+#acc-tree .at-crumbs{display:flex;gap:6px;align-items:center;max-width:100%}
+#acc-tree .at-hint{position:absolute;left:50%;bottom:14px;transform:translateX(-50%);pointer-events:none;font-size:12px;padding:5px 9px}
 #acc-tree .at-crumbs:empty{display:none}
 #acc-tree .at-busy{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);width:320px;text-align:center}
 #acc-tree .at-bar{height:6px;background:#1b2030;border-radius:3px;overflow:hidden;margin-bottom:6px}
@@ -71,8 +75,7 @@ body.standalone #acc-tree{position:fixed;left:0;top:0;right:0;bottom:0;width:aut
 #acc-tree.at-narrow input.at-seed{width:7.5em}
 #acc-tree.at-narrow .at-top select.at-ex{max-width:100%}
 #acc-tree.at-narrow .at-node{width:calc(100% - 16px);max-height:42%;min-height:0}
-#acc-tree.at-narrow .at-crumbs{max-width:calc(100% - 140px);bottom:auto;top:calc(var(--tb,48px) + 34px);left:8px}
-@media (max-width:600px){#acc-tree{height:620px}}
+@media (max-width:600px){#acc-tree{height:620px;height:min(620px,80vh)}}
 </style>
 <div id="acc-tree"></div>
 <script>
@@ -188,7 +191,7 @@ function workerMain(self){
       var k=children(v),n=len[v]-1;
       if(k===0){flag[v]|=1;break;}
       var tot=0;for(j=0;j<k;j++){var w=viable(j*52,n)?((CM[j]&1)?8:1):0;WT[j]=w;tot+=w;}
-      if(tot===0){flag[v]|=2;break;}
+      if(tot===0){flag[v]|=6;break;}
       var r=rand()*tot,pick=k-1;for(j=0;j<k;j++){r-=WT[j];if(r<0){pick=j;break;}}
       var next=-1;
       for(j=0;j<k;j++){var o=j*52,h=hashOf(SC,o,n),c=find(SC,o,n,h);
@@ -229,6 +232,7 @@ function workerMain(self){
       if(!hasEdge(u,c))addEdge(u,c,CM[j]);
       ids.push(c);keys.push(-Math.log(rand()+1e-12)/((CM[j]&1)?8:1));
     }
+    if(!ids.length){flag[u]|=6;return 2;} // every move fails the dead-end test
     var order=[];for(j=0;j<ids.length;j++)order.push(j);order.sort(function(a,b){return keys[a]-keys[b];});
     var unknown=false;
     for(j=0;j<order.length;j++){var r=dfs(ids[order[j]]);if(r===1)return 1;if(r===0)unknown=true;}
@@ -295,12 +299,13 @@ function workerMain(self){
     var i,e,u,d,rootLen=len[0],cnt=new Int32Array(54),ord=new Int32Array(N);
     for(i=0;i<N;i++)cnt[len[i]+1]++;for(i=1;i<54;i++)cnt[i]+=cnt[i-1];
     var fill=cnt.slice();for(i=0;i<N;i++)ord[fill[len[i]]++]=i;
-    var st=new Uint8Array(N),best=new Uint8Array(N),wins=new Float64Array(N),lines=new Float64Array(N);
+    // exact: everything below the position is drawn, so its fewest piles and its counts of lines are exact.
+    var st=new Uint8Array(N),best=new Uint8Array(N),wins=new Float64Array(N),lines=new Float64Array(N),exact=new Uint8Array(N);
     for(var k=0;k<N;k++){u=ord[k];
-      if(len[u]===1){st[u]=1;best[u]=1;wins[u]=1;lines[u]=1;continue;}
-      var anyWin=false,allDead=true,b=len[u],w=0,l=0,deg=0;
-      for(e=head[u];e>=0;e=enext[e]){var c=eto[e];deg++;if(st[c]===1)anyWin=true;if(st[c]!==2)allDead=false;if(best[c]<b)b=best[c];w+=wins[c];l+=lines[c];}
-      best[u]=b;wins[u]=w;lines[u]=deg?l:1;
+      if(len[u]===1){st[u]=1;best[u]=1;wins[u]=1;lines[u]=1;exact[u]=1;continue;}
+      var anyWin=false,allDead=true,b=len[u],w=0,l=0,deg=0,ex=flag[u]&1;
+      for(e=head[u];e>=0;e=enext[e]){var c=eto[e];deg++;if(st[c]===1)anyWin=true;if(st[c]!==2)allDead=false;if(best[c]<b)b=best[c];w+=wins[c];l+=lines[c];if(!exact[c])ex=0;}
+      best[u]=b;wins[u]=w;lines[u]=deg?l:1;exact[u]=ex;
       st[u]=anyWin?1:(((flag[u]&1)&&allDead)||(flag[u]&2))?2:0;}
     // Layout: a ring for each move made, the deal at the centre; each position near the average angle of the
     // positions it comes from, spread apart along its ring.
@@ -343,7 +348,7 @@ function workerMain(self){
       if((flag[i]&1)&&es[i+1]===es[i]&&len[i]>1)nStuck++;}
     var divesWon=0;for(i=0;i<diveEnds.length;i++)if(st[diveEnds[i]]===1)divesWon++;if(divesWonRuns>=0)divesWon=divesWonRuns;
     var cards=A.slice(0,used),coff=off.slice(0,N),clen=len.slice(0,N),parent=par.slice(0,N),pmove=pmv.slice(0,N),expanded=new Uint8Array(N);
-    for(i=0;i<N;i++)expanded[i]=flag[i]&3;
+    for(i=0;i<N;i++)expanded[i]=(flag[i]&7)|(exact[i]?8:0);
     var msg={type:'graph',n:N,ne:NE,complete:complete,dives:dives,divesWon:divesWon,linePath:linePath?Int32Array.from(linePath):null,
       pos:pos,bounds:bx,pos2:pos2,bounds2:bx2,depth:D,len:clen,status:st,best:best,wins:wins,lines:lines,parent:parent,pmove:pmove,expanded:expanded,es:es,et:et,em:em,
       cards:cards,coff:coff,layers:layers,maxDepth:maxD,counts:{win:nWin,dead:nDead,unknown:nUnk,won:nOne,stuck:nStuck},ms:Math.round(now()-t0)};
@@ -378,10 +383,10 @@ function workerMain(self){
 
 // ---------- examples ----------
 var EXAMPLES=[
-  {g:'Easy to win',k:'e1',seed:'1',note:'Of the first 300 deals, the one whose short searches win most often: 6 to 8 in 10, more at bigger sizes. Like almost every deal it has far too many positions to draw, so this is a sample.'},
-  {g:'Easy to win',k:'e0',seed:'0',note:'The first deal of the run, and nearly as easy: most of its short searches find a win.'},
+  {g:'Easy to win',k:'e185',seed:'185',note:'Of the first 300 deals, the one whose short searches win most often: about 8 in 10 at the default size. Like almost every deal it has far too many positions to draw, so this is a sample.'},
+  {g:'Easy to win',k:'e0',seed:'0',note:'The first deal of the run: most of its short searches find a win too.'},
   {g:'Hard to win',k:'h3',seed:'3',note:'Of the first 300 deals, the one whose short searches win least often: about 1 in 10. It can be won.'},
-  {g:'Hard to win',k:'h56669828180',seed:'56669828180',note:'Won, but only by the exhaustive search: 9,983 tries and a 50 million position search failed first. The known winning line is drawn in.',
+  {g:'Hard to win',k:'h56669828180',seed:'56669828180',note:'Won, but only by the exhaustive search: 9,983 tries, 50 million positions in all, failed first. The known winning line is drawn in.',
    line:'5S>AS JC>AC 6S>QS JC>7C 6D>4D 6H>6D 7D>JD 4H>3H QC>9C 5C>2C 6H>JH AH>6H 8S>2S 9D>KD 9S>9D 8S>8H 9S>8S 7S>9S 7S>4S 7S>7D KC>6C 3S>7S 3S>TS 3S>3D 3S>JS QC>4C QC>5C AH>9H QC>QH KC>QC KC>KS AH>7H AD>AH TD>AD TD>QD TD>TC TD>8D 5D>TD 5H>5D 2H>5H 2H>TH 2H>2D 2H>4H KH>2H 6S>5S JC>8C 3S>6S 3C>3S 3C>JC KC>3C KC>KH'},
   {g:'Hard to win',k:'h125657715076',seed:'125657715076',note:'Won only by the exhaustive search, after 9,983 failed tries. The known winning line is drawn in.',
    line:'JC>5C 5H>5D 4S>4H 4D>AD JH>TH 6D>2D 7D>7H 4S>6S JC>JH 7C>JC 6C>7C 6C>8C 6H>6C 6H>2H KS>3S QH>6H KD>KS KD>TD 9D>KD 9D>9S QD>9D QD>QC 4C>TC QD>8D QH>KH QH>QD QH>3H 4S>5S AH>QH AH>AC AH>9H AS>AH 4S>AS 4C>4S 3D>JD 4C>KC 4C>4D 2C>4C 2C>2S 2C>9C 7S>TS 3C>2C 8S>QS 3D>3C 3D>6D 7D>3D 8H>5H 8S>8H 7S>8S 7S>7D JS>7S'},
@@ -410,7 +415,7 @@ host.innerHTML=
  '<canvas class="at-gl"></canvas>'+
  '<div class="at-top"><select class="at-ex" title="Example deals"></select>'+
  '<input class="at-seed" placeholder="Seed" spellcheck="false" autocomplete="off" title="Any seed: the same deal as acc and the game"><button class="at-go">Show</button>'+
- '<button class="at-rand">Random deal</button><select class="at-size" title="The most positions to draw"></select></div>'+
+ '<button class="at-rand">Random deal</button><select class="at-size" title="The most positions to draw"></select><div class="at-crumbs"></div></div>'+
  '<div class="at-side at-panel"><div class="at-title"></div><div class="at-body"><div class="at-note"></div><div class="at-stats"></div>'+
  '<canvas class="at-chart"></canvas><div class="at-chartcap">Positions after each move (log scale)</div><div class="at-legend"></div></div></div>'+
  '<div class="at-tools">'+
@@ -424,16 +429,15 @@ host.innerHTML=
  '<div class="at-row"><button class="at-save">Save picture</button><button class="at-help">?</button></div></div>'+
  '<div class="at-node at-panel" hidden><div class="at-node-head"></div><div class="at-cards"></div>'+
  '<div class="at-node-btns"><button class="at-explore">Explore from here</button><button class="at-close">Close</button></div></div>'+
- '<div class="at-crumbs"></div>'+
  '<div class="at-busy at-panel" hidden><div class="at-bar"><i></i></div><span></span></div>'+
  '<div class="at-tip" hidden></div>'+
  '<div class="at-helpbox at-panel" hidden>'+
  '<p><b>A game tree of Accordion.</b> Each dot is a position and each line a move. The deal sits at the top (in the middle, seen from above) and every move takes one pile away, so each ring is one move further into the game. A position reached by different orders of moves is drawn once.</p>'+
- '<p><span style="color:#36e08f">Green</span>: a win can still be reached. <span style="color:#ffd03c">Gold</span>: won, one pile left. <span style="color:#ff8a2a">Orange</span> to <span style="color:#c0182c">red</span>: lost; orange ends with 2 piles at best, red with more. <span style="color:#7f93c9">Blue-grey</span>: not searched.</p>'+
- '<p>A lost deal has few enough positions to draw them all. A deal that can be won usually has far too many (something like 10<sup>17</sup>), so then every position of the first few moves is drawn, then short searches like the solver\'s: depth first, a few thousand positions each, skipping moves that its dead-end test shows cannot win, each starting from the deal or from a position an earlier one reached. In an easy deal most of them find a win; in a hard one almost none do.</p>'+
- '<p>Drag to turn, right-drag or shift-drag to move, scroll or pinch to zoom. Click a dot to see its position and the best line from it; <i>Explore from here</i> draws the tree from that position.</p>'+
+ '<p><span style="color:#36e08f">Green</span>: a win can still be reached. <span style="color:#ffd03c">Gold</span>: won, one pile left. <span style="color:#ff8a2a">Orange</span> to <span style="color:#a0144a">dark red</span>: lost, with everything below it drawn; orange gets as close as the deal allows (2 piles if it can be won, else the deal\'s own best). <span style="color:#e0405e">Red</span>: lost, without the fewest piles worked out. <span style="color:#7f93c9">Blue-grey</span>: not settled.</p>'+
+ '<p>Most lost deals have few enough positions to draw them all (up to 4 million); the biggest are drawn as samples, and so is almost every deal that can be won, which has something like 10<sup>17</sup> positions. A sample is every position of the first few moves, then short searches like the solver\'s: depth first, a few thousand positions each, skipping moves that its dead-end test shows cannot win, each starting from the deal or from a position an earlier one reached. In an easy deal most of them find a win; in a hard one almost none do.</p>'+
+ '<p>Drag to turn, right-drag or shift-drag to move, pinch or scroll to zoom (in a page, click the tree first or hold Ctrl to zoom with the wheel). Click a dot to see its position and the best line from it; <i>Explore from here</i> draws the tree from that position.</p>'+
  '<p><button class="at-helpclose">Close</button></p></div>'+
- '<div class="at-msg at-panel" hidden></div>';
+ '<div class="at-msg at-panel" hidden></div><div class="at-hint at-panel" hidden></div>';
 function $(s){return host.querySelector(s);}
 var canvas=$('.at-gl'),chart=$('.at-chart'),tip=$('.at-tip'),busy=$('.at-busy'),nodeBox=$('.at-node'),side=$('.at-side');
 var exSel=$('.at-ex'),seedIn=$('.at-seed'),sizeSel=$('.at-size'),colorSel=$('.at-color'),edgeSel=$('.at-edges'),glowIn=$('.at-glow'),shapeSel=$('.at-shape');
@@ -469,14 +473,20 @@ var VS_T='attribute vec2 p;varying vec2 uv;void main(){uv=p*0.5+0.5;gl_Position=
 var FS_T='#ifdef GL_FRAGMENT_PRECISION_HIGH\nprecision highp float;\n#else\nprecision mediump float;\n#endif\n'+
   'uniform sampler2D t;uniform float k;uniform vec3 bg;varying vec2 uv;void main(){vec4 s=texture2D(t,uv);float a=max(s.a,0.0);vec3 avg=s.rgb/max(a,1e-4);'+
   'float i=1.0-exp(-k*a);float hot=clamp((k*a-8.0)/60.0,0.0,0.25);gl_FragColor=vec4(mix(bg,mix(avg,vec3(1.0),hot),i),1.0);}';
-var progP=program(VS_P,FS_P),progL=program(VS_L,FS_L),progH=program(VS_P,FS_H),progLH=program(VS_L,FS_H),progT=program(VS_T,FS_T);
+var progP,progL,progH,progLH,progT,bufPos,bufCol,bufIdx,bufHPos,bufHCol,bufQuad,bufWinE,bufWinP,hdrFmt,hdrTex,hdrFb,hdrW,hdrH,lost=false;
+// Programs, buffers and the float buffer; made again if the browser drops the graphics context and gives it back.
+function initGL(){
+  if(!GL2)gl.getExtension('OES_element_index_uint');
+progP=program(VS_P,FS_P),progL=program(VS_L,FS_L),progH=program(VS_P,FS_H),progLH=program(VS_L,FS_H),progT=program(VS_T,FS_T);
 progT.t=gl.getUniformLocation(progT.p,'t');progT.k=gl.getUniformLocation(progT.p,'k');progT.bg=gl.getUniformLocation(progT.p,'bg');
-var bufPos=gl.createBuffer(),bufCol=gl.createBuffer(),bufIdx=gl.createBuffer(),bufHPos=gl.createBuffer(),bufHCol=gl.createBuffer(),bufQuad=gl.createBuffer(),bufWinE=gl.createBuffer(),bufWinP=gl.createBuffer();
+bufPos=gl.createBuffer(),bufCol=gl.createBuffer(),bufIdx=gl.createBuffer(),bufHPos=gl.createBuffer(),bufHCol=gl.createBuffer(),bufQuad=gl.createBuffer(),bufWinE=gl.createBuffer(),bufWinP=gl.createBuffer();
 gl.bindBuffer(gl.ARRAY_BUFFER,bufQuad);gl.bufferData(gl.ARRAY_BUFFER,new Float32Array([-1,-1,3,-1,-1,3]),gl.STATIC_DRAW);
-var hdrFmt=(function(){
+hdrFmt=(function(){
   if(GL2)return gl.getExtension('EXT_color_buffer_float')?{i:gl.RGBA16F,f:gl.RGBA,t:gl.HALF_FLOAT}:null;
   var a=gl.getExtension('OES_texture_half_float'),b=gl.getExtension('EXT_color_buffer_half_float');return a&&b?{i:gl.RGBA,f:gl.RGBA,t:a.HALF_FLOAT_OES}:null;})();
-var hdrTex=null,hdrFb=null,hdrW=0,hdrH=0;
+hdrTex=null;hdrFb=null;hdrW=0;hdrH=0;
+}
+initGL();
 function ensureHDR(w,h){
   if(!hdrFmt)return false;if(hdrTex&&hdrW===w&&hdrH===h)return true;
   if(!hdrTex){hdrTex=gl.createTexture();hdrFb=gl.createFramebuffer();}
@@ -508,7 +518,7 @@ function bindAttribs(pb,cb){gl.bindBuffer(gl.ARRAY_BUFFER,pb);gl.enableVertexAtt
 function glow(){return Math.pow(2,parseFloat(glowIn.value)||0);}
 var BG=[0.02,0.024,0.04];
 function draw(){
-  dirty=false;var W=canvas.width,H=canvas.height;
+  dirty=false;if(lost)return;var W=gl.drawingBufferWidth,H=gl.drawingBufferHeight;
   gl.bindFramebuffer(gl.FRAMEBUFFER,null);gl.viewport(0,0,W,H);gl.clearColor(BG[0],BG[1],BG[2],1);gl.clear(gl.COLOR_BUFFER_BIT);
   if(!G)return;
   var M=mvp();lastM=M;var n=G.n,px=dpr*saveScale,g=glow(),hdr=ensureHDR(W,H);
@@ -545,10 +555,14 @@ function draw(){
 // How bright one dot is: dimmer for big trees, whose dots pile up more, and brighter when zoomed in, which spreads them.
 function exposure(){var z=cam.ortho?(cam.fitOh||cam.oh)/cam.oh:(cam.fitDist||cam.dist)/cam.dist;
   return Math.min(4,Math.max(0.03,Math.min(2.2,Math.sqrt(50000/Math.max(G.n,1))))*Math.pow(Math.max(0.3,Math.min(50,z)),0.8));}
+// Nothing is drawn while the tree is scrolled out of view or the tab is hidden.
+var onScreen=true;
+if(window.IntersectionObserver)new IntersectionObserver(function(es){onScreen=es[es.length-1].isIntersecting;if(onScreen)dirty=true;}).observe(host);
 function frame(t){
   var dt=lastT?Math.min(0.1,(t-lastT)/1000):0;lastT=t;
-  if(spin&&G){cam.yaw+=dt*0.18;dirty=true;}
-  if(dirty)draw();
+  var shown=onScreen&&!document.hidden;
+  if(spin&&G&&shown){cam.yaw+=dt*0.18;dirty=true;}
+  if(dirty&&shown)draw();
   requestAnimationFrame(frame);
 }
 function resize(){
@@ -558,7 +572,7 @@ function resize(){
   if(narrow&&!side.getAttribute('data-touched'))side.classList.add('at-folded');
   dpr=Math.min(window.devicePixelRatio||1,2);
   var w=Math.max(1,Math.round(host.clientWidth*dpr)),h=Math.max(1,Math.round(host.clientHeight*dpr));
-  if(canvas.width!==w||canvas.height!==h){canvas.width=w;canvas.height=h;dirty=true;}
+  if(canvas.width!==w||canvas.height!==h){canvas.width=w;canvas.height=h;dirty=true;if(G)drawChart();}
 }
 if(window.ResizeObserver)new ResizeObserver(resize).observe(host);else window.addEventListener('resize',resize);
 resize();requestAnimationFrame(frame);
@@ -568,26 +582,32 @@ var GOLD=[255,208,60],WIN=[54,224,143],UNK=[95,118,180],WHITE=[255,255,255];
 var TURBO=[[48,18,59],[67,113,232],[38,188,225],[46,238,153],[164,252,60],[239,205,58],[251,126,33],[200,40,10]];
 function ramp(stops,t){t=Math.max(0,Math.min(1,t))*(stops.length-1);var i=Math.min(stops.length-2,Math.floor(t)),f=t-i,a=stops[i],b=stops[i+1];
   return [a[0]+(b[0]-a[0])*f|0,a[1]+(b[1]-a[1])*f|0,a[2]+(b[2]-a[2])*f|0];}
-var LOSS=[[255,160,40],[245,95,40],[205,30,45],[140,20,70]];
+var LOSS=[[255,160,40],[245,95,40],[205,30,45],[140,20,70]],LOSSX=[224,64,94],NOTK=[120,104,150];
 var BEST=[[255,160,40],[230,70,60],[170,40,140],[90,60,200],[50,90,170]];
 function colourOf(i,mode){
   if(i===0)return WHITE;
   if(mode==='depth')return ramp(TURBO,G.depth[i]/Math.max(1,G.maxDepth));
-  var s=G.status[i],b=G.best[i];
-  if(mode==='best'){if(b===1)return GOLD;return ramp(BEST,(b-2)/14);}
+  var s=G.status[i],b=G.best[i],x=exactAt(i);
+  if(mode==='best'){if(s===1)return GOLD;return x?ramp(BEST,(b-2)/14):NOTK;}
   if(G.len[i]===1)return GOLD;
-  if(s===1)return WIN;if(s===2)return ramp(LOSS,(b-lossBase())/8);return UNK;
+  if(s===1)return WIN;if(s===2)return x?ramp(LOSS,(b-lossBase())/8):LOSSX;return UNK;
 }
+// A position's fewest piles is only known when everything below it is drawn (exact); the short searches skip moves
+// the dead-end test rules out, so their lost positions get one colour of their own.
+function exactAt(i){return (G.expanded[i]&8)!==0;}
 // Lost positions are coloured by how far they fall short of the best the deal allows: 2 piles in a deal that can be
 // won, the deal's own best in a lost one.
-function lossBase(){return G.status[0]===2?G.best[0]:2;}
+function lossBase(){return G.status[0]===2&&exactAt(0)?G.best[0]:2;}
 function legend(mode){
   function dot(c,t){return '<span><i style="background:rgb('+c.join(',')+')"></i>'+t+'</span>';}
   if(mode==='depth')return dot(TURBO[0],'early')+dot(TURBO[3],'middle')+dot(TURBO[7],'late')+dot(WHITE,'the deal');
-  if(mode==='best')return dot(GOLD,'can win')+dot(BEST[0],'2 piles at best')+dot(ramp(BEST,0.5),'9')+dot(BEST[4],'16 or more');
-  var b=lossBase();
-  return dot(WHITE,'the deal')+dot(WIN,'can still win')+dot(GOLD,'won')+dot(LOSS[0],'lost, '+b+' piles at best'+(b>2?' (the best there is)':''))+
-    dot(LOSS[2],'lost, '+(b+4)+' or more')+dot(UNK,'not searched');
+  if(mode==='best')return dot(GOLD,'can win')+dot(BEST[0],'2 piles at best')+dot(ramp(BEST,0.5),'9')+dot(BEST[4],'16 or more')+
+    (G.nInexact?dot(NOTK,'not worked out'):'');
+  var b=lossBase(),h=dot(WHITE,'the deal')+(G.counts.win?dot(WIN,'can still win')+dot(GOLD,'won'):'');
+  if(G.nExactLoss)h+=dot(LOSS[0],'lost, '+b+' piles at best'+(b>2?' (the best there is)':''))+(b+4<G.len[0]?dot(LOSS[2],'lost, '+(b+4)+' or more'):'');
+  if(G.nInexactLoss)h+=dot(LOSSX,'lost (fewest piles not worked out)');
+  if(G.counts.unknown)h+=dot(UNK,'not settled');
+  return h;
 }
 function recolour(){
   if(!G)return;var n=G.n,mode=colorSel.value,c=new Uint8Array(4*n);
@@ -631,7 +651,7 @@ function fit(v){
 var drag=null,pointers={},pinch=null;
 canvas.addEventListener('contextmenu',function(e){e.preventDefault();});
 canvas.addEventListener('pointerdown',function(e){
-  canvas.setPointerCapture(e.pointerId);pointers[e.pointerId]={x:e.clientX,y:e.clientY};
+  try{canvas.setPointerCapture(e.pointerId);}catch(err){}pointers[e.pointerId]={x:e.clientX,y:e.clientY};
   var ids=Object.keys(pointers);
   if(ids.length===2){var a=pointers[ids[0]],b=pointers[ids[1]];pinch={d:Math.hypot(a.x-b.x,a.y-b.y),x:(a.x+b.x)/2,y:(a.y+b.y)/2};drag=null;return;}
   drag={x:e.clientX,y:e.clientY,sx:e.clientX,sy:e.clientY,pan:e.button===2||e.button===1||e.shiftKey,moved:false};
@@ -654,8 +674,18 @@ function endPointer(e){
   drag=null;canvas.classList.remove('at-dragging');
 }
 canvas.addEventListener('pointerup',endPointer);canvas.addEventListener('pointercancel',endPointer);
-canvas.addEventListener('pointerleave',function(){hideTip();});
-canvas.addEventListener('wheel',function(e){e.preventDefault();zoomAt(Math.exp(e.deltaY*(e.deltaMode?0.05:0.0015)),e.clientX,e.clientY);},{passive:false});
+canvas.addEventListener('pointerleave',function(){clearTimeout(hoverTimer);hoverTimer=0;hoverEv=null;hideTip();});
+// In a page the wheel scrolls the page unless the tree was clicked first or Ctrl is held; on its own page or full
+// screen it always zooms.
+var engaged=false,hintTimer=0;
+function fullNow(){return (document.fullscreenElement||document.webkitFullscreenElement)===host;}
+function hint(s){var h=$('.at-hint');h.textContent=s;h.hidden=false;clearTimeout(hintTimer);hintTimer=setTimeout(function(){h.hidden=true;},1800);}
+document.addEventListener('pointerdown',function(e){engaged=host.contains(e.target);},true);
+canvas.addEventListener('wheel',function(e){
+  if(!(document.body.classList.contains('standalone')||fullNow()||engaged||e.ctrlKey||e.metaKey)){hint('Click the tree first, or hold Ctrl, to zoom with the wheel');return;}
+  e.preventDefault();zoomAt(Math.exp(e.deltaY*(e.deltaMode?0.05:0.0015)),e.clientX,e.clientY);},{passive:false});
+canvas.addEventListener('webglcontextlost',function(e){e.preventDefault();lost=true;message('The graphics were reset; they should come back by themselves, or after reloading the page.');},false);
+canvas.addEventListener('webglcontextrestored',function(){lost=false;initGL();message('');if(G){var s=G.sel;applyShape();recolour();rebuildEdges();if(s>=0)select(s);}dirty=true;},false);
 canvas.addEventListener('dblclick',function(){if(G&&G.sel>=0){var i=G.sel;cam.tx=G.pos[3*i];cam.ty=G.pos[3*i+1]*G.ys;cam.tz=G.pos[3*i+2];if(cam.ortho)cam.oh*=0.5;else cam.dist*=0.5;dirty=true;}});
 function fitButtons(){host.querySelectorAll('[data-view]').forEach(function(b){b.classList.toggle('on',b.getAttribute('data-view')===view);});}
 function panBy(dx,dy){var v=camVectors(),w=worldPerPixel()*dpr;cam.tx+=(-dx*v.r[0]+dy*v.u[0])*w;cam.ty+=(-dx*v.r[1]+dy*v.u[1])*w;cam.tz+=(-dx*v.r[2]+dy*v.u[2])*w;dirty=true;}
@@ -684,14 +714,15 @@ function fmt(x){return Math.round(x).toLocaleString('en-US');}
 function big(x){if(x<1e15)return fmt(x);var e=Math.floor(Math.log10(x));return (x/Math.pow(10,e)).toFixed(1)+'&times;10<sup>'+e+'</sup>';}
 function cardsOf(i){var o=G.coff[i],n=G.len[i],a=[];for(var k=0;k<n;k++)a.push(G.cards[o+k]);return a;}
 function movesIn(i){return cur.base+G.depth[i];}
-function outcome(i){var s=G.status[i],b=G.best[i];
+function outcome(i){var s=G.status[i],b=G.best[i],x=G.expanded[i];
   if(G.len[i]===1)return 'Won.';
-  if(s===1)return 'A win can still be reached'+(G.complete?' ('+big(G.wins[i])+' winning lines from here).':' (from what is drawn).');
-  if(s===2&&(G.expanded[i]&2)&&!(G.expanded[i]&1))return 'Lost: every move from here leads to a position that the solver\'s dead-end test shows cannot be won.';
-  if(s===2)return 'Lost: the best from here is '+b+' piles.';
-  return 'Not searched to the end'+(b<G.len[i]?'; the fewest piles reached from here so far is '+b+'.':'.');}
-function shortInfo(i){var s=G.status[i];return (i===0?'The deal':'After '+movesIn(i)+' move'+(movesIn(i)===1?'':'s'))+': '+G.len[i]+' pile'+(G.len[i]===1?'':'s')+'. '+
-  (G.len[i]===1?'Won':s===1?'Can still win':s===2?'Lost, '+G.best[i]+' piles at best':'Not searched')+'.';}
+  if(s===1)return 'A win can still be reached'+((x&8)?' ('+big(G.wins[i])+' of the '+big(G.lines[i])+' ways to play on win).':'.');
+  if(s===2&&(x&4)&&!(x&1))return 'Lost: every move from here leads to a position that the solver\'s dead-end test shows cannot be won.';
+  if(s===2&&(x&8))return 'Lost: the best from here is '+b+' piles.';
+  if(s===2)return 'Lost: every move from here either fails the solver\'s dead-end test or was searched to the end without a win. How few piles it can end with was not worked out.';
+  return 'Not settled: no win is drawn below it, and it is not shown lost'+(b<G.len[i]?'. The fewest piles drawn below it is '+b:'')+'.';}
+function shortInfo(i){var s=G.status[i];return (i===0&&!cur.base?'The deal':'After '+movesIn(i)+' move'+(movesIn(i)===1?'':'s'))+': '+G.len[i]+' pile'+(G.len[i]===1?'':'s')+'. '+
+  (G.len[i]===1?'Won':s===1?'Can still win':s===2?(exactAt(i)?'Lost, '+G.best[i]+' piles at best':'Lost'):'Not settled')+'.';}
 function moveText(i){var p=G.parent[i];if(p<0)return '';var m=G.pmove[i],pi=m>>1,leap=m&1,pc=cardsOf(p),c=pc[pi],t=pc[pi-(leap?3:1)];
   return cardText(c)+' onto '+cardText(t)+(leap?' (a leap)':' (a slide)');}
 function showStats(m){
@@ -700,10 +731,10 @@ function showStats(m){
   else h+='Drawn: <b>'+fmt(G.n)+'</b> positions and <b>'+fmt(G.ne)+'</b> moves, '+G.maxDepth+' moves deep: every position of the first moves, then <b>'+fmt(G.dives)+'</b> short searches like the solver\'s, <b>'+fmt(G.divesWon)+'</b> of which found a win.<br>';
   var s0=G.status[0];
   if(G.complete){
-    if(s0===1)h+='Won: <b>'+big(G.wins[0])+'</b> of the '+big(G.lines[0])+' ways to play it to the end win.';
+    if(s0===1)h+=(cur.base?'Can be won':'Won')+': <b>'+big(G.wins[0])+'</b> of the '+big(G.lines[0])+' ways to play it to the end win.';
     else h+='Lost: no line wins. The best leaves <b>'+G.best[0]+'</b> piles.';
   }else{
-    h+=(s0===1?'Wins found: <b>'+fmt(G.counts.won)+'</b> winning positions drawn.':'No win drawn; the fewest piles reached is <b>'+G.best[0]+'</b>.');
+    h+=(s0===1?'<b>'+fmt(G.counts.win)+'</b> of the drawn positions can still win.':'No win drawn; the fewest piles drawn is <b>'+G.best[0]+'</b>.');
     if(cur.total)h+='<br>The whole tree has '+fmt(cur.total)+' positions.';
   }
   h+='<br><span style="color:#7d869c">Built in '+(G.ms/1000).toFixed(1)+' s.'+(edgeNote?' '+edgeNote:'')+'</span>';
@@ -714,7 +745,7 @@ function drawChart(){
   if(!G)return;var L=G.layers,n=L.length,mx=1;for(var i=0;i<n;i++)if(L[i][0]>mx)mx=L[i][0];
   var bw=w/n,top=Math.log10(mx+1);
   for(i=0;i<n;i++){var t=L[i][0];if(!t)continue;var bh=Math.max(1,h*Math.log10(t+1)/top),y=h;
-    var parts=[[L[i][2],WIN],[L[i][3],LOSS[1]],[L[i][1],UNK]];
+    var parts=[[L[i][2],WIN],[L[i][3],G.complete?LOSS[1]:LOSSX],[L[i][1],UNK]];
     for(var k=0;k<3;k++){if(!parts[k][0])continue;var ph=bh*parts[k][0]/t;c.fillStyle='rgb('+parts[k][1].join(',')+')';c.fillRect(i*bw,y-ph,Math.max(1,bw-0.5),ph);y-=ph;}}
 }
 
@@ -723,8 +754,11 @@ function select(i){
   if(!G)return;G.sel=i;hl=null;
   if(i<0){nodeBox.hidden=true;dirty=true;return;}
   var up=[],v=i;while(v>=0){up.push(v);v=G.parent[v];}up.reverse();
-  var down=[];v=i;
-  for(;;){var bestC=-1,score=-1;for(var e=G.es[v];e<G.es[v+1];e++){var c=G.et[e],sc=(G.status[c]===1?2000:G.status[c]===0?1000:0)+2*(60-G.best[c])+(G.parent[c]===v?1:0);if(sc>score){score=sc;bestC=c;}}
+  // Down: from a winnable position the way to a win; otherwise towards the fewest piles drawn, unsettled positions first
+  // among equals; the move it is drawn joined by breaks ties.
+  var down=[],win=G.status[i]===1;v=i;
+  for(;;){var bestC=-1,score=-Infinity;for(var e=G.es[v];e<G.es[v+1];e++){var c=G.et[e],
+      sc=(win?(G.status[c]===1?1000:0):(-4*G.best[c]+(G.status[c]===0?2:0)))+(G.parent[c]===v?1:0);if(sc>score){score=sc;bestC=c;}}
     if(bestC<0)break;down.push(bestC);v=bestC;}
   var path=up.concat(down),n=path.length,P=new Float32Array(3*n),C=new Uint8Array(4*n);
   for(var k=0;k<n;k++){var j=path[k];P[3*k]=G.pos[3*j];P[3*k+1]=G.pos[3*j+1];P[3*k+2]=G.pos[3*j+2];
@@ -733,7 +767,7 @@ function select(i){
   hl={n:n};
   var cs=cardsOf(i);
   $('.at-node-head').innerHTML='<b>'+(i===0&&!cur.base?'The deal':'After '+movesIn(i)+' move'+(movesIn(i)===1?'':'s'))+'</b>: '+G.len[i]+' pile'+(G.len[i]===1?'':'s')+'. '+outcome(i)+
-    (i?'<br>Last move: '+moveText(i)+'.':'')+(down.length?'<br><span style="color:#9aa3b5">The '+(G.status[i]===1?'gold':'red')+' line shows the '+(G.status[i]===1?'way to a win':'best line')+' from here.</span>':'');
+    (i?'<br>Last move: '+moveText(i)+'.':'')+(down.length?'<br><span style="color:#9aa3b5">The '+(win?'gold line shows a way to a win':exactAt(i)?'red line shows a best line':'red line leads to the fewest piles drawn')+' from here.</span>':'');
   $('.at-cards').innerHTML=cs.map(function(b){return '<div class="at-card'+(isRed(b)?' at-red':'')+'">'+RANKS[b&15].replace('T','10')+'<span>'+SYM[b>>4]+'</span></div>';}).join('');
   $('.at-explore').hidden=G.len[i]<=1||(i===0);
   nodeBox.hidden=false;dirty=true;
@@ -764,14 +798,14 @@ function run(opts){
     var m=ev.data;heard=true;if(me!==worker)return;
     if(m.type==='progress'){$('.at-busy i').style.width=Math.min(100,100*m.nodes/m.budget).toFixed(1)+'%';
       $('.at-busy span').textContent=m.phase+': '+fmt(m.nodes)+' positions';}
-    else if(m.type==='graph'){busy.hidden=true;setGraph(m,opts.keepView);if(host.onbuilt)host.onbuilt(m);}
+    else if(m.type==='graph'){busy.hidden=true;setGraph(m,opts);if(host.onbuilt)host.onbuilt(m);}
     else if(m.type==='error'){busy.hidden=true;message('Could not build this tree: '+m.message+'. A smaller size may work.');}
   };
   worker.onerror=function(e){if(me!==worker)return;
     if(!heard&&!onPage){onPage=true;run(opts);return;} // the worker never started: build on the page instead
     busy.hidden=true;message('Could not build this tree ('+(e.message||'out of memory?')+'). A smaller size may work.');};
-  worker.postMessage({cmd:'build',cards:cur.cards,budget:budget,top:0.15,endPiles:15,parentWeight:layoutPW,line:cur.line,skipFull:!!(cur.total&&cur.total>budget),
-    rng:(hashStr(cur.title)^budget)>>>0||1});
+  worker.postMessage({cmd:'build',cards:opts.cards,budget:budget,top:0.15,endPiles:15,parentWeight:layoutPW,line:opts.line||null,skipFull:!!(opts.total&&opts.total>budget),
+    rng:(hashStr(opts.title)^budget)>>>0||1});
 }
 function hashStr(s){var h=2166136261;for(var i=0;i<s.length;i++)h=Math.imul(h^s.charCodeAt(i),16777619);return h>>>0;}
 function applyShape(){
@@ -780,9 +814,15 @@ function applyShape(){
   gl.bindBuffer(gl.ARRAY_BUFFER,bufPos);gl.bufferData(gl.ARRAY_BUFFER,G.pos,gl.STATIC_DRAW);
   if(G.sel>=0)select(G.sel);dirty=true;
 }
-function setGraph(m,keepView){
+// The deal's details (cur) change only when its tree arrives, so a slow or failed build leaves the page describing the
+// tree on the screen.
+function setGraph(m,o){
+  cur.cards=o.cards;cur.title=o.title;cur.note=o.note||'';cur.base=o.base||0;cur.total=o.total||0;cur.line=o.line||null;cur.ex=o.ex||'';
+  if(o.resetStack)cur.stack=[];if(o.push)cur.stack.push(o.push);if(o.pop)cur.stack.pop();exSel.value=cur.ex;
   G=m;G.sel=-1;hl=null;nodeBox.hidden=true;G.posR=m.pos;G.posS=m.pos2;G.boundsR=m.bounds;G.boundsS=m.bounds2;
-  applyShape();recolour();rebuildEdges();if(!keepView)fit(view);
+  var ne=0,ni=0,nx=0;for(var i=0;i<G.n;i++){var x=G.expanded[i]&8;if(G.status[i]===2){if(x)ne++;else ni++;}if(!x&&G.status[i]!==1)nx++;}
+  G.nExactLoss=ne;G.nInexactLoss=ni;G.nInexact=nx;
+  applyShape();recolour();rebuildEdges();if(!o.keepView)fit(view);
   $('.at-title').textContent=cur.title;$('.at-note').innerHTML=cur.note||'';showStats();drawChart();crumbs();
   dirty=true;
 }
@@ -790,27 +830,28 @@ function crumbs(){
   var c=$('.at-crumbs');c.innerHTML='';
   if(cur.stack.length){var b=document.createElement('button');b.textContent='Back';b.onclick=back;c.appendChild(b);
     var s=document.createElement('span');s.className='at-panel';s.style.padding='4px 8px';s.textContent=cur.stack.map(function(x){return x.title;}).join(' > ')+' > '+cur.title;c.appendChild(s);}
+  resize();
 }
 function snapshot(){return {cards:cur.cards,title:cur.title,note:cur.note,base:cur.base,total:cur.total,line:cur.line,ex:cur.ex};}
-function loadDeal(o){cur.cards=o.cards;cur.title=o.title;cur.note=o.note||'';cur.base=o.base||0;cur.total=o.total||0;cur.line=o.line||null;cur.ex=o.ex||'';run(o);}
+function loadDeal(o){select(-1);run(o);}
 function loadSeed(seedText,ex){
   var t=String(seedText).replace(/[\s,]/g,'');if(!/^\d{1,20}$/.test(t)||BigInt(t)>MASK){message('A seed is a whole number from 0 to 18,446,744,073,709,551,615.');return;}
   var cards=dealFromSeed(t),e=ex||EXAMPLES.filter(function(x){return x.seed===t;})[0];
-  cur.stack=[];seedIn.value=t;exSel.value=e?e.k:'';
-  loadDeal({cards:cards,title:'Deal '+Number(t).toLocaleString('en-US')+(Number(t)>9007199254740991?'':''),note:e?e.note:'',total:e&&e.total,line:e&&e.line?parseLine(cards,e.line):null,ex:e?e.k:''});
+  seedIn.value=t;
+  loadDeal({cards:cards,title:'Deal '+BigInt(t).toLocaleString('en-US'),note:e?e.note:'',total:e&&e.total,line:e&&e.line?parseLine(cards,e.line):null,ex:e?e.k:'',resetStack:true});
 }
 function exploreFrom(i){
-  if(!G||i<0)return;cur.stack.push(snapshot());
-  loadDeal({cards:cardsOf(i),title:'After '+movesIn(i)+' moves',note:'The tree from the chosen position, with '+G.len[i]+' piles.',base:movesIn(i),total:0,line:null});
+  if(!G||i<0)return;
+  loadDeal({cards:cardsOf(i),title:'After '+movesIn(i)+' move'+(movesIn(i)===1?'':'s'),note:'The tree from the chosen position, with '+G.len[i]+' piles.',base:movesIn(i),total:0,line:null,ex:'',push:snapshot()});
 }
-function back(){var s=cur.stack.pop();if(!s)return;loadDeal(s);exSel.value=s.ex||'';}
+function back(){var s=cur.stack[cur.stack.length-1];if(!s)return;var o={};for(var k in s)o[k]=s[k];o.pop=true;loadDeal(o);}
 
 // ---------- controls ----------
 exSel.onchange=function(){var e=EXAMPLES.filter(function(x){return x.k===exSel.value;})[0];if(e)loadSeed(e.seed,e);};
 $('.at-go').onclick=function(){loadSeed(seedIn.value);};
 seedIn.addEventListener('keydown',function(e){if(e.key==='Enter')loadSeed(seedIn.value);});
 $('.at-rand').onclick=function(){loadSeed(String(Math.floor(Math.random()*1e12)));};
-sizeSel.onchange=function(){if(cur.cards)run({keepView:false});};
+sizeSel.onchange=function(){if(cur.cards)run(snapshot());};
 colorSel.onchange=function(){recolour();drawChart();};
 shapeSel.onchange=function(){applyShape();fit(view);};
 edgeSel.onchange=function(){rebuildEdges();if(G)showStats();};
@@ -818,21 +859,27 @@ glowIn.oninput=function(){dirty=true;};
 host.querySelectorAll('[data-view]').forEach(function(b){b.onclick=function(){fit(b.getAttribute('data-view'));};});
 $('.at-spin').onclick=function(){spin=!spin;this.classList.toggle('on',spin);};
 $('.at-fit').onclick=function(){fit(view);};
-$('.at-full').onclick=function(){if(document.fullscreenElement)document.exitFullscreen();else if(host.requestFullscreen)host.requestFullscreen();};
+var goFull=host.requestFullscreen||host.webkitRequestFullscreen,wasFull=false;
+if(!goFull)$('.at-full').hidden=true;
+$('.at-full').onclick=function(){if(fullNow())(document.exitFullscreen||document.webkitExitFullscreen).call(document);else if(goFull)goFull.call(host);};
 $('.at-help').onclick=function(){$('.at-helpbox').hidden=!$('.at-helpbox').hidden;};
 $('.at-helpclose').onclick=function(){$('.at-helpbox').hidden=true;};
 $('.at-close').onclick=function(){select(-1);};
 $('.at-explore').onclick=function(){if(G)exploreFrom(G.sel);};
-$('.at-title').onclick=function(){side.classList.toggle('at-folded');side.setAttribute('data-touched','1');};
+$('.at-title').onclick=function(){side.classList.toggle('at-folded');side.setAttribute('data-touched','1');drawChart();};
 $('.at-save').onclick=function(){savePicture((cur.title||'tree').replace(/[^A-Za-z0-9]+/g,'-').toLowerCase(),2);};
-document.addEventListener('fullscreenchange',function(){setTimeout(function(){resize();fit(view);drawChart();},50);});
+function fullChange(){var now=fullNow();if(now||wasFull)setTimeout(function(){resize();fit(view);drawChart();},50);wasFull=now;}
+document.addEventListener('fullscreenchange',fullChange);document.addEventListener('webkitfullscreenchange',fullChange);
 host.tabIndex=0;
 host.addEventListener('keydown',function(e){if(e.target.tagName==='INPUT'||e.target.tagName==='SELECT')return;
   if(e.key==='Escape')select(-1);else if(e.key===' '){spin=!spin;$('.at-spin').classList.toggle('on',spin);e.preventDefault();}else if(e.key==='r'||e.key==='R')fit(view);});
 function savePicture(name,scale){
-  if(!G)return;var w0=canvas.width,h0=canvas.height;scale=scale||2;
+  if(!G||lost)return;var w0=canvas.width,h0=canvas.height,vp=gl.getParameter(gl.MAX_VIEWPORT_DIMS);
+  var md=Math.min(gl.getParameter(gl.MAX_TEXTURE_SIZE),gl.getParameter(gl.MAX_RENDERBUFFER_SIZE),vp[0],vp[1]);
+  scale=Math.max(0.25,Math.min(scale||2,md/w0,md/h0,Math.sqrt(36e6/(w0*h0)))); // at most 36 million pixels
   canvas.width=Math.round(w0*scale);canvas.height=Math.round(h0*scale);saveScale=scale;draw();
-  canvas.toBlob(function(b){if(host.onsave)host.onsave(b,name+'.png');else{var a=document.createElement('a');a.href=URL.createObjectURL(b);a.download=name+'.png';document.body.appendChild(a);a.click();
+  canvas.toBlob(function(b){if(!b){message('Could not save the picture at this size; a smaller window may work.');return;}
+    if(host.onsave)host.onsave(b,name+'.png');else{var a=document.createElement('a');a.href=URL.createObjectURL(b);a.download=name+'.png';document.body.appendChild(a);a.click();
     setTimeout(function(){URL.revokeObjectURL(a.href);a.remove();},1000);}},'image/png');
   canvas.width=w0;canvas.height=h0;saveScale=1;dirty=true;
 }
@@ -843,11 +890,11 @@ host.accTree={load:function(o){if(o.size)sizeSel.value=String(o.size);if(o.shape
   save:savePicture,fit:fit,select:select,explore:exploreFrom,pick:pick,recolour:recolour,rebuildEdges:rebuildEdges,
   set parentWeight(v){layoutPW=v;},get graph(){return G;},get camera(){return cam;},set glowLevel(v){glowIn.value=String(v);dirty=true;},examples:EXAMPLES,dealFromSeed:dealFromSeed};
 
-// Start: from the address (?ex=, ?seed=, &size=, &view=, &color=, &edges=, &spin=1) on its own page, else the first lost example.
+// Start: from the address (?ex=, ?seed=, &size=, &view=, &shape=, &color=, &edges=, &spin=1) on its own page, else the easy example.
 var qs={};try{if(document.body.classList.contains('standalone'))location.search.slice(1).split('&').forEach(function(p){var kv=p.split('=');if(kv[0])qs[decodeURIComponent(kv[0])]=decodeURIComponent(kv[1]||'');});}catch(err){}
 if(qs.size&&SIZES.indexOf(+qs.size)>=0)sizeSel.value=qs.size;
 if(qs.color)colorSel.value=qs.color;if(qs.shape)shapeSel.value=qs.shape;if(qs.edges)edgeSel.value=qs.edges;if(qs.view)view=qs.view;if(qs.spin==='1'){spin=true;$('.at-spin').classList.add('on');}
-if(qs.seed)loadSeed(qs.seed);else{var ex0=EXAMPLES.filter(function(x){return x.k===(qs.ex||'e1');})[0]||EXAMPLES[0];loadSeed(ex0.seed,ex0);}
+if(qs.seed)loadSeed(qs.seed);else{var ex0=EXAMPLES.filter(function(x){return x.k===(qs.ex||'e185');})[0]||EXAMPLES[0];loadSeed(ex0.seed,ex0);}
 })();
 </script>
 <!-- end of acc-tree -->
