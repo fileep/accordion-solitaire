@@ -17,20 +17,24 @@ python game-tree/serve.py
 and open `http://127.0.0.1:8781/game-tree.html`. The server listens on this computer only; it also saves pictures sent
 to `/save/<name>.png` into `screenshots/full/`, which is how the pictures here were made.
 
-The address can choose what to show: `?ex=l202346720` (an example, by the key in the page's list), or `?seed=123`, with
-`&size=1000000` (any number of positions from 1,000 to 40 million, such as `2.5m`), `&view=top` (`3d`, `top`, `side`),
+The page keeps its controls few: examples, a seed box (Enter draws it), Random deal, the size, Play, 3D or Top, full
+screen and About. The address can choose more: `?ex=l202346720` (an example, by the key in the page's list, including
+those left out of the menu), or `?seed=123`, with `&size=1000000` (any number of positions from 1,000 to 40 million,
+such as `2.5m`), `&view=top` (`3d`, `top`, `side`), and three ways of drawing that have no control on the page:
 `&shape=spindle`, `&color=best` (`outcome`, `best`, `depth`) and `&edges=all` (`tree`, `all`, `none`).
 
 ## What it shows
 
-- **Colours**: green positions can still win and gold ones are won (one pile). Orange to dark red ones are lost with
+- **Colours**, with a key always at the bottom left: green positions can still win and gold ones are won (one pile).
+  Orange to dark red ones are lost with
   everything below them drawn: orange gets as close as the deal allows (2 piles if it can be won, else the deal's own
   best), dark red falls further short. Red ones are lost without the fewest piles worked out (the short searches below
   skip moves the dead-end test rules out), and blue-grey ones aren't settled either way. The positions that can win, and
   the moves between them, are drawn again on top so that the few winning lines in a hard deal stand out.
-- **Shape: rings** puts the deal at the centre (the top, in 3D) and each move one ring further out, each position near the
-  positions it comes from. **Shape: spindle** places each position by which cards are covered: each covered card pushes it
-  towards that card's place in the deal, so moves that don't interfere draw as parallelograms.
+- **Rings**: the deal is at the centre (the top, in 3D) and each move one ring further out, each position near the
+  positions it comes from. With `&shape=spindle` in the address, each position is placed by which cards are covered
+  instead: each covered card pushes it towards that card's place in the deal, so moves that don't interfere draw as
+  parallelograms.
 - **Small trees are complete.** The lost deals of the trillion run have between 2 and 22,066,800 positions; a tree that
   fits the chosen size (200,000, 1 million, 4 million, 40 million, or a number typed in) is drawn with every position and
   every move, and its counts are exact. Of the 721, 701 fit in 4 million and all of them in 40 million: the biggest,
@@ -63,6 +67,9 @@ The address can choose what to show: `?ex=l202346720` (an example, by the key in
   On its own page, or full screen, every touch and the wheel drive the tree.
 
 ## The examples
+
+The menu has eight: an easy deal (185), a hard one (3), a very hard one (56669828180) and five lost ones of 2 to
+19,386,305 positions. The others below load from the address with `?ex=`.
 
 - **Easy to win**: seed 185, the one of the first 300 deals whose short searches win most often (about 9 in 10 at 1
   million positions), and seed 0, the first deal.
