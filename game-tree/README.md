@@ -38,12 +38,17 @@ such as `2.5m`), `&view=top` (`3d`, `top`, `side`), and three ways of drawing th
 - **Small trees are complete.** The lost deals of the trillion run have between 2 and 22,066,800 positions; a tree that
   fits the chosen size (200,000, 1 million, 4 million, 40 million, or a number typed in) is drawn with every position and
   every move, and its counts are exact. Of the 721, 701 fit in 4 million and all of them in 40 million: the biggest,
-  22,066,800 positions joined by 134,505,640 moves, takes about 25 seconds and 1.5 GB.
+  22,066,800 positions joined by 134,505,640 moves, takes about 16 seconds and 1.7 GB.
 - **How 40 million fit.** A position keeps only the move that first reached it, the card that move covered, a few flags
   and two 32-bit hashes of its row of top cards; its cards are played again from the deal when they are needed. The
   hashes are of the row's pairs of neighbouring cards, so a move changes them in a few steps, and two different
   positions share both with odds of 1 in 2<sup>64</sup>: even among 40 million the odds that any two are mixed up are
-  under 1 in 10,000. A sample of 40 million positions of a deal that can be won takes about a minute and 2 GB.
+  under 1 in 10,000. A sample of 40 million positions of a deal that can be won takes about 45 seconds and 2 GB.
+- **Helpers.** For a tree of 250,000 positions or more, the engine's worker starts copies of itself, one fewer than the
+  processor's threads and at most 4. One lays out each depth while the search goes on, and the others find the moves
+  of the positions the search comes to next. The tree comes out the same, to the last bit, as without them; where
+  workers can't be made, or one fails, the rest is done without them. On a 16-thread laptop in Chrome they take the
+  biggest loss from 26 to 16 seconds, the 40 million sample from 61 to 43, and the default 1 million from 1.5 to 1.3.
 - **Known deals.** The page knows the 721 lost deals of seeds 0 to 999,999,999,999 and their numbers of positions, so
   every other seed in that range is known to be winnable and goes straight to a sample, and a lost one is drawn whole
   when it fits.

@@ -175,7 +175,7 @@ function workerMain(self){
     len=new Uint8Array(s);par=new Int32Array(s);pmv=new Uint8Array(s);cov=new Uint8Array(s);flag=new Uint8Array(s);hsh=new Int32Array(s);hs2=new Int32Array(s);
     tab=new Int32Array(1<<15);tmask=tab.length-1;tmax=(tab.length*0.7)|0;grow=0;N=0;NE=0;ES=null;ET=null;QB=null;
   }
-  function release(){len=par=pmv=cov=flag=hsh=hs2=tab=DT=null;ES=ET=QB=TH=RA=null;}
+  function release(){len=par=pmv=cov=flag=hsh=hs2=tab=DT=null;ES=ET=QB=TH=RA=null;RUNS=[];RFREE=[];OFREE=[];LFREE={};}
   // A depth laid out during the search, for the page to show while the rest is built.
   var TH=null,RA=null;
   function sendLayer(d,a,b){var P=new Float32Array(3*(b-a));for(var i=a,k=0;i<b;i++,k+=3){P[k]=RA[i]*Math.cos(TH[i]);P[k+1]=-d*0.8;P[k+2]=RA[i]*Math.sin(TH[i]);}
@@ -306,9 +306,133 @@ function workerMain(self){
         for(;;){var tv=T[2*s+1];if(tv===0)break;
           if(T[2*s]===ck&&samerow(cur,o,n,i,t,nxt,(tv-1-b)*m)){epush(tv-1);break;}
           s=(s+1)&tm;}}
-      ES[u+1]=NE;if((u&4095)===0)progress(false,u/N);}
+      ES[u+1-EO]=NE;if((u&4095)===0)progress(false,u/N);}
     sink|=acc;
   }
+  // For helpers, which are given the rows: the next depth's rows alone (here), and their table and filter (there).
+  function rowsOnly(cur,a,n,b,b2,nxt){for(var v=b,m=n-1;v<b2;v++)rowc(cur,(par[v]-a)*n,n,pmv[v],nxt,(v-b)*m);}
+  function keysBelow(nxt,m,b,b2,T,tm,F,fm){
+    for(var v=b;v<b2;v++){var no=(v-b)*m,hk=0;for(var j=0;j<m;j++)hk^=ZK[j<<6|nxt[no+j]];
+      F[hk&fm]|=(1<<(hk>>>27))|(1<<((hk>>>22)&31));var s=hk&tm;while(T[2*s+1])s=(s+1)&tm;T[2*s]=hk;T[2*s+1]=v+1;}
+  }
+  // Helpers: copies of this worker, made from this function's text, for a big build. The first lays out each depth as
+  // soon as its moves are known, while the search goes on here; the others work out the moves of the positions the
+  // search in order of depth comes to next, and then find a sample's moves between its positions, a depth each. Every
+  // number that comes out is worked out as without them, in the same order, so the tree is the same to the last bit.
+  // There are none where workers can't be made (an old browser, a build on the page itself, a page that forbids them).
+  // If they don't answer (5 s for the first word, 60 s for the next while they are waited for) or one fails, they are
+  // all stopped and what they had not done is done here. One not needed any more goes idle (SPARE), and all are
+  // stopped when the build ends (and with this worker, when the page stops it): in Chrome, stopping them just before a
+  // long stretch of work here could leave this worker stuck for good, memory and all, if the page stopped it then.
+  // HS: the helpers; HW: the step waiting for them, told of each answer (and of a failure, with HS null). The depths
+  // laid out by the first are a generation of them (GEN), whose angles and radii it keeps if LW (and sends to be shown
+  // if PV).
+  var HMAX=4,HMIN=250000,HS=null,HW=null,HT=0,CB=null,isHelper=false,EO=0,GEN=0,LW=false,PV=false,PB=false;
+  function startHelpers(k){
+    var hs=[],url=null,src='('+workerMain.toString()+')(self);',i;
+    try{if(self.newHelper)for(i=0;i<k;i++)hs.push(self.newHelper(src));
+      else{url=URL.createObjectURL(new Blob([src],{type:'text/javascript'}));for(i=0;i<k;i++)hs.push(new Worker(url));}}
+    catch(err){for(i=0;i<hs.length;i++)hs[i].terminate();hs=[];}
+    if(url)setTimeout(function(){URL.revokeObjectURL(url);},60000);
+    if(!hs.length)return;
+    HS=hs;hs.forEach(function(h){h.onmessage=function(ev){hear(h,ev.data);};
+      h.onerror=function(ev){if(ev&&ev.preventDefault)ev.preventDefault();lost();};h.postMessage({cmd:'ping'});});
+  }
+  // Helpers failed: the step waiting goes on without them, or, if they had the moves' chunks or were laying out the
+  // depths shown during the search (PB), it all starts again.
+  function lost(){stopHelpers();if((ETS&&!ETB)||PB)CB(null,'again');else if(HW)go(HW);}
+  var SPARE=[];function stopHelpers(){if(HS)for(var i=0;i<HS.length;i++)HS[i].terminate();HS=null;clearTimeout(HT);}
+  function retire(){if(HS)for(var i=0;i<HS.length;i++)SPARE.push(HS[i]);HS=null;clearTimeout(HT);}
+  function stopAll(){stopHelpers();for(var i=0;i<SPARE.length;i++)SPARE[i].terminate();SPARE=[];}
+  // Helpers not needed any more go idle until the build ends: all but the first (which lays out).
+  function fewer(){if(HS){for(var i=1;i<HS.length;i++)SPARE.push(HS[i]);HS.length=1;}}
+  function wait(f){HW=f;clearTimeout(HT);if(f)HT=setTimeout(lost,HS.every(function(x){return x.ok;})?60000:5000);}
+  function go(f,h,r){try{f(h,r);}catch(err){CB(null,err);}}
+  function hear(h,r){
+    if(!HS||HS.indexOf(h)<0)return;
+    if(r.pong)h.ok=1;
+    if(r.type==='layer')self.postMessage(r,[r.pos.buffer]);
+    if(r.mv!=null){RFREE.push(r.inp);if(RUNS.length&&RUNS[r.mv-RUNS[0].id])RUNS[r.mv-RUNS[0].id].r=r.o;}
+    if(r.free&&DT)for(var x in r.free)if(x!=='c'&&r.free[x]&&!(LFREE[x]&&LFREE[x].byteLength>=r.free[x].byteLength))LFREE[x]=r.free[x];
+    if(r.et&&ETS){for(var i=0;i<r.et.length;i++)ET[i]=r.et[i];ETB=true;}
+    if(HW){wait(HW);go(HW,h,r);}
+  }
+  // Sends depth d+1 (positions a0 to a0+n1-1) to be laid out from depth d (pa to a0-1): by its moves, those of
+  // position pa+i from ends[i] to ends[i+1]-1, or by the first parents alone if ends is null. The search lends the
+  // helper the chunks of its list of moves as each is full (cl, those new to it; ETS of them, given back if ETB),
+  // with a copy of the moves from tl on in tg; a sample's depth comes with its own chunks, numbered from 0. The first
+  // depth of a generation says how many positions it keeps (keep; none if 0). The arrays sent come back to be used
+  // again during the search (LFREE), so that they leave nothing to be collected.
+  var ETS=0,ETB=false,BID=0,LFREE={};
+  // n numbers in the array k (p, e or t) sent back, or a new one.
+  function lend(k,n){var F=LFREE[k];LFREE[k]=null;return new Int32Array(F&&F.byteLength>=4*n?F:new ArrayBuffer(4*Math.ceil(n*1.25)),0,n);}
+  function toLay(d,pa,a0,n1,ends,tg,keep,cl,tl){
+    var pr=lend('p',n1),tr=[pr.buffer],i;pr.set(par.subarray(a0,a0+n1));cl=cl||[];if(ends)tr.push(ends.buffer);if(tg)tr.push(tg.buffer);for(i=0;i<cl.length;i++)tr.push(cl[i].buffer);
+    HS[0].postMessage({cmd:'lay',g:GEN,d:d,pa:pa,a0:a0,n1:n1,ends:ends,tg:tg,tl:tl||0,ch:cl,pr:pr,fpw:q2w,pv:PV,keep:keep},tr);
+  }
+  // Depth d+1 (n1 positions from a0) sent to be laid out by the moves into it, from depth d (pa to a0-1).
+  function layBy(d,pa,a0,n1,keep){
+    var e1=ES[a0],f=e1>>>22,tl=Math.max(ES[pa],f<<22),cl=[],en=lend('e',a0-pa+1),tg=lend('t',e1-tl);while(ETS<f)cl.push(ET[ETS++]);
+    en.set(ES.subarray(pa,a0+1));if(e1>tl)tg.set(ET[f].subarray(tl&EM,(tl&EM)+e1-tl));toLay(d,pa,a0,n1,en,tg,keep,cl,tl);
+  }
+  // Asks for the angles and radii of the depths laid out (once they are done: n positions) and gives them to then(h,r),
+  // r.th null if none were kept, or r null if the helpers fail. The positions are worked out here, where the memory
+  // freed just before is collected.
+  function laidOut(then){HS[0].postMessage({cmd:'pos'});wait(function(h,r){if(HS&&!(r&&r.done))return;wait(null);then(h,HS?r:null);});}
+  // The k moves in s added to the list, as epush would add them one at a time.
+  function eadd(s,k){
+    for(var o=0;o<k;){var ch=NE>>>22,i=NE&EM,a=ET[ch],w=Math.min(k-o,EM+1-i);
+      if(!a)a=ET[ch]=new Int32Array(ch?EM+1:1024);while(i+w>a.length)a=ET[ch]=bigger(a,Math.min(EM+1,a.length*4));
+      a.set(s.subarray(o,o+w),i);NE+=w;o+=w;}
+  }
+  // A sample's moves found by helpers: each depth's rows are worked out here and sent, with the next depth's, to a
+  // free helper, which finds the moves between them as edgesHere does; the answers are put in order here and each
+  // depth is then sent to be laid out. The jobs out at once take at most about cap bytes (sz: each one's). done(ok):
+  // ok is false if the helpers failed.
+  function edgesHelped(ls,maxD,done){
+    var hs=HS.length>1?HS.slice(1):HS.slice(),d=0,md=0,cur=root.slice(),got=[],out=0,cap=Math.max(1<<26,16*N),sz=[];
+    GEN++;LW=true;PV=false;
+    function send(){
+      while(hs.length&&d<maxD){var a=ls[d],b=ls[d+1],b2=ls[d+2],n=n0-d,c2;sz[d]=(b-a)*(n+16)+(b2-b)*(n+15);if(out&&out+sz[d]>cap)break;
+        var nxt=new Uint8Array((b2-b)*(n-1));rowsOnly(cur,a,n,b,b2,nxt);c2=nxt.slice();out+=sz[d];
+        hs.pop().postMessage({cmd:'edges',d:d,a:a,b:b,b2:b2,n:n,cur:cur,nxt:c2},[cur.buffer,c2.buffer]);cur=nxt;d++;}
+    }
+    wait(function(h,r){
+      if(!HS){wait(null);cur=got=null;done(false);return;}
+      if(!r||r.edges==null)return;
+      hs.push(h);got[r.edges]=r;out-=sz[r.edges];
+      while(md<maxD&&got[md]){r=got[md];got[md]=null;var a=ls[md],b=ls[md+1],ne0=NE,u,E=r.ends;
+        for(u=0;u<r.et.length;u++)eadd(r.et[u],Math.min(EM+1,r.ne-(u<<22)));for(u=a;u<b;u++)ES[u+1]=ne0+E[u-a+1];toLay(md,a,b,ls[md+2]-b,E,null,N,r.et);md++;progress(false,b/N);}
+      if(md<maxD){send();return;}
+      wait(null);for(u=ls[maxD];u<N;u++)ES[u+1]=NE;cur=got=null;fewer();done(true);
+    });
+    send();
+  }
+  // A helper's jobs: the moves from one depth to the next (with a table at most 3/4 full), and a depth's layout (into
+  // its own TH and RA, as the search here lays out a whole tree, with its working arrays kept in HP; HDS: where each
+  // depth starts).
+  function doEdges(q){
+    var a=q.a,b=q.b,b2=q.b2,n=q.n,c=b2-b,ts=1024,fw=256;while(ts*3<c*4)ts*=2;while(fw*4<c)fw*=2;
+    var T=new Int32Array(2*ts),F=new Int32Array(fw);isHelper=true;zkeys();keysBelow(q.nxt,n-1,b,b2,T,ts-1,F,fw-1);
+    ES=new Int32Array(b-a+1);ET=[];NE=0;EO=a;movesFound(q.cur,a,b,n,q.nxt,T,ts-1,F,fw-1);
+    var E=ES,et=ET.slice(0,Math.ceil(NE/(EM+1)));ES=null;ET=[];self.postMessage({edges:q.d,ends:E,et:et,ne:NE},[E.buffer].concat(et.map(function(x){return x.buffer;})));
+  }
+  var HG=0,HDS=null,HK=false,HET=[],HP=null;
+  function doLay(q){
+    var a0=q.a0,e=a0+q.n1,i;
+    if(q.d===0){HG=q.g;HDS=[0,1];TH=RA=null;HK=q.keep>0;HET=[];}
+    if(q.tg)for(i=0;i<q.ch.length;i++)HET.push(q.ch[i]);if(q.tg)q.ch=HET;
+    if(!TH||TH.length<e){var gs=Math.max(e,q.keep,TH?2*TH.length:0);TH=TH?bigger(TH,gs):new Float32Array(gs);RA=RA?bigger(RA,gs):new Float32Array(gs);}
+    if(!HP||HP.idx.length<q.n1){var m=Math.ceil(q.n1*1.25);HP={cs:new Float64Array(m),sn:new Float64Array(m),idx:new Int32Array(m)};}
+    q2w=q.fpw;layLayer(q.d,q.pa,a0,q.n1,TH,RA,!!q.ends,q);HDS[q.d+2]=e;
+    if(q.pv)sendLayer(q.d+1,a0,e);
+    var f={p:q.pr.buffer,e:q.ends&&q.ends.buffer,t:q.tg&&q.tg.buffer},t=[f.p];if(f.e)t.push(f.e);if(f.t)t.push(f.t);
+    if(!q.tg&&q.ends){f.c=q.ch.map(function(x){return x.buffer;});t=t.concat(f.c);}self.postMessage({free:f},t);
+  }
+  function backET(){HP=null;self.postMessage({et:HET},HET.map(function(a){return a.buffer;}));HET=[];}
+  function donePos(){
+    if(HET.length)backET();HP=null;
+    var k=HK&&TH,r={done:1,g:HG,n:HDS?HDS[HDS.length-1]:0,th:k?TH:null,ra:k?RA:null};TH=RA=null;self.postMessage(r,k?[r.th.buffer,r.ra.buffer]:[]);}
   function rowc(b,o,n,mv,out,q){var i=mv>>1,j;for(j=0;j<i;j++)out[q+j]=b[o+j];out[q+i-((mv&1)?3:1)]=b[o+i];for(j=i+1;j<n;j++)out[q+j-1]=b[o+j];}
   // Every legal move from the row of n top cards at b[o]: a pile moves onto the pile 1 or 3 to its left if their top
   // cards share a suit or rank. The rows after the moves go into L.sc (52 bytes apart), the moves into L.cm and the
@@ -330,14 +454,14 @@ function workerMain(self){
     return out;
   }
   function progress(force,frac){
-    var t=now();if(!force&&t-lastPost<120)return;lastPost=t;
+    var t=now();if(isHelper||(!force&&t-lastPost<120))return;lastPost=t;
     self.postMessage({type:'progress',phase:phase,nodes:N,budget:budget,frac:frac==null?null:frac,ms:Math.round(t-t0)});
   }
   // The moves found, as a list per position (the positions in order): chunks of 4 million.
   function epush(c){var ch=NE>>>22,i=NE&EM,a=ET[ch];if(!a)a=ET[ch]=new Int32Array(ch?EM+1:1024);else if(i>=a.length)a=ET[ch]=bigger(a,Math.min(EM+1,a.length*4));a[i]=c;NE++;}
   // The search in order of depth. The rows of the positions not expanded yet wait in a queue, in the same order.
   function qput(b,o,n){
-    if(qw+n>QB.length){if(qr>=QB.length>>2){QB.copyWithin(0,qr,qw);qw-=qr;qr=0;}else QB=bigger(QB,QB.length*2);}
+    if(qw+n>QB.length){if(qr>=QB.length>>2){QB.copyWithin(0,qr,qw);qw-=qr;qs-=qr;qr=0;}else QB=bigger(QB,QB.length*2);}
     for(var k=0;k<n;k++)QB[qw+k]=b[o+k];qw+=n;
   }
   // The search works on a few positions at a time: their rows and moves first, then the first table slot of every
@@ -358,6 +482,45 @@ function workerMain(self){
       if(rec)epush(c);}
     if(rec){if(u+2>ES.length)ES=bigger(ES,Math.max(u+2,Math.min(ES.length*2,CAP+1)));ES[u+1]=NE;}
     flag[u]|=1;
+  }
+  // The search in order of depth with helpers (all but the first) working out the moves ahead: runs of RUNC positions
+  // are sent with their rows once all their rows are known, and each position is expanded here in order, as expand
+  // does, from its run's answer, so everything comes out the same. Positions no run was sent for (at the end of the
+  // queue) are expanded here as without helpers. RUNS: the runs sent, in order; sp, qs: the first position not sent
+  // and its row's place in the queue. A run's arrays (I, sent; O, answered) go back and forth to be used again (RFREE,
+  // OFREE), so that no memory is left to be collected.
+  var RUNS=[],RUNC=8192,RID=0,sp=0,qs=0,RFREE=[],OFREE=[];
+  function bufs(o){var t=[];for(var k in o)t.push(o[k].buffer);return t;}
+  function sendRuns(){
+    var mh=HS.length-1,c=RUNC,b,p;
+    while(RUNS.length<3*mh&&N-sp>=c){for(b=0,p=sp;p<sp+c;p++)b+=len[p];
+      var I=RFREE.pop()||{rows:new Uint8Array(52*c),lens:new Uint8Array(c),g1:new Int32Array(c),g2:new Int32Array(c)},O=OFREE.pop()||null;
+      I.rows.set(QB.subarray(qs,qs+b));I.lens.set(len.subarray(sp,sp+c));I.g1.set(hsh.subarray(sp,sp+c));I.g2.set(hs2.subarray(sp,sp+c));
+      HS[1+RID%mh].postMessage({cmd:'mv',id:RID,inp:I,out:O},O?bufs(I).concat(bufs(O)):bufs(I));
+      RUNS.push({id:RID++,s:sp,c:c,r:null,e:0});sp+=c;qs+=b;}
+  }
+  function expandH(u,k,e,r){
+    var n=len[u],m=n-1,A1=r.h1,A2=r.h2,AM=r.cm,AV=r.cv,sc=XS[0].sc,j,p,v,c,s,h,g;
+    for(j=0;j<k;j++,e++){h=A1[e];g=A2[e];s=Math.imul(h>>>dsh,dcm)>>>3;c=-1;
+      for(;;){p=3*s;v=DT[p+2];if(v===0)break;if(DT[p]===h&&DT[p+1]===g){c=v-1;break;}if(++s===dS)s=0;}
+      if(c<0){H1=h;H2=g;c=insertd(-1-s,m,u,AM[e],AV[e]);rowc(QB,qr,n,AM[e],sc,0);qput(sc,0,m);}
+      if(c>=topMark)flag[u]|=16;
+      if(rec)epush(c);}
+    qr+=n;
+    if(rec){if(u+2>ES.length)ES=bigger(ES,Math.max(u+2,Math.min(ES.length*2,CAP+1)));ES[u+1]=NE;}
+    flag[u]|=1;
+  }
+  // A helper's job: the moves of a run of positions, with both hashes of each move's row (into the arrays O sent back
+  // with it, if they are big enough).
+  function doMoves(q){
+    var I=q.inp,rows=I.rows,ln=I.lens,c=ln.length,O=q.out,L=XS[0],o=0,e=0,t=0,p,j,k,n;
+    for(p=0;p<c;p++)t+=2*ln[p];
+    if(!O||O.h1.length<t)O={k:new Uint8Array(c),h1:new Int32Array(t),h2:new Int32Array(t),cm:new Uint8Array(t),cv:new Uint8Array(t)};
+    var K=O.k,O1=O.h1,O2=O.h2,OM=O.cm,OV=O.cv;
+    for(p=0;p<c;p++){n=ln[p];k=moves(rows,o,n,L,I.g1[p]);var gp=I.g2[p];
+      for(j=0;j<k;j++,e++){var mv=L.cm[j];O1[e]=L.h1[j];O2[e]=gp^dh(rows,o,n,mv,1);OM[e]=mv;OV[e]=L.cv[j];}
+      K[p]=k;o+=n;}
+    self.postMessage({mv:q.id,o:O,inp:I},bufs(O).concat(bufs(I)));
   }
   // Keeps the first K positions (the search went in order of depth). One with a move to a later one is no longer
   // fully expanded.
@@ -468,8 +631,8 @@ function workerMain(self){
     }
     return path;
   }
-  function build(q){
-    t0=now();lastPost=0;times=[];budget=Math.max(16,q.budget|0);CAP=budget+4096;rng=(q.rng>>>0)||0x2545F491;q2w=q.parentWeight||0;reset();
+  function build(q,cb){
+    t0=now();lastPost=0;times=[];budget=Math.max(16,q.budget|0);CAP=budget+4096;rng=(q.rng>>>0)||0x2545F491;q2w=q.parentWeight||0;reset();CB=cb;
     root=new Uint8Array(q.cards);n0=root.length;hashes(root,0,n0);insert(find(n0),n0,-1,0,0);
     var E=q.endPiles||15,top=Math.max(1,Math.floor(budget*(q.top||0.15))),total=q.total||0;
     // Every position in order of depth, as far as the size allows: the whole tree if it fits. A tree of unknown size is
@@ -477,21 +640,53 @@ function workerMain(self){
     var cap1=total?(total<=budget?budget+1:top):q.bound&&q.bound<=budget?budget+1:Math.max(top,Math.min(budget,q.fullTry||4000000));
     var limit=t0+(q.timeLimit||Math.max(120000,budget/50)),u=0;
     QB=new Uint8Array(1<<20);qr=0;qw=0;qput(root,0,n0);rec=!(total>budget);topMark=top;ES=new Int32Array(1024);ET=[];NE=0;
+    // Helpers for a build of HMIN positions or more, as many as the processor has threads to spare, up to HMAX.
+    // A whole tree (or one of unknown size) gets them only if there are 3 or more: with 1 or 2 its peak memory grows
+    // by 15% or more for little or no gain. Samples gain from even 1.
+    var whole=total&&total<=budget,est=whole?total:(q.bound&&q.bound<=budget?q.bound:budget),k=0;
+    if(q.helpers!==0&&typeof document==='undefined'&&(self.newHelper||typeof Worker!=='undefined')&&(q.helpers>0||est>=HMIN))
+      k=q.helpers>0?q.helpers:Math.min(HMAX,((typeof navigator!=='undefined'&&navigator.hardwareConcurrency)||2)-1);
+    if(rec&&k<3&&!(q.helpers>0))k=0;
+    if(k>0)startHelpers(k);
     setPhase('Searching every position');
     // Depth d is the positions a..b-1. Once the search has expanded all of them, depth d+1 (b to N-1) is complete with
-    // every move into it, so it is laid out at once (and sent to the page to show, if asked for).
+    // every move into it, so it is laid out at once (and sent to the page to show, if asked for): by a helper if there
+    // is one (and here then only if it fails), while the search goes on here, which stops at each big depth to pass on
+    // what it has sent back to show. A sample's depths are laid out here only to be shown.
     // Each depth's table is sized from how much the last depth grew.
-    var la=0,lb=1,ld=0,dc=1;TH=new Float32Array(Math.min(CAP,1<<16));RA=new Float32Array(TH.length);newDT(64);
+    var bid=++BID,la=0,lb=1,ld=0,dc=1,LH=!!HS,shown=false,keep=rec?Math.min(CAP,total||cap1):0;PV=!!q.preview;GEN++;LW=LH&&rec;RUNS=[];RFREE=[];OFREE=[];RID=sp=qs=ETS=0;ETB=false;LFREE={};
+    if(!LH){TH=new Float32Array(Math.min(CAP,1<<16));RA=new Float32Array(TH.length);}
+    newDT(64);
     if(q.preview)self.postMessage({type:'layer',depth:0,start:0,pos:new Float32Array(3)});
-    while(u<N&&N<cap1){
-      if(u===lb){if(N>TH.length){var gs=Math.min(CAP,Math.max(N,TH.length*2));TH=bigger(TH,gs);RA=bigger(RA,gs);}
-        layLayer(ld,la,lb,N-lb,TH,RA,rec);if(q.preview)sendLayer(ld+1,lb,N);
-        var c0=N-lb;newDT(c0*Math.min(8,Math.max(0.25,c0/dc))*1.05);dc=c0;la=lb;lb=N;ld++;}
-      var nb=1;while(nb<XNB&&u+nb<lb)nb++;
-      ahead(u,nb);
-      for(var xb=0;xb<nb&&N<cap1;xb++){expand(u,XS[xb],XK[xb]);u++;if((u&1023)===0)progress(false);}}
-    DT=null;if(!(u>=N&&rec))TH=RA=null;
-    var complete=u>=N,dives=0,linePath=null,playPath=null,focus=-1,runs={tried:0,won:0,groups:0};QB=null;
+    PB=LH&&PV;bfs();
+    function bfs(){
+      while(u<N&&N<cap1){
+        if(u===lb){
+          if(!LH){if(rec||q.preview){if(N>TH.length){var gs=Math.min(CAP,Math.max(N,TH.length*2));TH=bigger(TH,gs);RA=bigger(RA,gs);}
+            layLayer(ld,la,lb,N-lb,TH,RA,rec);if(q.preview)sendLayer(ld+1,lb,N);}}
+          else if(HS&&rec)layBy(ld,la,lb,N-lb,keep);
+          else if(HS&&PV)toLay(ld,la,lb,N-lb,null,null,0);
+          var c0=N-lb;newDT(c0*Math.min(8,Math.max(0.25,c0/dc))*1.05);dc=c0;la=lb;lb=N;ld++;
+          if(HS&&HS.length<2&&PV&&c0>=65536){setTimeout(function(){if(bid===BID)go(bfs);},0);return;}}
+        var nb=1,xb,R=null;
+        if(HS&&HS.length>1){sendRuns();R=RUNS[0];}else if(RUNS.length){RUNS=[];sp=u;qs=qr;}
+        if(R&&u>=R.s){
+          if(!R.r){wait(function(){if(!HS||R.r){wait(null);go(bfs);}});return;}
+          var e=R.e,K=R.r.k,A1=R.r.h1,t=0,j,x;while(nb<XNB&&u+nb<lb&&u+nb<R.s+R.c)nb++;
+          for(xb=0,x=e;xb<nb;xb++)for(j=K[u+xb-R.s];j>0;j--,x++)t^=DT[3*(Math.imul(A1[x]>>>dsh,dcm)>>>3)+2];TQ^=t;
+          for(xb=0;xb<nb&&N<cap1;xb++){var kk=K[u-R.s];expandH(u,kk,e,R.r);e+=kk;u++;if((u&1023)===0)progress(false);}
+          R.e=e;if(u>=R.s+R.c)OFREE.push(RUNS.shift().r);continue;}
+        while(nb<XNB&&u+nb<lb&&(!R||u+nb<R.s))nb++;
+        ahead(u,nb);
+        for(xb=0;xb<nb&&N<cap1;xb++){expand(u,XS[xb],XK[xb]);u++;if((u&1023)===0)progress(false);}
+        if(sp<u){sp=u;qs=qr;}}
+      DT=null;PB=false;RUNS=[];RFREE=[];OFREE=[];LFREE={};if(!(u>=N&&rec)){TH=RA=null;LW=false;ETS=0;}
+      rest();
+    }
+    // A sample's depths sent to be shown are shown before the searches below (and the helper's angles let go).
+    function rest(){
+      if(HS&&LH&&!shown&&!(u>=N&&rec)){shown=true;laidOut(rest);return;}
+    var complete=u>=N,dives=0,linePath=null,playPath=null,focus=-1,runs={tried:0,won:0,groups:0};QB=null;if(complete&&rec)fewer();
     if(!complete){
       ES=null;ET=[];NE=0;rec=false;
       if(N>top)truncate(top);
@@ -513,11 +708,12 @@ function workerMain(self){
       dives=runs.tried;
     }
     // A whole tree found while its moves weren't being kept (it was thought too big) has them found in finish.
-    return finish(complete,complete&&rec,dives,runs.won,linePath,playPath,q);
+    finish(complete,complete&&rec,dives,runs.won,linePath,playPath,q,cb);
+    }
   }
   // Which positions can still win, the fewest piles each can reach, and how many lines win: from the bottom up.
-  function finish(complete,haveMoves,dives,divesWon,linePath,playPath,q){
-    var i,u,e,c,d,k,a,b,n,m;
+  function finish(complete,haveMoves,dives,divesWon,linePath,playPath,q,cb){
+    var i,u,e,c,d,k,a,b,n,m,asked=false;
     tab=hsh=hs2=null; // the moves are found again with each depth's rows and keys of their own
     var D=new Uint8Array(N),maxD=0;for(i=0;i<N;i++){D[i]=n0-len[i];if(D[i]>maxD)maxD=D[i];}
     var ls=new Int32Array(maxD+2);for(i=0;i<N;i++)ls[D[i]+1]++;for(d=0;d<=maxD;d++)ls[d+1]+=ls[d];
@@ -541,10 +737,16 @@ function workerMain(self){
       // The moves of a sample (or of a whole tree found without them): every move from a drawn position to another.
       setPhase('Finding the moves between positions');
       ES=new Int32Array(N+1);ET=[];NE=0;
+      if(HS&&HS.length>1&&maxD>0){edgesHelped(ls,maxD,function(ok){if(!ok){ES=new Int32Array(N+1);ET=[];NE=0;edgesHere();}status();});return;}
+      edgesHere();
+    }
+    status();
+    function edgesHere(){
       // Each depth's moves can only reach the next depth, so a small table of that depth's positions does, and it
       // stays in the processor's cache far better than the whole tree's. The next depth's rows are written out first,
       // with a key of each; a key found is checked against the row itself, so no two positions are ever mixed up here.
-      zkeys();var cur=root.slice(),nxt=null,big=0,whole,T;
+      // A single helper lays out each depth meanwhile, as soon as its moves are found.
+      zkeys();var cur=root.slice(),nxt=null,big=0,whole,T,lh=!!HS;if(lh){GEN++;LW=true;PV=false;ETS=0;ETB=false;}
       for(d=1;d<=maxD;d++)big=Math.max(big,ls[d+1]-ls[d]);
       var ts=1024;while(ts<big*2)ts*=2;whole=new Int32Array(2*ts);var fw=256;while(fw*4<big)fw*=2;var fwhole=new Int32Array(fw),F;
       for(d=0;d<=maxD;d++){
@@ -553,11 +755,14 @@ function workerMain(self){
         var b2=ls[d+2];ts=1024;while(ts<(b2-b)*2)ts*=2;T=whole.subarray(0,2*ts);T.fill(0);
         fw=256;while(fw*4<b2-b)fw*=2;F=fwhole.subarray(0,fw);F.fill(0);
         nxt=new Uint8Array((b2-b)*m);rowsBelow(cur,a,n,b,b2,nxt,T,ts-1,F,fw-1);
-        movesFound(cur,a,b,n,nxt,T,ts-1,F,fw-1);
+        movesFound(cur,a,b,n,nxt,T,ts-1,F,fw-1);if(lh&&HS)layBy(d,a,b,b2-b,N);
         cur=nxt;
       }
       cur=nxt=whole=T=fwhole=F=null;
     }
+    // The chunks of moves lent to the helper that lays out come back first.
+    function status(){
+    if(HS&&LW&&ETS&&!ETB){if(!asked){asked=true;HS[0].postMessage({cmd:'et'});}wait(function(){if(ETB){wait(null);go(status);}});return;}
     setPhase('Working out which positions win');progress(true,0);
     // exact: everything below the position is drawn, so its fewest piles and its counts of lines are exact (bit 8 of
     // ex, beside the flags kept for drawing). In the same pass, from the bottom up: the line shown down from each
@@ -604,16 +809,19 @@ function workerMain(self){
       W=LN=rk=null;
     }
     XL=null;
-    // A whole tree was laid out depth by depth as the search went (the same layout, from the same moves).
+    // The angles and radii laid out by a helper (as the search went, or as the moves were found) are waited for, unless
+    // it fails; else a whole tree was laid out depth by depth as the search went (the same layout, from the same moves).
+    if(HS&&LW){setPhase('Laying out');progress(true,0);
+      laidOut(function(h,r){if(!r||r.g!==GEN||!r.th||r.n!==N){layHere();return;}retire();layHere(r.th,r.ra);});return;}
+    layHere();
+    function layHere(t,r){
     var th,ra;
-    if(complete&&haveMoves&&TH&&TH.length>=N){th=TH;ra=RA;}
+    if(t){th=t;ra=r;}else if(complete&&haveMoves&&TH&&TH.length>=N){th=TH;ra=RA;}
     else{setPhase('Laying out');progress(true,0);th=new Float32Array(N);ra=new Float32Array(N);
       for(d=0;d<maxD;d++){var a0=ls[d+1],n1=ls[d+2]-a0;if(n1>0)layLayer(d,ls[d],a0,n1,th,ra,true);progress(false,d/maxD);}}
-    TH=RA=null;
-    var H=0.8,pos=new Float32Array(3*N),bx=[Infinity,-Infinity,Infinity,-Infinity,Infinity,-Infinity];
-    for(i=0;i<N;i++){var px=ra[i]*Math.cos(th[i]),py=-D[i]*H,pz=ra[i]*Math.sin(th[i]);pos[3*i]=px;pos[3*i+1]=py;pos[3*i+2]=pz;
-      if(px<bx[0])bx[0]=px;if(px>bx[1])bx[1]=px;if(py<bx[2])bx[2]=py;if(py>bx[3])bx[3]=py;if(pz<bx[4])bx[4]=pz;if(pz>bx[5])bx[5]=pz;}
-    th=ra=null;
+    TH=RA=null;var r=layout(th,ra,ls,maxD,N);th=ra=null;send(r.pos,r.bx);
+    }
+    function send(pos,bx){
     function sub(x){return x.length===N?x:x.subarray(0,N);}
     // The moves: position u's go from es[u] to es[u+1], and move e is et[e>>>22][e&4194303].
     var es=ES.length===N+1?ES:ES.subarray(0,N+1),et=ET.slice(0,Math.ceil(NE/(EM+1)));
@@ -625,48 +833,69 @@ function workerMain(self){
     if(msg.playPath)tr.push(msg.playPath.buffer);
     if(wl){if(wl.ids)tr.push(wl.ids.buffer);tr.push(wl.w.buffer,wl.l.buffer);}
     if(msg.linePath)tr.push(msg.linePath.buffer);
-    return {msg:msg,transfer:tr};
+    cb({msg:msg,transfer:tr});
+    }
+    }
+  }
+  // The positions (and their bounds) of the n positions laid out in th and ra, depth d from ls[d] to ls[d+1]-1.
+  function layout(th,ra,ls,maxD,n){
+    var H=0.8,pos=new Float32Array(3*n),bx=[Infinity,-Infinity,Infinity,-Infinity,Infinity,-Infinity],d,i;
+    for(d=0;d<=maxD;d++)for(i=ls[d];i<ls[d+1];i++){var px=ra[i]*Math.cos(th[i]),py=-d*H,pz=ra[i]*Math.sin(th[i]);pos[3*i]=px;pos[3*i+1]=py;pos[3*i+2]=pz;
+      if(px<bx[0])bx[0]=px;if(px>bx[1])bx[1]=px;if(py<bx[2])bx[2]=py;if(py>bx[3])bx[3]=py;if(pz<bx[4])bx[4]=pz;if(pz>bx[5])bx[5]=pz;}
+    return {pos:pos,bx:bx};
   }
   // Layout: a ring for each move made, the deal at the centre; each position near the weighted mean angle of the
   // positions it comes from, spread apart along its ring. Lays out depth d+1 (numbers a0 to a0+n1-1) from depth d (pa to
   // a0-1): by every move between them if they are known (the first parent counts four times, which keeps the lines
   // drawn short), else by the first parent alone (a preview of a sample).
-  function layLayer(d,pa,a0,n1,th,ra,byMoves){
-    var TAU=Math.PI*2,S=1,MIN=0.11,FPW=q2w||4,u,e,c,k,cs=new Float64Array(n1),sn=new Float64Array(n1);
-    if(byMoves){for(u=pa;u<a0;u++){var cu=Math.cos(th[u]),su=Math.sin(th[u]);
+  // A helper's job J gives the moves (see toLay) and the first parents of depth d+1 (pr).
+  function layLayer(d,pa,a0,n1,th,ra,byMoves,J){
+    var TAU=Math.PI*2,S=1,MIN=0.11,FPW=q2w||4,u,e,c,k,cs=J?HP.cs.subarray(0,n1).fill(0):new Float64Array(n1),sn=J?HP.sn.subarray(0,n1).fill(0):new Float64Array(n1);
+    if(J){var pr=J.pr,es=J.ends,A=null,lo=0,hi=0;
+      if(byMoves){for(u=pa;u<a0;u++){var cj=Math.cos(th[u]),sj=Math.sin(th[u]);
+        for(e=es[u-pa];e<es[u-pa+1];e++){if(e>=hi){if((e>>>22)<J.ch.length){A=J.ch[e>>>22];lo=e-(e&EM);hi=lo+EM+1;}else{A=J.tg;lo=J.tl;hi=Infinity;}}
+          c=A[e-lo]-a0;var wj=pr[c]===u?FPW:1;cs[c]+=wj*cj;sn[c]+=wj*sj;}}}
+      else for(k=0;k<n1;k++){var pj=pr[k];cs[k]=Math.cos(th[pj]);sn[k]=Math.sin(th[pj]);}}
+    else if(byMoves){for(u=pa;u<a0;u++){var cu=Math.cos(th[u]),su=Math.sin(th[u]);
       for(e=ES[u];e<ES[u+1];e++){c=ET[e>>>22][e&EM];var wv=par[c]===u?FPW:1;cs[c-a0]+=wv*cu;sn[c-a0]+=wv*su;}}}
     else for(k=0;k<n1;k++){var pp=par[a0+k];cs[k]=Math.cos(th[pp]);sn[k]=Math.sin(th[pp]);}
     // In order of angle, ties in order of number: angle and number packed into one float for the browser's own sort.
-    var bits=Math.max(1,Math.ceil(Math.log2(n1+1))),P=Math.pow(2,bits),sc3=Math.pow(2,52-bits)/TAU,key=new Float64Array(n1),pk=new Float64Array(n1);
+    // The angles go where cs was and the packed numbers where sn was, each read before it is written over.
+    var bits=Math.max(1,Math.ceil(Math.log2(n1+1))),P=Math.pow(2,bits),sc3=Math.pow(2,52-bits)/TAU,key=cs,pk=sn;
     for(k=0;k<n1;k++){var t=Math.atan2(sn[k],cs[k]);if(t<0)t+=TAU;key[k]=t;pk[k]=Math.floor(t*sc3)*P+k;}
-    cs=sn=null;pk.sort();
-    var idx=new Int32Array(n1);for(k=0;k<n1;k++){var pv=pk[k];idx[k]=pv-Math.floor(pv/P)*P;}
-    pk=null;placeRing(idx,n1,(d+1)*S,S,MIN,key,th,ra,TAU,a0);
+    pk.sort();
+    var idx=J?HP.idx.subarray(0,n1):new Int32Array(n1);for(k=0;k<n1;k++){var pv=pk[k];idx[k]=pv-Math.floor(pv/P)*P;}
+    placeRing(idx,n1,(d+1)*S,S,MIN,key,th,ra,TAU,a0,pk);
   }
   // Spreads a ring's positions (idx, in order of their angles key) at least MIN apart, in lanes where it is crowded.
-  function placeRing(idx,n,R,S,MIN,key,th,ra,TAU,a0){
-    var k;
+  // kk: room for n numbers, whatever it holds; key's room is used once the angles are in kk.
+  function placeRing(idx,n,R,S,MIN,key,th,ra,TAU,a0,kk){
+    var k,j,x;
     if(n===1){th[a0+idx[0]]=key[idx[0]];ra[a0+idx[0]]=R;return;}
     var gi=n-1,gmax=key[idx[0]]+TAU-key[idx[n-1]];
     for(k=0;k<n-1;k++){var g=key[idx[k+1]]-key[idx[k]];if(g>gmax){gmax=g;gi=k;}}
-    var seq=new Int32Array(n),kk=new Float64Array(n),p=new Float64Array(n),q2=new Float64Array(n);
-    for(k=0;k<n;k++){var j=gi+1+k,o=0;if(j>=n){j-=n;o=TAU;}seq[k]=idx[j];kk[k]=key[idx[j]]+o;}
-    var delta=MIN/R,even=TAU/n,arc;
+    for(k=0;k<n;k++){j=gi+1+k;var o=0;if(j>=n){j-=n;o=TAU;}kk[k]=key[idx[j]]+o;}
+    var p=key,delta=MIN/R,even=TAU/n,arc;
     if(n*delta>=TAU*0.98){var sum=0;for(k=0;k<n;k++)sum+=kk[k]-k*even;var base=sum/n;for(k=0;k<n;k++)p[k]=base+k*even;arc=even*R;}
     else{p[0]=kk[0];for(k=1;k<n;k++)p[k]=Math.max(kk[k],p[k-1]+delta);
-      q2[n-1]=kk[n-1];for(k=n-2;k>=0;k--)q2[k]=Math.min(kk[k],q2[k+1]-delta);
-      for(k=0;k<n;k++)p[k]=(p[k]+q2[k])/2;arc=delta*R;}
+      x=kk[n-1];p[n-1]=(p[n-1]+x)/2;for(k=n-2;k>=0;k--){x=Math.min(kk[k],x-delta);p[k]=(p[k]+x)/2;}arc=delta*R;}
     var lanes=arc<MIN?Math.min(9,Math.ceil(MIN/arc)):1;
-    for(k=0;k<n;k++){var v=a0+seq[k];th[v]=p[k];ra[v]=R+(lanes>1?((k%lanes)-(lanes-1)/2)*(0.78*S/lanes):0);}
+    for(k=0;k<n;k++){j=gi+1+k;if(j>=n)j-=n;var v=a0+idx[j];th[v]=p[k];ra[v]=R+(lanes>1?((k%lanes)-(lanes-1)/2)*(0.78*S/lanes):0);}
   }
   self.onmessage=function(ev){
     var q=ev.data;
     if(q&&q.cmd==='build'){
-      var out=null,fail=null;
-      try{out=build(q);}catch(err){fail=String(err&&err.message||err);}
-      release();
-      if(out)self.postMessage(out.msg,out.transfer);else self.postMessage({type:'error',message:fail});
+      var sent=false,reply=function(out,err){if(sent)return;stopAll();HW=null;release();
+        if(err==='again'){q.helpers=0;try{build(q,reply);}catch(e){reply(null,e);}return;}sent=true;
+        if(out)self.postMessage(out.msg,out.transfer);else self.postMessage({type:'error',message:String(err&&err.message||err)});};
+      try{build(q,reply);}catch(err){reply(null,err);}
     }
+    else if(q&&q.cmd==='ping')self.postMessage({pong:1});
+    else if(q&&q.cmd==='lay')doLay(q);
+    else if(q&&q.cmd==='edges')doEdges(q);
+    else if(q&&q.cmd==='pos')donePos();
+    else if(q&&q.cmd==='et')backET();
+    else if(q&&q.cmd==='mv')doMoves(q);
   };
 }
 // </engine>
