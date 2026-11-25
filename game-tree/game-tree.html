@@ -848,7 +848,10 @@ function workerMain(self){
   // Layout: a ring for each move made, the deal at the centre; each position near the weighted mean angle of the
   // positions it comes from, spread apart along its ring. Lays out depth d+1 (numbers a0 to a0+n1-1) from depth d (pa to
   // a0-1): by every move between them if they are known (the first parent counts four times, which keeps the lines
-  // drawn short), else by the first parent alone (a preview of a sample).
+  // drawn short), else by the first parent alone (a preview of a sample). The other parents pull a position at most
+  // PULL along its ring from its first parent, whose move is the line drawn: one reached from far-apart places, as the
+  // last positions of a game often are, would else be drawn between them, far from all of them. The deal's moves go
+  // evenly round the first ring (the deal, at the centre, has no angle of its own), so the rings below start full.
   // A helper's job J gives the moves (see toLay) and the first parents of depth d+1 (pr).
   function layLayer(d,pa,a0,n1,th,ra,byMoves,J){
     var TAU=Math.PI*2,S=1,MIN=0.11,FPW=q2w||4,u,e,c,k,cs=J?HP.cs.subarray(0,n1).fill(0):new Float64Array(n1),sn=J?HP.sn.subarray(0,n1).fill(0):new Float64Array(n1);
@@ -862,13 +865,25 @@ function workerMain(self){
     else for(k=0;k<n1;k++){var pp=par[a0+k];cs[k]=Math.cos(th[pp]);sn[k]=Math.sin(th[pp]);}
     // In order of angle, ties in order of number: angle and number packed into one float for the browser's own sort.
     // The angles go where cs was and the packed numbers where sn was, each read before it is written over.
+    // Math.floor(y+0.5) stands for Math.round(y), which made this loop slower.
     var bits=Math.max(1,Math.ceil(Math.log2(n1+1))),P=Math.pow(2,bits),sc3=Math.pow(2,52-bits)/TAU,key=cs,pk=sn;
-    for(k=0;k<n1;k++){var t=Math.atan2(sn[k],cs[k]);if(t<0)t+=TAU;key[k]=t;pk[k]=Math.floor(t*sc3)*P+k;}
+    var PULL=2,PL=PULL/((d+1)*S),IT=1/TAU,FP=J?J.pr:par,fo=J?0:a0,cl=byMoves&&d>0;
+    for(k=0;k<n1;k++){var t=Math.atan2(sn[k],cs[k]);
+      if(cl){var f=th[FP[k+fo]],x=t-f;x-=TAU*Math.floor(x*IT+0.5);
+        if(x>PL||x<-PL){t=f+(x>0?PL:-PL);t-=TAU*Math.floor(t*IT);}}
+      else if(d===0)t=k*TAU/n1;
+      if(t<0)t+=TAU;key[k]=t;pk[k]=Math.floor(t*sc3)*P+k;}
     pk.sort();
     var idx=J?HP.idx.subarray(0,n1):new Int32Array(n1);for(k=0;k<n1;k++){var pv=pk[k];idx[k]=pv-Math.floor(pv/P)*P;}
     placeRing(idx,n1,(d+1)*S,S,MIN,key,th,ra,TAU,a0,pk);
   }
   // Spreads a ring's positions (idx, in order of their angles key) at least MIN apart, in lanes where it is crowded.
+  // On a ring too crowded for that, each goes a quarter of the way (a) from its angle to where even spacing in their
+  // order would put it, so they are at least a quarter of that spacing apart. Even spacing alone fills the ring, but
+  // where the angles bunch up it moves positions far round the ring, and the lines into them with them; this way the
+  // positions mostly stay near those they come from, and a ring that starts out uneven fills up over the next few
+  // moves. Dots in a lane can then be closer than MIN: spacing them further apart would stretch a ring that follows
+  // a bunched one all at once.
   // kk: room for n numbers, whatever it holds; key's room is used once the angles are in kk.
   function placeRing(idx,n,R,S,MIN,key,th,ra,TAU,a0,kk){
     var k,j,x;
@@ -877,7 +892,8 @@ function workerMain(self){
     for(k=0;k<n-1;k++){var g=key[idx[k+1]]-key[idx[k]];if(g>gmax){gmax=g;gi=k;}}
     for(k=0;k<n;k++){j=gi+1+k;var o=0;if(j>=n){j-=n;o=TAU;}kk[k]=key[idx[j]]+o;}
     var p=key,delta=MIN/R,even=TAU/n,arc;
-    if(n*delta>=TAU*0.98){var sum=0;for(k=0;k<n;k++)sum+=kk[k]-k*even;var base=sum/n;for(k=0;k<n;k++)p[k]=base+k*even;arc=even*R;}
+    if(n*delta>=TAU*0.98){var sum=0,a=0.25;for(k=0;k<n;k++)sum+=kk[k]-k*even;
+      var base=sum/n;for(k=0;k<n;k++)p[k]=(1-a)*kk[k]+a*(base+k*even);arc=a*even*R;}
     else{p[0]=kk[0];for(k=1;k<n;k++)p[k]=Math.max(kk[k],p[k-1]+delta);
       x=kk[n-1];p[n-1]=(p[n-1]+x)/2;for(k=n-2;k>=0;k--){x=Math.min(kk[k],x-delta);p[k]=(p[k]+x)/2;}arc=delta*R;}
     var lanes=arc<MIN?Math.min(9,Math.ceil(MIN/arc)):1;
@@ -1014,28 +1030,57 @@ var FS_T='#ifdef GL_FRAGMENT_PRECISION_HIGH\nprecision highp float;\n#else\nprec
   'uniform sampler2D t;uniform float k;uniform vec3 bg;varying vec2 uv;void main(){vec4 s=texture2D(t,uv);float a=max(s.a,0.0);vec3 avg=s.rgb/max(a,1e-4);'+
   'float i=1.0-exp(-k*a);float hot=clamp((k*a-8.0)/60.0,0.0,0.25);gl_FragColor=vec4(mix(bg,mix(avg,vec3(1.0),hot),i),1.0);}';
 var progP,progL,progH,progLH,progT,bufPos,bufCol,bufIdx,bufHPos,bufHCol,bufQuad,bufWinE,bufWinP,bufMask,maskOn=false,hdrFmt,hdrTex,hdrFb,hdrW,hdrH,lost=false;
+// Every dot and line of a big tree takes the graphics card long to draw (most of a second for 22 million positions
+// on a laptop's own graphics), so while the view moves it is drawn from samples of its dots and lines (lod), each made
+// brighter to stand for those left out, and whole once the view has been still for STILL_MS. The whole picture is
+// added up in the float buffer a part of at least CHUNK dots and lines a frame (scene), the last picture staying on the
+// screen meanwhile, so the page keeps up and a new move cuts it short; drawn in the same order, the parts add up to the
+// same picture. A cut-short picture costs little, so the wait before starting one can be short.
+var LOD_P=400000,LOD_E=400000,LOD_F=2,LOD_WP=300000,LOD_WE=60000,STILL_MS=100,CHUNK=1500000;
+var moveT=-1e9,stillDue=false,sceneVer=0,scene=null,lod={},bufLodP,bufLodE,bufLodWP,bufLodWE;
+// The size of the last picture put on the screen: a canvas of another size has been cleared and shows nothing yet.
+var shownW=0,shownH=0;
 // Programs, buffers and the float buffer; made again if the browser drops the graphics context and gives it back.
 function initGL(){
   if(!GL2)gl.getExtension('OES_element_index_uint');
 progP=program(VS_P,FS_P),progL=program(VS_L,FS_L),progH=program(VS_P,FS_H),progLH=program(VS_L,FS_H),progT=program(VS_T,FS_T);
 progT.t=gl.getUniformLocation(progT.p,'t');progT.k=gl.getUniformLocation(progT.p,'k');progT.bg=gl.getUniformLocation(progT.p,'bg');
 bufPos=gl.createBuffer(),bufCol=gl.createBuffer(),bufIdx=gl.createBuffer(),bufHPos=gl.createBuffer(),bufHCol=gl.createBuffer(),bufQuad=gl.createBuffer(),bufWinE=gl.createBuffer(),bufWinP=gl.createBuffer(),bufMask=gl.createBuffer();maskOn=false;
+bufLodP=gl.createBuffer();bufLodE=gl.createBuffer();bufLodWP=gl.createBuffer();bufLodWE=gl.createBuffer();
+lod={};scene=null;sceneVer++;shownW=0;
 gl.bindBuffer(gl.ARRAY_BUFFER,bufQuad);gl.bufferData(gl.ARRAY_BUFFER,new Float32Array([-1,-1,3,-1,-1,3]),gl.STATIC_DRAW);
 hdrFmt=(function(){
   if(GL2)return gl.getExtension('EXT_color_buffer_float')?{i:gl.RGBA16F,f:gl.RGBA,t:gl.HALF_FLOAT}:null;
   var a=gl.getExtension('OES_texture_half_float'),b=gl.getExtension('EXT_color_buffer_half_float');return a&&b?{i:gl.RGBA,f:gl.RGBA,t:a.HALF_FLOAT_OES}:null;})();
-hdrTex=null;hdrFb=null;hdrW=0;hdrH=0;
+hdrTex=null;hdrFb=null;hdrW=0;hdrH=0;lowTex=null;lowW=0;
 }
 initGL();
 function ensureHDR(w,h){
   if(!hdrFmt)return false;if(hdrTex&&hdrW===w&&hdrH===h)return true;
   if(!hdrTex){hdrTex=gl.createTexture();hdrFb=gl.createFramebuffer();}
-  gl.bindTexture(gl.TEXTURE_2D,hdrTex);gl.texImage2D(gl.TEXTURE_2D,0,hdrFmt.i,w,h,0,hdrFmt.f,hdrFmt.t,null);
+  dropScene();gl.bindTexture(gl.TEXTURE_2D,hdrTex);gl.texImage2D(gl.TEXTURE_2D,0,hdrFmt.i,w,h,0,hdrFmt.f,hdrFmt.t,null);
   gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_MIN_FILTER,gl.NEAREST);gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_MAG_FILTER,gl.NEAREST);
   gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_WRAP_S,gl.CLAMP_TO_EDGE);gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_WRAP_T,gl.CLAMP_TO_EDGE);
   gl.bindFramebuffer(gl.FRAMEBUFFER,hdrFb);gl.framebufferTexture2D(gl.FRAMEBUFFER,gl.COLOR_ATTACHMENT0,gl.TEXTURE_2D,hdrTex,0);
   var ok=gl.checkFramebufferStatus(gl.FRAMEBUFFER)===gl.FRAMEBUFFER_COMPLETE;gl.bindFramebuffer(gl.FRAMEBUFFER,null);
   if(!ok){hdrFmt=null;return false;}hdrW=w;hdrH=h;return true;
+}
+// The smaller float buffer the sampled pictures are drawn in (LOD_F times smaller each way) and then stretched over the
+// screen: each of its pixels adds up the light of several, which evens out the sampled dots and lines. Fewer pixels
+// cost the graphics card almost nothing less; what it pays for is each dot and line. lowW is -1 if it cannot be made.
+var lowTex=null,lowFb=null,lowW=0,lowH=0;
+function ensureLow(w,h){
+  if(lowW<0)return false;if(lowTex&&lowW===w&&lowH===h)return true;
+  if(!lowTex){lowTex=gl.createTexture();lowFb=gl.createFramebuffer();}
+  var f=GL2||gl.getExtension('OES_texture_half_float_linear')?gl.LINEAR:gl.NEAREST;
+  gl.bindTexture(gl.TEXTURE_2D,lowTex);gl.texImage2D(gl.TEXTURE_2D,0,hdrFmt.i,w,h,0,hdrFmt.f,hdrFmt.t,null);
+  gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_MIN_FILTER,f);gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_MAG_FILTER,f);
+  gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_WRAP_S,gl.CLAMP_TO_EDGE);
+  gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_WRAP_T,gl.CLAMP_TO_EDGE);
+  gl.bindFramebuffer(gl.FRAMEBUFFER,lowFb);
+  gl.framebufferTexture2D(gl.FRAMEBUFFER,gl.COLOR_ATTACHMENT0,gl.TEXTURE_2D,lowTex,0);
+  var ok=gl.checkFramebufferStatus(gl.FRAMEBUFFER)===gl.FRAMEBUFFER_COMPLETE;gl.bindFramebuffer(gl.FRAMEBUFFER,null);
+  lowW=ok?w:-1;lowH=h;return ok;
 }
 var G=null,edgeCount=0,winEdges=0,winPoints=0,edgeNote='',hl=null,dpr=1,saveScale=1,lastM=null,dirty=true;
 var cam={yaw:0.7,pitch:0.42,dist:100,tx:0,ty:-20,tz:0,ortho:false,oh:50,fov:0.75},view='3d';
@@ -1060,34 +1105,103 @@ function bindAttribs(pb,cb,nodes){
   gl.bindBuffer(gl.ARRAY_BUFFER,cb);gl.enableVertexAttribArray(1);gl.vertexAttribPointer(1,4,gl.UNSIGNED_BYTE,true,0,0);}
 function glow(){return Math.pow(2,glowLevel);}
 var BG=[0.02,0.024,0.04];
-function draw(){
-  dirty=false;if(lost)return;var W=gl.drawingBufferWidth,H=gl.drawingBufferHeight;
-  gl.bindFramebuffer(gl.FRAMEBUFFER,null);gl.viewport(0,0,W,H);gl.clearColor(BG[0],BG[1],BG[2],1);gl.clear(gl.COLOR_BUFFER_BIT);
-  if(PV&&PV.n){drawPreview(W,H);return;}
-  if(!G)return;
+function moving(){return performance.now()-moveT<STILL_MS;}
+// A sample of keep of the n items of an index list (per numbers an item; the items 0 to n-1 when src is null), sent
+// to buf, or null when n is small. Its first quarter is the first items, which are always drawn whole (the top of the
+// tree, where there are few); the rest is one item at random from each of the equal stretches the other items are
+// cut into, so every part of the tree keeps its share. w: how many items each sampled one stands for.
+function sampleOf(src,per,n,keep,buf){
+  if(n<=keep)return null;var head=keep>>2,m=keep-head,s=(n-head)/m,a=new Uint32Array(per*m),j,i,h,t;
+  for(j=0;j<m;j++){h=Math.imul(j^0x5bd1e995,0x9e3779b1);h^=h>>>15;h=Math.imul(h,0x85ebca6b);h^=h>>>13;
+    i=head+Math.min(n-head-1,Math.floor((j+(h>>>0)/4294967296)*s));
+    if(src)for(t=0;t<per;t++)a[per*j+t]=src[per*i+t];else a[j]=i;}
+  gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER,buf);gl.bufferData(gl.ELEMENT_ARRAY_BUFFER,a,gl.STATIC_DRAW);
+  return {n:m,head:head,w:s,of:n,buf:buf};
+}
+function dotSample(n){if(n<=LOD_P)return null;
+  if(!lod.p||lod.p.of!==n)lod.p=sampleOf(null,1,n,LOD_P,bufLodP);return lod.p;}
+function toScreen(W,H){gl.bindFramebuffer(gl.FRAMEBUFFER,null);gl.viewport(0,0,W,H);shownW=W;shownH=H;
+  gl.clearColor(BG[0],BG[1],BG[2],1);gl.clear(gl.COLOR_BUFFER_BIT);}
+// Moves [from, from+count) of an index list, and dots [from, from+count) of the tree or of an index list of them.
+function lineDraw(M,a,from,count,buf){
+  gl.useProgram(progL.p);bindAttribs(bufPos,bufCol,true);gl.uniformMatrix4fv(progL.m,false,M);gl.uniform1f(progL.a,a);
+  gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER,buf);gl.drawElements(gl.LINES,count*2,gl.UNSIGNED_INT,8*from);}
+function dotDraw(M,a,focal,px,from,count,buf){
+  gl.useProgram(progP.p);bindAttribs(bufPos,bufCol,true);gl.uniformMatrix4fv(progP.m,false,M);
+  gl.uniform1f(progP.s,focal*0.16);gl.uniform1f(progP.lo,1.3*px);gl.uniform1f(progP.hi,9*px);gl.uniform1f(progP.a,a);
+  if(buf){gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER,buf);gl.drawElements(gl.POINTS,count,gl.UNSIGNED_INT,4*from);}
+  else gl.drawArrays(gl.POINTS,from,count);}
+// The light of the sampled tree, or of the whole of it where it has no sample.
+function lightSampled(M,la,pa,focal,px,ls,ps,n){
+  if(ls){lineDraw(M,la,0,ls.head,bufIdx);lineDraw(M,la*ls.w,0,ls.n,ls.buf);}
+  else if(edgeCount)lineDraw(M,la,0,edgeCount,bufIdx);
+  if(ps){dotDraw(M,pa,focal,px,0,ps.head,null);dotDraw(M,pa*ps.w,focal,px,0,ps.n,ps.buf);}
+  else dotDraw(M,pa,focal,px,0,n,null);
+}
+function dropScene(){if(scene)for(var i=0;i<scene.f.length;i++)gl.deleteSync(scene.f[i]);scene=null;}
+// Adds the next part of the whole tree's light (all of it when whole is set) into the float buffer, the moves then the
+// dots in their order; true once it is all there. At most two parts wait for the graphics card at a time. A part is
+// made twice as big when the card had finished all those sent less than 25 ms before, so a fast card is not left idle
+// between frames, and half as big (down to CHUNK) when two still wait; how the light is split does not change it.
+// Each picture starts again from CHUNK, since its moves, drawn first, cost the card more than its dots.
+function addUp(key,M,la,pa,focal,px,n,whole){
+  if(scene&&scene.key!==key)dropScene();
+  if(!scene){scene={key:key,e:0,p:0,f:[],t:0,c:CHUNK};gl.clearColor(0,0,0,0);gl.clear(gl.COLOR_BUFFER_BIT);}
+  if(scene.e>=edgeCount&&scene.p>=n)return true;
+  var quick=scene.f.length&&performance.now()-scene.t<25;
+  while(scene.f.length&&gl.getSyncParameter(scene.f[0],gl.SYNC_STATUS)===gl.SIGNALED)gl.deleteSync(scene.f.shift());
+  if(quick&&!scene.f.length)scene.c*=2;
+  if(scene.f.length>1&&!whole){scene.c=Math.max(CHUNK,scene.c/2);return false;}
+  var left=whole||!GL2?Infinity:scene.c,c;
+  if(scene.e<edgeCount){c=Math.min(edgeCount-scene.e,left);lineDraw(M,la,scene.e,c,bufIdx);scene.e+=c;left-=c;}
+  if(left>0&&scene.p<n){c=Math.min(n-scene.p,left);dotDraw(M,pa,focal,px,scene.p,c,null);scene.p+=c;}
+  if(scene.e>=edgeCount&&scene.p>=n){while(scene.f.length)gl.deleteSync(scene.f.pop());return true;}
+  scene.f.push(gl.fenceSync(gl.SYNC_GPU_COMMANDS_COMPLETE,0));gl.flush();scene.t=performance.now();return false;
+}
+// whole: draw the whole tree now (for a saved picture), not a sample nor a part of it.
+function draw(whole){
+  dirty=false;stillDue=false;if(lost)return;var W=gl.drawingBufferWidth,H=gl.drawingBufferHeight;
+  // A canvas just resized (or given back after a lost context) is blank until drawn on, so it gets the sampled picture
+  // at once and the whole one after, as when the view moves.
+  var mv=!whole&&(moving()||W!==shownW||H!==shownH);
+  if(PV&&PV.n||!G){dropScene();toScreen(W,H);if(PV&&PV.n)drawPreview(W,H,mv);return;}
   var M=mvp();lastM=M;var n=G.n,px=dpr*saveScale,g=glow(),hdr=ensureHDR(W,H);
   var focal=cam.ortho?H/(2*cam.oh):H/(2*Math.tan(cam.fov/2));
   // Without the float buffer, light adds straight onto the screen, so it is dimmed by how many dots there are.
   // Half floats overflow at 65,504, which the middle of a big tree can pass, so the float buffer gets 1/32 of the light.
   var dens=hdr?1/32:Math.min(1,Math.pow(4000/Math.max(n,1),0.32));
+  var la=(edgeMode==='all'?0.09:0.2)*dens*(hdr?1:g),pa=hdr?dens:Math.max(0.08,dens)*g;
+  var ls=mv&&edgeCount?lod.e:null,ps=mv?dotSample(n):null,we=mv&&winEdges?lod.we:null,wq=mv&&winPoints?lod.wp:null;
+  if(ls||ps||we||wq)stillDue=true;
   gl.disable(gl.DEPTH_TEST);gl.enable(gl.BLEND);gl.blendFunc(gl.ONE,gl.ONE);
-  if(hdr){gl.bindFramebuffer(gl.FRAMEBUFFER,hdrFb);gl.viewport(0,0,W,H);gl.clearColor(0,0,0,0);gl.clear(gl.COLOR_BUFFER_BIT);}
-  if(edgeCount){gl.useProgram(progL.p);bindAttribs(bufPos,bufCol,true);gl.uniformMatrix4fv(progL.m,false,M);
-    gl.uniform1f(progL.a,(edgeMode==='all'?0.09:0.2)*dens*(hdr?1:g));gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER,bufIdx);gl.drawElements(gl.LINES,edgeCount*2,gl.UNSIGNED_INT,0);}
-  gl.useProgram(progP.p);bindAttribs(bufPos,bufCol,true);gl.uniformMatrix4fv(progP.m,false,M);
-  gl.uniform1f(progP.s,focal*0.16);gl.uniform1f(progP.lo,1.3*px);gl.uniform1f(progP.hi,9*px);
-  gl.uniform1f(progP.a,(hdr?dens:Math.max(0.08,dens)*g));gl.drawArrays(gl.POINTS,0,n);
-  if(hdr){gl.bindFramebuffer(gl.FRAMEBUFFER,null);gl.viewport(0,0,W,H);gl.disable(gl.BLEND);gl.useProgram(progT.p);
+  var src=hdrTex,f=LOD_F,lw=Math.ceil(W/f),lh=Math.ceil(H/f);
+  if(hdr){gl.bindFramebuffer(gl.FRAMEBUFFER,hdrFb);gl.viewport(0,0,W,H);
+    // In the smaller buffer dots keep their size in its pixels, so they cover f*f times the screen and are made that
+    // much fainter; a line is f screen pixels wide, so it is made f times fainter.
+    if(ls||ps){dropScene();
+      if(ensureLow(lw,lh)){src=lowTex;gl.bindFramebuffer(gl.FRAMEBUFFER,lowFb);gl.viewport(0,0,lw,lh);}else f=1;
+      gl.clearColor(0,0,0,0);gl.clear(gl.COLOR_BUFFER_BIT);lightSampled(M,la/f,pa/(f*f),focal,px,ls,ps,n);}
+    // Until the whole tree is added up the screen is left as it is; a picture already added up is used again.
+    else if(!addUp([sceneVer,W,H,px,focal,la,pa,n,edgeCount].concat(M).join(),M,la,pa,focal,px,n,whole)){
+      dirty=true;return;}
+    toScreen(W,H);gl.disable(gl.BLEND);gl.useProgram(progT.p);
     gl.bindBuffer(gl.ARRAY_BUFFER,bufQuad);gl.enableVertexAttribArray(0);gl.vertexAttribPointer(0,2,gl.FLOAT,false,0,0);gl.disableVertexAttribArray(1);gl.disableVertexAttribArray(2);
-    gl.activeTexture(gl.TEXTURE0);gl.bindTexture(gl.TEXTURE_2D,hdrTex);gl.uniform1i(progT.t,0);gl.uniform3f(progT.bg,BG[0],BG[1],BG[2]);
+    gl.activeTexture(gl.TEXTURE0);gl.bindTexture(gl.TEXTURE_2D,src);gl.uniform1i(progT.t,0);gl.uniform3f(progT.bg,BG[0],BG[1],BG[2]);
     gl.uniform1f(progT.k,exposure(G.n)*g*32);gl.drawArrays(gl.TRIANGLES,0,3);gl.enable(gl.BLEND);}
+  else{toScreen(W,H);lightSampled(M,la,pa,focal,px,ls,ps,n);}
   // The winning positions and the moves between them, drawn again on top so that they stand out.
   if(winPoints&&colorMode!=='depth'){gl.blendFunc(gl.SRC_ALPHA,gl.ONE_MINUS_SRC_ALPHA);
     if(winEdges){gl.useProgram(progLH.p);bindAttribs(bufPos,bufCol,true);gl.uniformMatrix4fv(progLH.m,false,M);gl.uniform1f(progLH.a,0.5*Math.min(1,g));gl.uniform2f(progLH.off,0,0);
-      gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER,bufWinE);gl.drawElements(gl.LINES,winEdges*2,gl.UNSIGNED_INT,0);}
+      gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER,bufWinE);gl.drawElements(gl.LINES,(we?we.head:winEdges)*2,gl.UNSIGNED_INT,0);
+      if(we){gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER,we.buf);gl.drawElements(gl.LINES,we.n*2,gl.UNSIGNED_INT,0);}}
     gl.useProgram(progH.p);bindAttribs(bufPos,bufCol,true);gl.uniformMatrix4fv(progH.m,false,M);gl.uniform1f(progH.a,0.85);
     gl.uniform1f(progH.s,focal*0.13);gl.uniform1f(progH.lo,1.8*px);gl.uniform1f(progH.hi,6*px);
-    gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER,bufWinP);gl.drawElements(gl.POINTS,winPoints,gl.UNSIGNED_INT,0);}
+    gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER,bufWinP);gl.drawElements(gl.POINTS,wq?wq.head:winPoints,gl.UNSIGNED_INT,0);
+    // Each winning dot covers what is under it, so a few would let the rest of the tree show through: the sampled ones
+    // are drawn bigger (up to 3 times as wide), to cover about as much as all of them do.
+    if(wq){var z=Math.min(3,Math.sqrt(wq.w));
+      gl.uniform1f(progH.s,focal*0.13*z);gl.uniform1f(progH.lo,1.8*px*z);gl.uniform1f(progH.hi,6*px*z);
+      gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER,wq.buf);gl.drawElements(gl.POINTS,wq.n,gl.UNSIGNED_INT,0);}}
   if(hl&&hl.n){gl.blendFunc(gl.SRC_ALPHA,gl.ONE_MINUS_SRC_ALPHA);
     gl.useProgram(progLH.p);bindAttribs(bufHPos,bufHCol);gl.uniformMatrix4fv(progLH.m,false,M);gl.uniform1f(progLH.a,1);
     var ox=2*px/W,oy=2*px/H,offs=[[0,0],[ox,0],[-ox,0],[0,oy],[0,-oy]];
@@ -1100,15 +1214,19 @@ function draw(){
 // While a big tree is built, the depths laid out so far are drawn as they come (PV), in the colour of positions not
 // settled yet; picking waits for the finished tree.
 var PV=null,bufPV=null,camMoved=false;
-function drawPreview(W,H){
+function drawPreview(W,H,mv){
   var M=mvp();lastM=null;var px=dpr*saveScale,g=glow(),hdr=ensureHDR(W,H),focal=cam.ortho?H/(2*cam.oh):H/(2*Math.tan(cam.fov/2));
-  var dens=hdr?1/32:Math.min(1,Math.pow(4000/Math.max(PV.n,1),0.32));
+  var dens=hdr?1/32:Math.min(1,Math.pow(4000/Math.max(PV.n,1),0.32)),a=hdr?dens:Math.max(0.08,dens)*g;
+  var ps=mv?dotSample(PV.n):null;
+  if(ps)stillDue=true;
   gl.disable(gl.DEPTH_TEST);gl.enable(gl.BLEND);gl.blendFunc(gl.ONE,gl.ONE);
   if(hdr){gl.bindFramebuffer(gl.FRAMEBUFFER,hdrFb);gl.viewport(0,0,W,H);gl.clearColor(0,0,0,0);gl.clear(gl.COLOR_BUFFER_BIT);}
   gl.useProgram(progP.p);gl.bindBuffer(gl.ARRAY_BUFFER,bufPV);gl.enableVertexAttribArray(0);gl.vertexAttribPointer(0,3,gl.FLOAT,false,0,0);
   gl.disableVertexAttribArray(1);gl.vertexAttrib4f(1,UNK[0]/255,UNK[1]/255,UNK[2]/255,110/255);gl.disableVertexAttribArray(2);gl.vertexAttrib1f(2,1);
   gl.uniformMatrix4fv(progP.m,false,M);gl.uniform1f(progP.ys,1);gl.uniform1f(progP.s,focal*0.16);gl.uniform1f(progP.lo,1.3*px);gl.uniform1f(progP.hi,9*px);
-  gl.uniform1f(progP.a,hdr?dens:Math.max(0.08,dens)*g);gl.drawArrays(gl.POINTS,0,PV.n);
+  gl.uniform1f(progP.a,a);gl.drawArrays(gl.POINTS,0,ps?ps.head:PV.n);
+  if(ps){gl.uniform1f(progP.a,a*ps.w);gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER,ps.buf);
+    gl.drawElements(gl.POINTS,ps.n,gl.UNSIGNED_INT,0);}
   if(G)gl.uniform1f(progP.ys,G.ys||1);
   if(hdr){gl.bindFramebuffer(gl.FRAMEBUFFER,null);gl.viewport(0,0,W,H);gl.disable(gl.BLEND);gl.useProgram(progT.p);
     gl.bindBuffer(gl.ARRAY_BUFFER,bufQuad);gl.enableVertexAttribArray(0);gl.vertexAttribPointer(0,2,gl.FLOAT,false,0,0);
@@ -1138,7 +1256,7 @@ function exposure(n){var z=cam.ortho?(cam.fitOh||cam.oh)/cam.oh:(cam.fitDist||ca
 var onScreen=true;
 if(window.IntersectionObserver)new IntersectionObserver(function(es){onScreen=es[es.length-1].isIntersecting;if(onScreen)dirty=true;}).observe(host);
 function frame(){
-  if(dirty&&onScreen&&!document.hidden)draw();
+  if((dirty||stillDue&&!moving())&&onScreen&&!document.hidden)draw();
   requestAnimationFrame(frame);
 }
 // The space the colour key takes at the bottom (it wraps on narrow blocks), kept while the key is hidden.
@@ -1191,19 +1309,20 @@ function recolour(){
   // Wins weigh most and unsearched positions least, so the few winning lines stand out of the crowd.
   for(var i=0;i<n;i++){var k=colourOf(i,mode),s=G.status[i],w=mode==='depth'?200:(i===0||s===1)?255:s===2?(G.complete?150:105):60;
     c[4*i]=k[0];c[4*i+1]=k[1];c[4*i+2]=k[2];c[4*i+3]=w;}
-  gl.bindBuffer(gl.ARRAY_BUFFER,bufCol);gl.bufferData(gl.ARRAY_BUFFER,c,gl.STATIC_DRAW);
+  gl.bindBuffer(gl.ARRAY_BUFFER,bufCol);gl.bufferData(gl.ARRAY_BUFFER,c,gl.STATIC_DRAW);sceneVer++;
   $('.at-legend').innerHTML=legend(mode);keySpace();dirty=true;
 }
 var EDGE_CAP=6000000;
 // Move e of the tree (its moves are kept in chunks of 4 million).
 function edgeAt(e){return G.et[e>>>22][e&4194303];}
 function rebuildEdges(){
-  edgeCount=0;edgeNote='';if(!G)return;var mode=edgeMode,idx,k=0,i;
+  edgeCount=0;edgeNote='';lod.e=null;sceneVer++;if(!G)return;var mode=edgeMode,idx,k=0,i;
   if(mode==='tree'){idx=new Uint32Array(2*Math.max(1,G.n-1));for(i=1;i<G.n;i++){if(G.parent[i]>=0){idx[k++]=G.parent[i];idx[k++]=i;}}}
   else if(mode==='all'){var ne=Math.min(G.ne,EDGE_CAP);idx=new Uint32Array(2*Math.max(1,ne));
     for(var u=0;u<G.n&&k<2*ne;u++)for(var e=G.es[u];e<G.es[u+1]&&k<2*ne;e++){idx[k++]=u;idx[k++]=edgeAt(e);}
     if(G.ne>ne)edgeNote='Drawing '+fmt(ne)+' of the '+fmt(G.ne)+' moves.';}
-  if(k){gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER,bufIdx);gl.bufferData(gl.ELEMENT_ARRAY_BUFFER,idx.subarray(0,k),gl.STATIC_DRAW);edgeCount=k/2;}
+  if(k){gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER,bufIdx);gl.bufferData(gl.ELEMENT_ARRAY_BUFFER,idx.subarray(0,k),gl.STATIC_DRAW);edgeCount=k/2;
+    lod.e=sampleOf(idx,2,edgeCount,LOD_E,bufLodE);}
   rebuildOverlay();
 }
 // The winning part, drawn again on top: positions that can still win, and the drawn moves between two of them (while
@@ -1218,6 +1337,7 @@ function rebuildOverlay(){
   winPoints=wp;winEdges=we/2;
   if(wp){gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER,bufWinP);gl.bufferData(gl.ELEMENT_ARRAY_BUFFER,P.subarray(0,wp),gl.STATIC_DRAW);}
   if(winEdges){gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER,bufWinE);gl.bufferData(gl.ELEMENT_ARRAY_BUFFER,E2.subarray(0,we),gl.STATIC_DRAW);}
+  lod.wp=sampleOf(P,1,wp,LOD_WP,bufLodWP);lod.we=sampleOf(E2,2,winEdges,LOD_WE,bufLodWE);
   dirty=true;
 }
 
@@ -1249,7 +1369,7 @@ canvas.addEventListener('pointermove',function(e){
     panBy(mx-pinch.x,my-pinch.y);zoomAt(pinch.d/Math.max(1,d),mx,my);pinch={d:d,x:mx,y:my};return;}
   if(drag){var dx=e.clientX-drag.x,dy=e.clientY-drag.y;drag.x=e.clientX;drag.y=e.clientY;
     if(Math.abs(e.clientX-drag.sx)+Math.abs(e.clientY-drag.sy)>4)drag.moved=true;
-    camMoved=true;if(drag.pan)panBy(dx,dy);else{cam.yaw-=dx*0.006;cam.pitch=Math.max(-1.5707,Math.min(1.5707,cam.pitch+dy*0.006));if(view!=='3d'){view='3d';fitButtons();}}
+    camMoved=true;if(drag.pan)panBy(dx,dy);else{moveT=performance.now();cam.yaw-=dx*0.006;cam.pitch=Math.max(-1.5707,Math.min(1.5707,cam.pitch+dy*0.006));if(view!=='3d'){view='3d';fitButtons();}}
     dirty=true;return;}
   hoverAt(e);
 });
@@ -1285,15 +1405,15 @@ canvas.addEventListener('wheel',function(e){
   e.preventDefault();zoomAt(Math.exp(e.deltaY*(e.deltaMode?0.05:0.0015)),e.clientX,e.clientY);},{passive:false});
 canvas.addEventListener('webglcontextlost',function(e){e.preventDefault();lost=true;message('The graphics were reset; they should come back by themselves, or after reloading the page.');},false);
 canvas.addEventListener('webglcontextrestored',function(){lost=false;initGL();message('');if(G){var s=G.sel;applyShape();recolour();rebuildEdges();if(play.on)updatePlay();if(s>=0)select(s);}dirty=true;},false);
-canvas.addEventListener('dblclick',function(){if(G&&G.sel>=0){var i=G.sel;cam.tx=G.pos[3*i];cam.ty=G.pos[3*i+1]*G.ys;cam.tz=G.pos[3*i+2];if(cam.ortho)cam.oh*=0.5;else cam.dist*=0.5;dirty=true;}});
+canvas.addEventListener('dblclick',function(){if(G&&G.sel>=0){var i=G.sel;cam.tx=G.pos[3*i];cam.ty=G.pos[3*i+1]*G.ys;cam.tz=G.pos[3*i+2];if(cam.ortho)cam.oh*=0.5;else cam.dist*=0.5;moveT=performance.now();dirty=true;}});
 function fitButtons(){host.querySelectorAll('[data-view]').forEach(function(b){b.classList.toggle('on',b.getAttribute('data-view')===view);});}
-function panBy(dx,dy){var v=camVectors(),w=worldPerPixel()*dpr;cam.tx+=(-dx*v.r[0]+dy*v.u[0])*w;cam.ty+=(-dx*v.r[1]+dy*v.u[1])*w;cam.tz+=(-dx*v.r[2]+dy*v.u[2])*w;dirty=true;}
+function panBy(dx,dy){var v=camVectors(),w=worldPerPixel()*dpr;cam.tx+=(-dx*v.r[0]+dy*v.u[0])*w;cam.ty+=(-dx*v.r[1]+dy*v.u[1])*w;cam.tz+=(-dx*v.r[2]+dy*v.u[2])*w;moveT=performance.now();dirty=true;}
 function zoomAt(f,cx,cy){
   var r=canvas.getBoundingClientRect(),v=camVectors(),w=worldPerPixel()*dpr;
   var ox=(cx-r.left-r.width/2)*w,oy=(r.height/2-(cy-r.top))*w;
   f=Math.max(0.2,Math.min(5,f));
   cam.tx+=(ox*v.r[0]+oy*v.u[0])*(1-f);cam.ty+=(ox*v.r[1]+oy*v.u[1])*(1-f);cam.tz+=(ox*v.r[2]+oy*v.u[2])*(1-f);
-  if(cam.ortho)cam.oh=Math.max(0.05,cam.oh*f);else cam.dist=Math.max(0.2,cam.dist*f);camMoved=true;dirty=true;
+  if(cam.ortho)cam.oh=Math.max(0.05,cam.oh*f);else cam.dist=Math.max(0.2,cam.dist*f);camMoved=true;moveT=performance.now();dirty=true;
 }
 function pick(mx,my){
   if(!G||!lastM||PV)return -1;var ys=G.ys,M=lastM,P=G.pos,W=canvas.width,H=canvas.height,x=mx*dpr,y=my*dpr,best=-1,bd=(9*dpr)*(9*dpr),bz=Infinity;
@@ -1406,7 +1526,7 @@ function run(opts){
     rng:(hashStr(opts.title)^budget)>>>0||1});
 }
 function dropGraph(){
-  G=null;hl=null;edgeCount=winEdges=winPoints=0;showNode(false);
+  G=null;hl=null;edgeCount=winEdges=winPoints=0;lod={};sceneVer++;showNode(false);
   gl.bindBuffer(gl.ARRAY_BUFFER,bufPos);gl.bufferData(gl.ARRAY_BUFFER,4,gl.STATIC_DRAW);gl.bindBuffer(gl.ARRAY_BUFFER,bufCol);gl.bufferData(gl.ARRAY_BUFFER,4,gl.STATIC_DRAW);
   gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER,bufIdx);gl.bufferData(gl.ELEMENT_ARRAY_BUFFER,4,gl.STATIC_DRAW);dirty=true;
 }
@@ -1429,7 +1549,7 @@ function applyShape(){
   if(!G)return;var rings=shapeMode!=='spindle';if(!rings&&!G.posS)spindle();
   G.pos=rings?G.posR:G.posS;G.bounds=rings?G.boundsR:G.boundsS;if(rings&&G.n>4000000)G.posS=null;
   var b=G.bounds,w=Math.max(b[1]-b[0],b[5]-b[4],1),hgt=Math.max(b[3]-b[2],0.8);G.ys=rings?1:Math.max(0.4,Math.min(4,1.15*w/hgt));setYs(G.ys);
-  gl.bindBuffer(gl.ARRAY_BUFFER,bufPos);gl.bufferData(gl.ARRAY_BUFFER,G.pos,gl.STATIC_DRAW);
+  gl.bindBuffer(gl.ARRAY_BUFFER,bufPos);gl.bufferData(gl.ARRAY_BUFFER,G.pos,gl.STATIC_DRAW);sceneVer++;
   if(G.sel>=0)select(G.sel);else if(play.on)showPlayPath();dirty=true;
 }
 // The deal's details (cur) change only when its tree arrives, so a slow or failed build leaves the page describing the
@@ -1508,7 +1628,7 @@ function playMask(){
       for(var u=p;u<=last;u++)if(m[u]){cnt++;for(var e=G.es[u],e1=G.es[u+1];e<e1;e++){var c=edgeAt(e);m[c]=255;if(c>last)last=c;}}}
     play.mask=m;play.count=cnt;}
   maskOn=!!play.mask;if(maskOn){gl.bindBuffer(gl.ARRAY_BUFFER,bufMask);gl.bufferData(gl.ARRAY_BUFFER,play.mask,gl.DYNAMIC_DRAW);}
-  dirty=true;
+  sceneVer++;dirty=true;
 }
 // The game's line through the tree, in white, as far as it is drawn.
 function showPlayPath(){
@@ -1615,7 +1735,9 @@ function rebuild(){if(want)run(want);else if(cur.cards)run(snapshot());}
 function applyCustom(){if(!setSize(parseSize(customIn.value))){hint('Choose from 1,000 to 40,000,000 positions');return;}resize();rebuild();}
 customIn.addEventListener('keydown',function(e){if(e.key==='Enter')applyCustom();});
 customIn.addEventListener('change',function(){if(parseSize(customIn.value)!==customSize)applyCustom();});
-host.querySelectorAll('[data-view]').forEach(function(b){b.onclick=function(){fit(b.getAttribute('data-view'));};});
+// A new view from the buttons shows at once from the samples, like a move (not in fit, which also follows a build).
+host.querySelectorAll('[data-view]').forEach(function(b){
+  b.onclick=function(){moveT=performance.now();fit(b.getAttribute('data-view'));};});
 var goFull=host.requestFullscreen||host.webkitRequestFullscreen,wasFull=false;
 if(!goFull)$('.at-full').hidden=true;
 $('.at-full').onclick=function(){if(fullNow())(document.exitFullscreen||document.webkitExitFullscreen).call(document);else if(goFull)goFull.call(host);};
@@ -1634,7 +1756,7 @@ function savePicture(name,scale){
   if(!G||lost)return;var w0=canvas.width,h0=canvas.height,vp=gl.getParameter(gl.MAX_VIEWPORT_DIMS);
   var md=Math.min(gl.getParameter(gl.MAX_TEXTURE_SIZE),gl.getParameter(gl.MAX_RENDERBUFFER_SIZE),vp[0],vp[1]);
   scale=Math.max(0.25,Math.min(scale||2,md/w0,md/h0,Math.sqrt(36e6/(w0*h0)))); // at most 36 million pixels
-  canvas.width=Math.round(w0*scale);canvas.height=Math.round(h0*scale);saveScale=scale;draw();
+  canvas.width=Math.round(w0*scale);canvas.height=Math.round(h0*scale);saveScale=scale;draw(true);
   canvas.toBlob(function(b){if(!b){message('Could not save the picture at this size; a smaller window may work.');return;}
     if(host.onsave)host.onsave(b,name+'.png');else{var a=document.createElement('a');a.href=URL.createObjectURL(b);a.download=name+'.png';document.body.appendChild(a);a.click();
     setTimeout(function(){URL.revokeObjectURL(a.href);a.remove();},1000);}},'image/png');

@@ -30,7 +30,8 @@ such as `2.5m`), `&view=top` (`3d`, `top`, `side`), and three ways of drawing th
   are drawn again on top so that the few winning lines in a hard deal stand out. With `&color=best`, positions are
   coloured by the fewest piles they can get down to instead.
 - **Rings**: the deal is at the centre (the top, in 3D) and each move one ring further out, each position near the
-  positions it comes from. With `&shape=spindle` in the address, each position is placed by which cards are covered
+  positions it comes from and never more than 2 units along its ring from the one whose move is drawn, so a winning
+  line runs on without big jumps sideways. With `&shape=spindle` in the address, each position is placed by which cards are covered
   instead: each covered card pushes it towards that card's place in the deal, so moves that don't interfere draw as
   parallelograms.
 - **Small trees are complete.** The lost deals of the trillion run have between 2 and 22,066,800 positions; a tree that
@@ -47,6 +48,10 @@ such as `2.5m`), `&view=top` (`3d`, `top`, `side`), and three ways of drawing th
   of the positions the search comes to next. The tree comes out the same, to the last bit, as without them; where
   workers can't be made, or one fails, the rest is done without them. On a 16-thread laptop in Chrome they take the
   biggest loss from 26 to 16 seconds, the 40 million sample from 61 to 43, and the default 1 million from 1.5 to 1.3.
+- **Drawing.** Every dot and line of a big tree takes the graphics card long to draw (1.6 seconds for 40 million on a
+  laptop's own graphics), so while the view moves a tree over 400,000 positions is drawn from 400,000 sampled dots and
+  lines, each brighter for those it stands for. Once the view is still, the whole picture is added up over a few
+  frames, the last one staying on the screen, and it is the same picture to the bit.
 - **Known deals.** The page knows the 721 lost deals of seeds 0 to 999,999,999,999 and their numbers of positions, so
   every other seed in that range is known to be winnable and goes straight to a sample, and a lost one is drawn whole
   when it fits.
