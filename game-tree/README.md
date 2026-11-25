@@ -25,18 +25,16 @@ such as `2.5m`), `&view=top` (`3d`, `top`, `side`), and three ways of drawing th
 
 ## What it shows
 
-- **Colours**, with a key always at the bottom left: green positions can still win and gold ones are won (one pile).
-  Orange to dark red ones are lost with
-  everything below them drawn: orange gets as close as the deal allows (2 piles if it can be won, else the deal's own
-  best), dark red falls further short. Red ones are lost without the fewest piles worked out (the short searches below
-  skip moves the dead-end test rules out), and blue-grey ones aren't settled either way. The positions that can win, and
-  the moves between them, are drawn again on top so that the few winning lines in a hard deal stand out.
+- **Colours**, with a key always at the bottom left: green positions can still win, gold ones are won (one pile), red
+  ones are lost and blue-grey ones aren't settled either way. The positions that can win, and the moves between them,
+  are drawn again on top so that the few winning lines in a hard deal stand out. With `&color=best`, positions are
+  coloured by the fewest piles they can get down to instead.
 - **Rings**: the deal is at the centre (the top, in 3D) and each move one ring further out, each position near the
   positions it comes from. With `&shape=spindle` in the address, each position is placed by which cards are covered
   instead: each covered card pushes it towards that card's place in the deal, so moves that don't interfere draw as
   parallelograms.
 - **Small trees are complete.** The lost deals of the trillion run have between 2 and 22,066,800 positions; a tree that
-  fits the chosen size (200,000, 1 million, 4 million, 40 million, or a number typed in) is drawn with every position and
+  fits the chosen size (100,000, 1 million, 4 million, 40 million, or a number typed in) is drawn with every position and
   every move, and its counts are exact. Of the 721, 701 fit in 4 million and all of them in 40 million: the biggest,
   22,066,800 positions joined by 134,505,640 moves, takes about 16 seconds and 1.7 GB.
 - **How 40 million fit.** A position keeps only the move that first reached it, the card that move covered, a few flags
@@ -73,8 +71,8 @@ such as `2.5m`), `&view=top` (`3d`, `top`, `side`), and three ways of drawing th
 
 ## The examples
 
-The menu has eight: an easy deal (185), a hard one (3), a very hard one (56669828180) and five lost ones of 2 to
-19,386,305 positions. The others below load from the address with `?ex=`.
+The menu has five: an easy deal (185), a hard one (3), a very hard one (56669828180) and two lost ones, of 1,512 and
+3,997,296 positions. The others below load from the address with `?ex=`.
 
 - **Easy to win**: seed 185, the one of the first 300 deals whose short searches win most often (about 9 in 10 at 1
   million positions), and seed 0, the first deal.

@@ -54,7 +54,6 @@ body.standalone #acc-tree canvas.at-gl,#acc-tree:fullscreen canvas.at-gl,#acc-tr
 #acc-tree .at-key .at-what{color:#8d96aa}
 #acc-tree .at-key .at-legend{display:contents}
 #acc-tree .at-key i{display:inline-block;width:10px;height:10px;border-radius:50%;margin-right:4px;vertical-align:-1px}
-#acc-tree .at-key i.at-grad{width:18px;border-radius:5px}
 #acc-tree .at-node{position:absolute;right:8px;top:var(--tb,48px);width:340px;max-width:calc(100% - 16px);max-height:calc(100% - var(--tb,48px) - var(--kb,44px));overflow:auto}
 #acc-tree .at-node-head{margin-bottom:6px}
 #acc-tree .at-cards{display:flex;flex-wrap:wrap;gap:3px;margin:6px 0}
@@ -73,10 +72,12 @@ body.standalone #acc-tree canvas.at-gl,#acc-tree:fullscreen canvas.at-gl,#acc-tr
 #acc-tree .at-tip{position:absolute;pointer-events:none;background:rgba(10,12,20,.92);border:1px solid #2c3346;border-radius:6px;padding:4px 7px;font-size:12px;
   white-space:nowrap;transform:translate(12px,12px)}
 #acc-tree .at-helpbox{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);width:min(560px,calc(100% - 24px));max-height:calc(100% - 24px);overflow:auto;
-  font-size:13px;line-height:1.45}
+  font-size:13px;line-height:1.45;padding-right:34px}
+#acc-tree .at-helpbox button.at-helpclose{position:absolute;top:4px;right:4px;background:none;border:0;color:#aab1c2;font-size:20px;line-height:1;padding:2px 7px}
+#acc-tree .at-helpbox button.at-helpclose:hover{color:#fff;background:#1f2536}
 #acc-tree .at-helpbox p{margin:0 0 8px}
 #acc-tree .at-helpbox a{color:#8fb4ff}
-#acc-tree .at-helpbox .at-by{display:flex;justify-content:space-between;align-items:center;gap:8px;margin:10px 0 0;color:#aab1c2}
+#acc-tree .at-helpbox .at-by{margin:10px 0 0;color:#aab1c2}
 #acc-tree .at-msg{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);max-width:420px;text-align:center}
 #acc-tree [hidden]{display:none !important}
 #acc-tree .at-play{position:absolute;left:8px;top:var(--tb,48px);width:min(560px,45%);max-height:calc(100% - var(--tb,48px) - var(--kb,44px));overflow:auto}
@@ -915,16 +916,16 @@ var EXAMPLES=[
    line:'7C>4C QS>9S QC>QS JS>3S 7H>6H TS>2S 2D>2C TC>7C 6S>7S 8C>6C KH>TH KH>5H 6S>AS 7D>2D 7D>9D 7H>7D QH>7H QH>AH TS>JS QC>QH QC>9C TS>5S TC>QC TD>TS TD>6D 8H>4H TC>TD 5C>TC 5C>KC JD>3D JC>JD 5C>JC 8H>3H 8H>8C KS>6S 8H>2H KS>KD KS>4S AD>QD 5C>3C KS>KH 5C>AC 5D>5C 8H>JH 8S>KS 8H>8S 5D>4D AD>5D 8D>AD 8H>8D 9H>8H'},
   {g:'Hard to win',k:'h855019547215',seed:'855019547215',menu:false,note:'9,983 of the solver\'s tries failed, and only a full search found a win. That winning line is drawn in.',
    line:'8H>2H 3S>4S 4H>TH QC>2C QS>8S JS>7S TC>TS KH>5H TC>4C QH>4H 9C>TC 2S>2D AS>KS AS>AC 2S>AS 6H>JH 9C>3C JD>QD JS>2S JD>JS JD>5D 6H>6S KH>6H KH>KC 9H>KH 8D>TD JD>8D 9H>7H 9C>9H 9C>8C 9C>9S 9C>7C 3S>3H JD>7D QC>9C 3S>5S JD>KD JD>9D JD>JC 3D>4D 3D>JD AH>8H QC>5C QC>6C QC>QS QH>QC AD>6D AH>QH AD>AH 3D>AD 3S>3D'},
-  {g:'Cannot be won',k:'l124280819596',seed:'124280819596',total:2,t:'Lost: 2 positions',note:'One move, then stuck with 51 piles.'},
+  {g:'Cannot be won',k:'l124280819596',seed:'124280819596',total:2,menu:false,t:'Lost: 2 positions',note:'One move, then stuck with 51 piles.'},
   {g:'Cannot be won',k:'l89126101473',seed:'89126101473',total:6,menu:false},
   {g:'Cannot be won',k:'l907509586037',seed:'907509586037',total:84,menu:false},
   {g:'Cannot be won',k:'l587527261691',seed:'587527261691',total:1512,t:'Lost: 1,512 positions'},
   {g:'Cannot be won',k:'l841286473413',seed:'841286473413',total:15059,menu:false},
   {g:'Cannot be won',k:'l73795501709',seed:'73795501709',total:72198,menu:false,note:'The middle-sized lost deal: half of the 721 have fewer positions.'},
-  {g:'Cannot be won',k:'l202346720',seed:'202346720',total:74970,t:'Lost: 74,970 positions',note:'The second lost deal found, and the first proved lost.'},
+  {g:'Cannot be won',k:'l202346720',seed:'202346720',total:74970,menu:false,t:'Lost: 74,970 positions',note:'The second lost deal found, and the first proved lost.'},
   {g:'Cannot be won',k:'l146087618593',seed:'146087618593',total:642264,menu:false},
   {g:'Cannot be won',k:'l106032171823',seed:'106032171823',total:3997296,t:'Lost: 4 million positions'},
-  {g:'Cannot be won',k:'l112249515',seed:'112249515',total:19386305,t:'Lost: 19 million positions',note:'The first lost deal found.'},
+  {g:'Cannot be won',k:'l112249515',seed:'112249515',total:19386305,menu:false,t:'Lost: 19 million positions',note:'The first lost deal found.'},
   {g:'Cannot be won',k:'l268817008782',seed:'268817008782',total:22066800,menu:false,note:'The lost deal with the most positions.'}
 ];
 // Entries with menu:false are left out of the menu but can still be shown from the address (?ex=).
@@ -932,7 +933,7 @@ var EXAMPLES=[
 // seed.positions in base 36.
 var LOSSES='1utwa3.bjikh,3cgzq8.1lui,gmpuvy.20zof,1kifffe.3k,2a0ilbh.1d60,2pi7u4e.kita,35vqtls.615s,3cx7ctg.9so,3gugrha.2shs,3hycmss.fk77,3l7jujt.nm8,4r39j7u.2at9,5xu1gi2.1paa,5zzqfol.c5i,646l4li.3z0,6ix27vz.jslc,80czcky.5o0,813h85b.4p1c,8dmiw2m.3lpe,8qej9d4.5to0,9ebd7zq.pxc,9hyyrrk.c80,9nm4yab.ow0,ac2xush.35j,ajwd3ov.310,b6dob1s.4xws0,bh9s0h9.9ho0,bhm1bpf.94c,byin0ts.1m60,dbsz9qo.1cw,e0pez01.g20,ewez34w.3dt6,ganidkb.ao0,gfnjvd2.364,gibgqj7.g00,go51j84.nomg,h4j7vge.1nr0,h78uv6l.44o,ihp195t.hn7,ihygiyl.1ji,jnekjoa.82u,kycc8bz.w0,la503u8.m00,lchijca.c2xc,lem4k3n.q1y5,mfk0o5r.fhk,ndu6f99.1ji9,nozko1f.8gr,ovhn1s4.lc39,ovq756w.7i10,s4234yi.60,svksf0u.2o,tc8sc34.ao,u03rng3.ri,u1f0vu0.4lk0,vf8dptu.6pc0,xwfxpjh.1jpi,10bj8v21.38y3,11xf5nae.8gsx,120p0kql.92c,13pttqwr.s4q,13y5g12u.gw80,148nb8y5.6mc0,14mmxdzs.196q,14nklm6n.b9c,14s3qax2.1ws,14xzdo0x.6,15g54lr2.jl,16344ys9.8w,16tfd7bg.3hc,16uk21n3.3yl,16w7dxff.8pc,17expfy0.1a5c,18yzql3r.80,19mjj3hy.2iy2o,19q1lufp.2n74,1a8gahdv.krk,1aayg5yr.9u9,1adlbgma.2uk0,1clpntrh.iwc0,1cpktfe7.2doc0,1cv4za3b.2gi,1d7r6vrn.13rz4,1dg0xv4b.plfy,1dsa785g.ye6,1dtmb92z.104t,1dv47x23.z0,1emc9fpf.elcl,1eximvmt.1r1k0,1f4g5eon.5uu,1faw118v.l9c,1fkr8nb7.mc,1gcvn19a.6io,1gfyn7i4.85c,1gz2ffqs.19daa,1h64x9xb.6o0,1h9o4eq3.5pcy,1hzxn8hb.76no,1jyc6dxp.2w00,1l3dla4s.2,1mmvvt9u.koz0,1nn6eqjg.ge80,1pbfm1tx.afo,1pckz6z9.3k0,1pmzd82s.c50,1pnyvfrx.a7o0,1qauxw4c.gvqj,1racy60a.e,1sizbxtk.48lr,1truia09.tpg,1udf9fev.4a60,1v40snxd.drko,1vdfhxki.5c0,1w1x7oej.bpc,1w7p7s4l.1kiyo,1wjqp1p0.3t5x,1yp014gn.c8,1z0cpls0.h4m,20qssspi.y8,21x4d9x1.8325,21zv5frv.1fw,22e7nkiq.19qr,22kl3t2s.8nmj,22n8jwsg.7rw8,22ygy30v.2c0,2333nvid.1bi80,235c1m8d.9h0,239jdz7c.7s0,26wc5q5i.cry0,27g3lqk4.1fc,28fwi03h.2z50,29zcc9j0.77c,2a2s4bv7.1odlo,2a36yndo.163g,2b3xae2e.42bk,2cs2mm2s.4zr0,2ct8jij8.1bs0,2dzv9gcc.nmpq,2fvbn2ma.2o,2gbo87du.1364,2hj1o8fg.cyps,2hxi56r9.538,2jvs1q54.2e5c,2jy289ul.mw9,2l5vr24o.34o4,2mrmfevy.ju0,2my8f6gm.2sgao,2nx810nf.uq0,2ornfsde.2w5,2phn2g6s.19c,2prgseuu.27g0,2pzc48qx.3wmj,2r0ro0s0.1900,2rjz3k4b.51c1,2rlevggm.602,2rzcenep.3g0,2s8e93xn.bmi,2t0vds74.c3k0,2tfnypx8.8ocw,2tvymt9j.2s28,2ud5gg2k.6xc,2uoin1cg.58qo,2v5a6j3h.31s,2v8hz48a.3z40,2w5n1yd9.2u0,2x0y8ch4.bd74,2xv3sxz4.11fo,2yzoe3g1.9zmo,2z130hyc.91z4,31kks9g0.7uo,31li1ale.xlid,31njhya5.a0,31rquhor.sdc,33tbk575.7hs,34dkca9w.kd1o,34hclrob.2b1ow,36jig43h.9ogw,37dst719.yg,37h3xzjv.aw0,37ikqoi4.ppwi,38llkt1x.cnn,390zggxv.3hxc,39okblkl.3yuo,39rzwrru.2ud,3beyu7fe.ci0,3bj64ny0.eu0,3c5psmug.1qcg,3c8gb14p.uwu0,3cywigjm.a34,3d1lej6z.cd0,3ent9gbc.2dv0,3fhqpfgu.d4yuo,3fxf64t1.ugg,3gbz3q2m.ifw0,3iafi9rn.a00,3ij5gt5l.7u0l,3iz21f4r.igtq,3kixxoei.140,3l3ei3rt.lo0,3lx37omt.5k,3ma7vo46.zsnn,3mci7xdu.13bm0,3mwtrpwp.2g0,3ndgn53r.9fuo,3npbs4v8.4xo4,3o6nxc2i.lw,3pa4e4q7.k0,3qwc0fkf.1kvt,3rymg4tx.grc,3sgbynb4.1tc0,3sjhjjxi.16ps,3tqwj33h.clc0,3uatb32c.syo,3ugdukkj.wwq,3ulgug9p.4jog,3uo1wzwr.1egi,3uulvt9m.qnms,3vp5g4vf.3edc,3wl20lrb.740,3wrwx6is.831s,3x29pbf6.1wi,3x8rq5nq.hyuo,3z474n9p.6bis,3z96gocp.ke0,3znbw84q.140,402qmvm7.fk0,40iio2el.eo0,40k5w03a.7fpl,423qxl8f.26czv,43sdir2m.bwti,44zs79eh.fc00,45dqgq13.kq0w,46ur7dxz.1rs0,470yut44.7ijr,474a1mc5.38cg,47dcry3i.28x0,47n4itde.96lb,47sxh8d3.5fku,488ruhaz.blo,489fjk85.9xi,48xfgshy.739,49fnygqh.efpy,49icy6it.2r,49ogdls3.7sc,49yxozej.24i,4aforeua.1dtc,4aox4jfo.48vc,4b0hs9v7.rk,4bar9it0.a0,4bfz9urn.e4r,4cthwcaa.gc0,4d28gx6r.bt0,4d6db2ep.mycv,4dpjrf1y.2gna,4drh8md2.84g0,4dwdptge.78i,4e0cpjgs.3k00,4eu7nvvw.5prb,4ftaeg96.b0i,4gfxs0c0.395t,4i1m8yxw.1d3c,4ib8fe6o.2j9c,4ihugz8c.2666,4ii6uopc.4he0,4jpvbvrg.9fr,4k5ecald.8xzc,4k9b9g3x.12a,4ktdach0.1abw0,4l4mcu96.3pdc,4l8dmt3w.19yo,4lz2si5u.dg0,4o2sr05k.6klc,4o7hawrd.ba8,4oiwbeu8.8g4r,4oyh93hz.17k0,4pa7xojz.1r3i,4qm60c18.1fo0,4qwsdd3z.14i0,4rmsq219.c3140,4s1yphc4.4qyk,4tmtubem.289c,4v5yo16t.byo,4vr61trt.46dk,4vu71mkh.asg0,4wro7xrg.3ti,4x7e9jh3.2fc,4xnm584u.2dc,4y3zfrjx.alo0,4yx7hhtv.90s,4zoj90iy.9rjl,516063aj.hngo,51pw74xc.92yo,52e6qh2d.h3u,52geli2l.8yi0,52njglvd.85c,53c3kb3n.33i0,53cmrl06.h2i8,541o1pt0.7e1i,548795yz.1kap,55ag3832.25q0,56byrw9h.176h,582fzpvt.lww,58e7gx9e.1lnc0,58x13oke.wu,59iyf0fp.fi,5b5glfat.468,5bbfrnpv.eg,5brfa5p6.8c3c,5c2v3jud.2a80,5ckaw68f.8uhc,5e01r7m2.1807f,5ea7g7ku.4bn1,5ff88wer.b990,5g3oovx1.19k,5h7fhdcq.n9z9,5i9zllly.5o0,5icprond.16i,5iw3ulvn.100g,5j018ouz.o1i,5jusnf0a.87vz,5knyxtx5.3f00,5kupgqwn.nxy,5l8fzgwp.67m0,5m533j3p.fx5t,5mebc8nu.3ewg,5nbq68mc.4ow,5nd5vobx.2408,5ndbq07h.6d1c,5nl5yavt.au,5nyq838o.1uri,5qmt81up.2di8,5r9t261b.2qc,5tek86z8.790,5u1zc3a2.4h1s,5wwymx7f.1gg0,5wxjvgwr.6oo,5wy62ddg.1ydpc,5xspo2r8.rbc,5xvco1yc.5vy1,5y2dgfvj.3k0,5z1ko4y1.20bm0,5zepx2l3.bmbw,5zndzag9.2jao,6124eob5.28ws0,62ez8tq1.16vf,63q9m2b6.16gw,63sgr5zq.387i,64ehzruc.6311,64wu7hvb.aho,65de6l8g.3920,65hp2zk6.6af,65le1y93.3q6,67b97bry.3yp0,68dy81pu.fpvl,68n6ftkr.8w0,68w87s59.400,694hr659.37fu,6a84e8qc.7vx,6anvzst5.4l0,6buf4ypo.o0,6cigpwdl.63c,6cwf84em.12nsq,6dsgujek.1og0,6fyq6tjc.v4w0,6gc7jze9.2lc,6habg56s.cnj,6lfghlls.io,6m5hk112.5pny8,6m9x7a52.72o,6mfv0nzj.65mz,6n4kd9tl.bvi,6ngcwdxm.1og,6nkkqsbw.y80,6pssbabe.9pjo,6qq00w9f.85c,6r1nmjig.15k0,6sc2vnql.m4o,6tfv4h2h.56io,6usy298j.2pag9,6vyw8nyp.1d20,6wqflltf.264,6wzhc0mg.fne,6xe9d4ew.35ac,6xj7ip87.47so,6xqu7709.1lq8,6y3hdvx4.1q80,6ymd376j.8dz4,6zbgapqx.1mg,6zrfn4f6.ncw0,6zs24bhz.48yo,71gi487q.137k,71hhvon3.g00,724aw9z9.3hk00,72drrbwe.19p0,72eqjz9o.3bdx,72lr7219.1lhet,72v0zcor.c80,73g8pd37.dkru,73ijsjd3.44w0,73uk9czr.1aet,74ew9dys.40s0,75wuxdpa.jqn2,7791kudm.wzs0,77y3wpza.560,783a9vcc.boii,7a5judzt.6f0,7ab7ay4p.nal,7ag8o73q.566z,7akr8n43.3sg0,7b12mkq9.1a68,7b81xyjd.8bs,7bcp4dxn.5kz,7c4da6uj.2i80,7ctlcttr.3274,7d4pzmc3.wmbu,7d78ldcg.f0d9,7eeayrxe.bcfi,7eu13x4l.307o,7fsvlckz.56o,7hwmk8hn.160,7jdnqsq1.530,7jetm2rl.3kdj,7jxedfcz.8kc,7k975su5.5oqs,7kb52csz.rbpc,7ke0s5jh.16yo,7mg1q2dn.3ow,7mm44sv9.2wg5,7ne8e00o.ae0,7nq8jzr5.1kb2,7nr23y46.1s60,7pavybtc.6r20,7prjqz9y.15uu4,7q3ouyms.4600,7qae2djw.vfz8,7qvopcms.1h8g,7rgl7pv1.eqi,7s4i4ft4.1v80,7s9pey38.5g0,7sgovuq1.12m9m,7siv0ia0.20w0,7totqn4z.m1c,7tpe7eo2.3y80,7u5wd74r.200,7ur1kgg3.3qdp,7uxibktb.6hgi,7ws2324i.g2yi,7xbra8zz.190w,7xsglmeg.12o,7yf9iebh.3ju,7yyu3876.1qkg0,7z7cns10.4yob,828a85g5.cs1s,82usy9e2.136i,839kev1r.lrc,83m8kc21.1j7i,84tj1by3.ouu,8723p3wk.6uo,8781ptj1.xq00,87qrxgoi.eg0,8804rhk8.381g,88hdw760.16vw,89abfe2b.1sb0,89fz7eux.154k0,89ne6yx9.6o,8aqkoegn.eec,8bbx43w5.xh5h,8e3kfmar.k31o,8ez9k0x5.dgo,8flg9ylw.15hko,8i29sk9j.4d4sn,8i9xag7q.xkc,8jzw0har.2h0,8l9e1cnv.53z40,8ly2puta.bjli,8m8ft3kw.oh9s,8mdovube.26grd,8mjd8dxh.po,8mp9i1db.23q0,8mwfaopl.hui,8nqc8v1n.7j84,8o3xr8yu.5xc,8oo33u3h.am80,8oxqm70c.1cfdu,8qhm1em0.94kw,8r38buas.8w0,8r88yn0e.t6,8rsnd0mi.af28,8rsx8530.62uf,8s3nx863.1wqg,8t28kgi0.6w,8tg94h86.5h3,8udgv0wl.92fi,8ugebnq1.kva,8wc2qwg2.4nfc,8wwtpsa9.gk0,8wxlikle.3260,8x1sixjp.200,8x6wlfax.9k8i,8xkigxix.5lc,8xqkxsg4.2i0,8xtkx10y.uas8,8y1y1qrh.arnp,8yfd8fs6.s1ao,8z8v1230.2w0,8zrmjdqy.5eu0,8zs7tfhy.byo,9040evhu.yg0,906kad4x.cbk2,90dph4r6.140,92bqfjlx.6ieo0,92dlhdhm.17pc,92ohnc1e.cus,930udp7y.8w0,93y0iu5j.1pc,942caxb3.2yy0,942pvc8j.oqxy,94tn4jqi.1870,94ympeyx.1x6g,96o3qggu.1eqrc,97auwzfk.jes,97ds5ijz.4wq9n,9820mvgi.1d0,98258u1l.40ao,98j44opt.15ez8,9alcu9st.u04m,9ba12l1n.31l9f,9d4quddv.byp,9da6179e.bnk,9dcnnpnh.2g0,9dy8tqqm.1sao,9esm5qxs.tj0,9fzcedfa.3w0,9g5u7ddl.1l3e,9g98hj3p.416o,9gldiz2m.mzso,9hao0obv.19lb0,9ie56yqx.1n4g,9lln6ruf.lo0,9lxmwy4f.6o,9mfgejxa.2z4,9mt0vctg.4cjyo,9mxzrr92.14ac,9o0ds5gf.djkw,9ph9z09s.q2o,9qiylt89.1uo,9qshtk93.jk,9r3ms2qp.q7c,9rqujr2z.g4e8,9rspr6m5.1euo,9sdsnh4i.6m0,9sjoqisr.aoxm,9svkpd62.vwg,9szy4ynw.37dr,9t6yfr8k.7eo,9tpu92jt.6go,9ulsyyk2.uyy,9ut29okj.1edc,9ux4gc4x.5q2s,9vdey483.61k0,9vlpfh3b.2csio,9vrya28v.due0,9w5kr3or.4ik,9wuso5h1.1g9c,9xi2mdja.dwlo,9yhd5myn.eul,9ynctb49.1xys9,9z983bru.afll,a0i7rr81.2tc,a0jkvyc4.171c,a192s08a.80,a1oz1egt.3n7rg,a3bv0jwr.226o,a4bvcpys.21nuo,a4p3hh1c.58w,a59mhjl4.1lk,a5n6gaxz.murl,a5ov7k9u.56c,a74seggg.qmkr,a7b8fqpo.2ma,a7fj2a4d.25e0,a85z39jg.n2o,a9h40e71.85c,aanjapik.hz0,abl562hs.bw0,abp67icl.ghs,ackq1w80.h01k,actfdmq0.29jl,adcmjg8t.1ho0,ae5wk4te.g3i,afp28mvk.uro0,agygz1fv.ygo,aipebs69.2brk,aiqq4ccw.2pxo,ajo5dk7e.4xqd,ajvbr8ng.sc,akway5gg.qqi,al112zf5.1lfc,am3yrj6u.p6o,ancylvse.8cgo,ant9dbwt.6fy,any7mhex.1uyu0,aoi2zwly.8gw,ap4gskxp.c56c,aq19606m.vaa0,aqb38znr.k0,aqhc8tdx.bmb,arahloa2.2pc,armimemo.ma8,arybnovp.4y0,arzkdpiv.44cm,atckfvr7.zk0,auazxm6o.1dzb4,aui0izbm.j1c,avm8i2d7.7m0g0,awr4nnik.2p2f,ax3twcrr.2a0,ay555quk.bkw,ayuw76mb.1go0,ayzcocmw.yczk,az2nshdr.1nok,azn41uyf.vco,b0lwy234.156u,b0pdcaiu.dei,b1lftcel.n4,b2khuin5.mbn,b2pr3je3.87k0,b3k7dsyc.7b0,b5tmz0ym.h80,b79p0hsf.73f,b7wco1my.37c,b88t2jt4.1pbc,b8bhp9g6.7ss0,b95vyu93.y4lc,b9cllqa1.2500,b9femedn.2czo,b9le8j2s.5i5c,b9yoml5h.5m08,bbk4qdbr.x0,bbm8vdla.1pwl,bbwdgxpy.2tts,bcrze5fx.l4k7,bcv9itgi.41c0,bdj4rf7f.3lju,be2x7e1i.rs0,bej9go7l.3kr1,bfbby9u7.5o0,bgi9i8m4.pry,bgpbt6o2.cpls,bh1wczj3.gh20,bhkln60n.134u,bj5tfvxd.9me74,bkr9mmb3.3j3,bkwjry45.2c,bl2xgk4f.7yc,blozai0h.1eo6,bmmy6aoc.e2o,bn10sphu.1bc,bnpb38fd.xh9,bp1dhrxl.6o0i,bpbxk945.1cpw0,bqquyep9.62n4,bqvj9b8s.3ww0,bqxiy0c9.1smo,bryfhykd.2fhmo,bs8b8y7h.9oc0,bsb4ocmt.1zk0,bsiu32pe.bs0,bt9jfu39.m70,bu7pqvz2.5658,buh6vslf.3fjy,buv0q1tz.bwg,bv1oiohr.45q,bw6j7m1k.1pk0,bwts81gu.jg0,bxxma4od.kjc,byo8xupz.60o0,bywkhs7d.1tg0,bzu0t5zt.vo0,c06mau2b.423c,c0k02ahn.5vo,c1796g11.5co,c1my6ex3.2da0,c1r3y84s.36b4,c23vo9s3.tedc,c30skd9w.4fj2,c334trf8.2i8,c372g2fy.ku0,c3ywimab.37lo0,c4159nc1.1k40,c6a2dqnf.29o0,c6sj7zgh.36g0,c7e9facb.55r0,c7ssrtn5.g3c,c82es498.12a8,c8ihehc7.uo,c8uxjbt7.3o0,c8xqdn43.5nu0,c96z0oq0.84i,c9amzcfo.o0,c9qtuzad.k5c,c9ufl8pv.igk,caxpm00w.3yju,cci9qe2n.cz30,cdjzj3hg.4tc,cg4jwb0u.19cao,cha5rn9b.2shs,cho80msz.49s,ci6o3lde.o5c,cjojwl9d.f4o,cklxzc72.1yu0,cky60qnz.2mtc,cl4uw5yz.62m,clw2f5a5.og0,clwb1g44.vpxc,cmefbvjf.cdzk,cocaw4gz.16mc,cofwdikr.3k00,con21kyv.csu0,cpgucutw.30c,cph0dlkr.4fbn',LOST=null,RUN_END=1000000000000n;
 function lostTotal(t){if(!LOST){LOST={};LOSSES.split(',').forEach(function(p){var a=p.split('.');LOST[String(parseInt(a[0],36))]=parseInt(a[1],36);});}return LOST[t]||0;}
-var SIZES=[200000,1000000,4000000,40000000],MAX_SIZE=40000000;
+var SIZES=[100000,1000000,4000000,40000000],MAX_SIZE=40000000;
 
 // ---------- page ----------
 host.innerHTML=
@@ -954,11 +955,11 @@ host.innerHTML=
  '<div class="at-node-btns"><button class="at-explore">Explore from here</button><button class="at-close">Close</button></div></div>'+
  '<div class="at-busy at-panel" hidden><div class="at-bar"><i></i></div><span></span></div>'+
  '<div class="at-tip" hidden></div>'+
- '<div class="at-helpbox at-panel" hidden>'+
- '<p><b>Accordion game trees.</b> Each dot is a position and each line a move. The deal is at the top (in the middle, seen from above), and each move takes one pile away, so every game runs down the tree. A position reached in more than one way is drawn once.</p>'+
- '<p>Most deals have far too many positions to draw, so they are shown as a sample: every position of the first few moves, then short searches like the solver\'s. Smaller trees, such as those of the lost deals, are drawn whole.</p>'+
- '<p>Drag to turn, right-drag to move, scroll or pinch to zoom. Click a dot to see its cards, and <i>Explore from here</i> to draw the tree from it. <i>Play</i> lets you play the deal.</p>'+
- '<p class="at-by"><span>Developed by Filip Jander <a href="https://filipjander.com" target="_blank" rel="noopener">filipjander.com</a></span><button class="at-helpclose">Close</button></p></div>'+
+ '<div class="at-helpbox at-panel" hidden><button class="at-helpclose" title="Close" aria-label="Close">\u00d7</button>'+
+ '<p><b>Accordion game trees.</b> Each dot is a position and each line a move. The deal is at the top, and each move takes away one pile.</p>'+
+ '<p>Most deals have far too many positions to draw, so they are sampled; small trees, like those of the lost deals, are drawn whole.</p>'+
+ '<p>Drag to turn, right-drag to move, scroll to zoom. Click a dot to see its cards.</p>'+
+ '<p class="at-by">Developed by Filip Jander <a href="https://filipjander.com" target="_blank" rel="noopener">filipjander.com</a></p></div>'+
  '<div class="at-msg at-panel" hidden></div><div class="at-hint at-panel" hidden></div>';
 function $(s){return host.querySelector(s);}
 var canvas=$('.at-gl'),tip=$('.at-tip'),busy=$('.at-busy'),nodeBox=$('.at-node'),side=$('.at-side');
@@ -976,7 +977,7 @@ function showNode(on){nodeBox.hidden=!on;host.classList.toggle('at-nodeopen',on)
     '</optgroup><option value="custom">Another size...</option>';
 })();
 function sizeName(s){return 'Up to '+(s>=1e6&&s%1e5===0?(s/1e6)+' million':Math.round(s).toLocaleString('en-US'));}
-var mem=navigator.deviceMemory||8,small=Math.min(screen.width,screen.height)<700,customSize=0,lastPreset=small||mem<8?200000:1000000;
+var mem=navigator.deviceMemory||8,small=Math.min(screen.width,screen.height)<700,customSize=0,lastPreset=small||mem<8?100000:1000000;
 sizeSel.value=String(lastPreset);
 // A size typed in: 2500000, 2,500,000, 2.5m, 500k or 1e6.
 function parseSize(t){t=String(t).trim().toLowerCase().replace(/[\s_]/g,'');if(/,(?!\d{3}(?!\d))/.test(t))return 0;
@@ -1161,7 +1162,7 @@ var GOLD=[255,208,60],WIN=[54,224,143],UNK=[95,118,180],WHITE=[255,255,255];
 var TURBO=[[48,18,59],[67,113,232],[38,188,225],[46,238,153],[164,252,60],[239,205,58],[251,126,33],[200,40,10]];
 function ramp(stops,t){t=Math.max(0,Math.min(1,t))*(stops.length-1);var i=Math.min(stops.length-2,Math.floor(t)),f=t-i,a=stops[i],b=stops[i+1];
   return [a[0]+(b[0]-a[0])*f|0,a[1]+(b[1]-a[1])*f|0,a[2]+(b[2]-a[2])*f|0];}
-var LOSS=[[255,160,40],[245,95,40],[205,30,45],[140,20,70]],LOSSX=[224,64,94],NOTK=[120,104,150];
+var RED=[232,62,70],NOTK=[120,104,150];
 var BEST=[[255,160,40],[230,70,60],[170,40,140],[90,60,200],[50,90,170]];
 function colourOf(i,mode){
   if(i===0)return WHITE;
@@ -1169,14 +1170,11 @@ function colourOf(i,mode){
   var s=G.status[i],b=G.best[i],x=exactAt(i);
   if(mode==='best'){if(s===1)return GOLD;return x?ramp(BEST,(b-2)/14):NOTK;}
   if(G.len[i]===1)return GOLD;
-  if(s===1)return WIN;if(s===2)return x?ramp(LOSS,(b-lossBase())/8):LOSSX;return UNK;
+  if(s===1)return WIN;if(s===2)return RED;return UNK;
 }
 // A position's fewest piles is only known when everything below it is drawn (exact); the short searches skip moves
-// the dead-end test rules out, so their lost positions get one colour of their own.
+// the dead-end test rules out.
 function exactAt(i){return (G.expanded[i]&8)!==0;}
-// Lost positions are coloured by how far they fall short of the best the deal allows: 2 piles in a deal that can be
-// won, the deal's own best in a lost one.
-function lossBase(){return G.status[0]===2&&exactAt(0)?G.best[0]:2;}
 function legend(mode){
   function rgb(c){return 'rgb('+c.join(',')+')';}
   function dot(c,t,cls){return '<span><i'+(cls?' class="'+cls+'"':'')+' style="background:'+c+'"></i>'+t+'</span>';}
@@ -1184,10 +1182,7 @@ function legend(mode){
   if(mode==='best')return dot(rgb(GOLD),'can win')+dot(rgb(BEST[0]),'2 piles at best')+dot(rgb(ramp(BEST,0.5)),'9')+dot(rgb(BEST[4]),'16 or more')+
     (G.nInexact?dot(rgb(NOTK),'not worked out'):'');
   var h=dot(rgb(WHITE),'the deal')+(G.counts.win?dot(rgb(WIN),'can still win')+dot(rgb(GOLD),'won'):'');
-  // Lost positions run from orange (as few piles as the deal allows) to dark red; one entry covers them all.
-  // (in a sample almost all of them are lost without their fewest piles worked out, and have a red of their own).
-  if(G.nInexactLoss>G.nExactLoss)h+=dot(rgb(LOSSX),'lost');
-  else if(G.nExactLoss)h+=dot('linear-gradient(90deg,'+LOSS.map(rgb).join(',')+')','lost (orange: fewest piles left)','at-grad');
+  if(G.nExactLoss+G.nInexactLoss)h+=dot(rgb(RED),'lost');
   if(G.counts.unknown)h+=dot(rgb(UNK),'not known');
   return h;
 }
