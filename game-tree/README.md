@@ -23,15 +23,36 @@ those left out of the menu), or `?seed=123`, with `&size=1000000` (any number of
 such as `2.5m`), `&view=top` (`3d`, `top`, `side`), and three ways of drawing that have no control on the page:
 `&shape=spindle`, `&color=best` (`outcome`, `best`, `depth`) and `&edges=all` (`tree`, `all`, `none`).
 
+The seed box also takes a deal's cards, such as `AS 5C TD 7H` (T or 10, any case), and a seed or cards can be followed
+by moves, such as `5S>AS JC>AC`, which open Play at their end; moves typed alone are played on the deal shown. A typed
+deal can have any number of cards and isn't known to be winnable, so like a seed past the first trillion it is drawn
+whole when it fits (up to 4 million positions) and sampled otherwise.
+
+**Links.** The Link button in a clicked position's box, or in Play, copies a link to it: `?seed=3` or `?deal=AS5CTD7H`
+(the cards run together), then `&from=` (the moves to a position explored from), `&at=` (the moves to the position
+picked) or `&moves=` (a game, opened in Play), each written `5S-AS.JC-AC`, and `&line=`, the gold or red line drawn
+from there. The line is played into the tree, so the position shows the same line on a phone's smaller tree, and at the
+same size the rest of the tree is the one the sharer saw (`&size=` is added when the size isn't the device's usual
+one). A link that can't be read to the end loads what it can and says which move or card failed. Clicking the words
+*gold line* or *red line* copies the deal's cards and the moves along that line as text, which pastes back into the
+seed box or can be checked with real cards.
+
 ## What it shows
 
-- **Colours**, with a key always at the bottom left: green positions can still win, gold ones are won (one pile), red
+- **Colors**, with a key always at the bottom left: green positions can still win, gold ones are won (one pile), red
   ones are lost and blue-grey ones aren't settled either way. The positions that can win, and the moves between them,
   are drawn again on top so that the few winning lines in a hard deal stand out. With `&color=best`, positions are
-  coloured by the fewest piles they can get down to instead.
-- **Chart**: under the deal's numbers, the positions drawn after each move (log scale, in the key's colours), with a
+  colored by the fewest piles they can get down to instead.
+- **Chart**: under the deal's numbers, the positions drawn after each move (log scale, in the key's colors), with a
   place for every move up to a win, so a lost tree is seen to stop short. Point at or tap a bar for its counts; the
   selected position's move is marked under it.
+- **Simple rules and random play**: above the chart, one sentence on how two simple ways to play end, leaps first (the
+  rightmost card that can go onto the card 3 places to its left, else the rightmost that can go onto the card next to
+  it) and slides first (the other way round), and how random play does: 10,000 games seeded by the cards, so the same
+  every time and played while the tree is built, or the exact chance on a complete tree that can win. From the deal,
+  random play almost never wins: 46 of deals 0 to 999 win any of their 10,000 games, and neither rule wins any of
+  them. Taking the rightmost move ends on fewer piles than the leftmost: 5.6 and 8.6 on average over those deals,
+  against 10.0 and 16.8.
 - **Rings**: the deal is at the centre (the top, in 3D) and each move one ring further out, each position near the
   positions it comes from and never more than 2 units along its ring from the one whose move is drawn, so a winning
   line runs on without big jumps sideways. With `&shape=spindle` in the address, each position is placed by which cards are covered
@@ -103,7 +124,7 @@ node game-tree/test-engine.mjs
 runs the page's engine on the 51 lost deals of every size up to 700,000 positions and checks, for each, that it finds as
 many positions as the proof (`research/lean/automaton/certificates.csv`), as many moves as the plain proof search
 (`hard-deals/proofs/`), and the same fewest piles as the record (`hard-deals/INDEX.md`); then that the page's list of
-losses is the proofs' list, that a hard deal's winning line plays and wins, and that a sampled tree's colours agree with
+losses is the proofs' list, that a hard deal's winning line plays and wins, and that a sampled tree's colors agree with
 its moves, with a separate exhaustive search confirming the fewest piles of positions marked exact and that positions
 marked lost can't win. All pass. `node game-tree/test-engine.mjs 23000000` adds bigger losses, up to the biggest (it
 matches its proof's 22,066,800 positions, 134,505,640 moves and 22 piles; a few minutes and 2 GB).

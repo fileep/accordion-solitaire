@@ -50,6 +50,7 @@ body.standalone #acc-tree canvas.at-gl,#acc-tree:fullscreen canvas.at-gl,#acc-tr
 #acc-tree .at-note:empty{display:none}
 #acc-tree .at-stats{margin:4px 0}
 #acc-tree .at-stats b{color:#fff;font-weight:600}
+#acc-tree .at-stats div{margin-top:4px}
 #acc-tree .at-chartbox{position:relative;margin:8px 0 3px}
 #acc-tree canvas.at-chart{width:100%;height:60px;display:block}
 #acc-tree .at-chartval{position:absolute;left:0;right:0;bottom:100%;margin-bottom:3px;background:#0a0c14;border:1px solid #2c3346;border-radius:6px;
@@ -97,8 +98,15 @@ body.standalone #acc-tree canvas.at-gl,#acc-tree:fullscreen canvas.at-gl,#acc-tr
 #acc-tree button.at-pcard.at-tgt{border-color:#36e08f;box-shadow:0 0 0 2px #36e08f}
 #acc-tree .at-pnote{color:#8d96aa;font-size:12px;margin-bottom:6px}
 #acc-tree .at-node-btns button:disabled{opacity:.45;cursor:default}
+/* Link copies a link to the position or game; the words "gold line" or "red line" copy the deal and the line as text
+   (in the line's color, with a bigger target for fingers). */
+#acc-tree button.at-link{float:right;margin:0 0 4px 8px;padding:1px 8px;font-size:12px}
+#acc-tree .at-pcards,#acc-tree .at-cards{clear:right}
+#acc-tree button.at-txt{background:none;border:0;border-radius:0;padding:0;color:#ff785a;text-decoration:underline;text-underline-offset:2px;position:relative}
+#acc-tree button.at-txt.at-win{color:#ffd03c}
+#acc-tree button.at-txt:hover{background:none;text-decoration-thickness:2px}
 /* Narrow blocks (a phone, or a narrow blog column): the view buttons go on the row below the top one, and the panels
-   for a position and for playing open at the bottom, over the colour key. */
+   for a position and for playing open at the bottom, over the color key. */
 #acc-tree.at-narrow{font-size:12px}
 #acc-tree.at-narrow .at-side{width:min(240px,calc(100% - 190px));padding:6px 8px}
 #acc-tree.at-narrow .at-tools{position:absolute;right:0;top:calc(100% + 8px);margin:0;gap:5px}
@@ -119,7 +127,7 @@ body.standalone #acc-tree canvas.at-gl,#acc-tree:fullscreen canvas.at-gl,#acc-tr
 #acc-tree.at-narrow button.at-pcard{width:23px;height:31px;font-size:11px}
 #acc-tree.at-narrow button.at-pcard span{font-size:13px}
 /* Fingers need bigger targets. */
-@media (pointer:coarse){#acc-tree button:not(.at-pcard),#acc-tree select,#acc-tree input{min-height:36px}#acc-tree button.at-full{min-width:36px}#acc-tree .at-hd button{min-height:32px}}
+@media (pointer:coarse){#acc-tree button:not(.at-pcard),#acc-tree select,#acc-tree input{min-height:36px}#acc-tree button.at-full{min-width:36px}#acc-tree .at-hd button,#acc-tree button.at-link{min-height:32px}#acc-tree button.at-txt{min-height:0}#acc-tree button.at-txt::after{content:"";position:absolute;left:-6px;right:-6px;top:-10px;bottom:-10px}}
 @media (max-width:600px){#acc-tree{height:620px;height:min(620px,80vh)}}
 </style>
 <div id="acc-tree"></div>
@@ -132,7 +140,6 @@ host.setAttribute('data-ready','1');
 
 // ---------- cards and deals (the same generator as acc and the game) ----------
 var RANKS='A23456789TJQK',SUITS='CDHS',SYM=['\u2663','\u2666','\u2665','\u2660'];
-function cardByte(s){return SUITS.indexOf(s[1])<<4|RANKS.indexOf(s[0]);}
 function cardText(b){return (RANKS[b&15]==='T'?'10':RANKS[b&15])+SYM[b>>4];}
 function isRed(b){var s=b>>4;return s===1||s===2;}
 // <deal>
@@ -715,6 +722,9 @@ function workerMain(self){
         var r=searchOut(q.searchCap||Math.max(2000,Math.min(6000,Math.round(budget/170))),runs,q.branches==null?7:q.branches,focus);
         idle=r.added?0:idle+1;progress(false);}
       dives=runs.tried;
+      // A position a link points at (q.at: the moves to it, then along the line drawn from it) goes in last, so the rest
+      // is the tree drawn without it.
+      if(q.at&&q.at.length)playLine(q.at);
     }
     // A whole tree found while its moves weren't being kept (it was thought too big) has them found in finish.
     finish(complete,complete&&rec,dives,runs.won,linePath,playPath,q,cb);
@@ -964,7 +974,7 @@ var SIZES=[100000,1000000,4000000,40000000],MAX_SIZE=40000000;
 host.innerHTML=
  '<canvas class="at-gl"></canvas>'+
  '<div class="at-top"><select class="at-ex" title="Example deals"></select>'+
- '<input class="at-seed" placeholder="Seed" spellcheck="false" autocomplete="off" inputmode="numeric" enterkeyhint="go" title="Type a seed and press Enter: the same deals as the game">'+
+ '<input class="at-seed" placeholder="Seed or cards" spellcheck="false" autocomplete="off" autocapitalize="characters" enterkeyhint="go" title="A seed (the same deals as the game) or cards such as AS 5C TD, then moves such as 5S&gt;AS if you like; Enter to draw">'+
  '<button class="at-rand">Random<span class="at-long"> deal</span></button><select class="at-size" title="How many positions to draw at most: bigger trees show more but take longer, and 40 million needs a few GB of memory"></select>'+
  '<input class="at-custom" placeholder="Positions" spellcheck="false" autocomplete="off" title="Any number of positions from 1,000 to 40 million, such as 2500000 or 2.5m; Enter to draw" hidden>'+
  '<button class="at-playbtn" title="Play this deal: the tree from your position stays lit">Play</button>'+
@@ -974,10 +984,10 @@ host.innerHTML=
  '<div class="at-side at-panel"><div class="at-hd"><div class="at-crumbs"></div><div class="at-title"></div></div><div class="at-body"><div class="at-note"></div><div class="at-stats"></div>'+
  '<div class="at-chartbox"><canvas class="at-chart"></canvas><div class="at-chartval" hidden></div></div><div class="at-chartcap">Positions after each move (log scale)</div></div></div>'+
  '<div class="at-key at-panel"><span class="at-what">Dot: a position. Line: a move.</span><span class="at-legend"></span></div>'+
- '<div class="at-play at-panel" hidden><div class="at-phead"></div><div class="at-pcards"></div>'+
+ '<div class="at-play at-panel" hidden><button class="at-link" title="Copy a link to this game">Link</button><div class="at-phead"></div><div class="at-pcards"></div>'+
  '<div class="at-pnote">Click a card to move it onto the card 1 or 3 places to its left, if they share a suit or rank. The tree from your position stays lit; the white line is your game.</div>'+
  '<div class="at-node-btns"><button class="at-undo">Undo</button><button class="at-restart">Restart</button><button class="at-phint">Hint</button><button class="at-pbest">Play best move</button><button class="at-pback" hidden>\u2190 Back</button><button class="at-pclose">Close</button></div></div>'+
- '<div class="at-node at-panel" hidden><div class="at-node-head"></div><div class="at-cards"></div>'+
+ '<div class="at-node at-panel" hidden><button class="at-link" title="Copy a link to this position">Link</button><div class="at-node-head"></div><div class="at-cards"></div>'+
  '<div class="at-node-btns"><button class="at-explore">Explore from here</button><button class="at-close">Close</button></div></div>'+
  '<div class="at-busy at-panel" hidden><div class="at-bar"><i></i></div><span></span></div>'+
  '<div class="at-tip" hidden></div>'+
@@ -985,6 +995,8 @@ host.innerHTML=
  '<p><b>Accordion game trees.</b> Each dot is a position and each line a move. The deal is at the top, and each move takes away one pile.</p>'+
  '<p>Most deals have far too many positions to draw, so they are sampled; small trees, like those of the lost deals, are drawn whole.</p>'+
  '<p>Drag to turn, right-drag to move, scroll to zoom. Click a dot to see its cards.</p>'+
+ '<p>The seed box also takes cards, such as AS 5C TD, then moves, such as 5S&gt;AS. Click the words gold line or red line to copy the line as text.</p>'+
+ '<p>Simple rules: leaps first moves the rightmost card it can onto the card 3 places to its left, else the rightmost it can onto the card next to it; slides first the other way round. Random play picks each move at random.</p>'+
  '<p class="at-by">Developed by Filip Jander <a href="https://filipjander.com" target="_blank" rel="noopener">filipjander.com</a></p></div>'+
  '<div class="at-msg at-panel" hidden></div><div class="at-hint at-panel" hidden></div>';
 function $(s){return host.querySelector(s);}
@@ -1003,7 +1015,7 @@ function showNode(on){nodeBox.hidden=!on;host.classList.toggle('at-nodeopen',on)
     '</optgroup><option value="custom">Another size...</option>';
 })();
 function sizeName(s){return 'Up to '+(s>=1e6&&s%1e5===0?(s/1e6)+' million':Math.round(s).toLocaleString('en-US'));}
-var mem=navigator.deviceMemory||8,small=Math.min(screen.width,screen.height)<700,customSize=0,lastPreset=small||mem<8?100000:1000000;
+var mem=navigator.deviceMemory||8,small=Math.min(screen.width,screen.height)<700,customSize=0,lastPreset=small||mem<8?100000:1000000,SIZE0=lastPreset;
 sizeSel.value=String(lastPreset);
 // A size typed in: 2500000, 2,500,000, 2.5m, 500k or 1e6.
 function parseSize(t){t=String(t).trim().toLowerCase().replace(/[\s_]/g,'');if(/,(?!\d{3}(?!\d))/.test(t))return 0;
@@ -1029,8 +1041,8 @@ function program(vs,fs){var p=gl.createProgram();gl.attachShader(p,shader(gl.VER
 var DIM='vec3 col=mix(c.rgb*0.45+vec3(0.157,0.18,0.243),c.rgb,k);float al=c.a*mix(0.2,1.0,k);';
 var VS_P='attribute vec3 p;attribute vec4 c;attribute float k;uniform mat4 m;uniform float a;uniform float s;uniform float lo;uniform float hi;uniform float ys;varying vec4 v;'+
   'void main(){vec4 q=m*vec4(p.x,p.y*ys,p.z,1.0);gl_Position=q;gl_PointSize=clamp(s/q.w,lo,hi);'+DIM+'v=vec4(col,al*a);}';
-// Dots and lines add up their light (colour times weight, and weight) in a floating-point buffer; a last pass divides
-// out the colour and turns the total weight into brightness, so crowded places glow brighter but keep their colour.
+// Dots and lines add up their light (color times weight, and weight) in a floating-point buffer; a last pass divides
+// out the color and turns the total weight into brightness, so crowded places glow brighter but keep their color.
 var FS_P='precision mediump float;varying vec4 v;void main(){vec2 d=gl_PointCoord-vec2(0.5);float r=dot(d,d);if(r>0.25)discard;float w=v.a*(1.0-3.6*r);gl_FragColor=vec4(v.rgb*w,w);}';
 var VS_L='attribute vec3 p;attribute vec4 c;attribute float k;uniform mat4 m;uniform float a;uniform float ys;uniform vec2 off;varying vec4 v;void main(){gl_Position=m*vec4(p.x,p.y*ys,p.z,1.0);gl_Position.xy+=off*gl_Position.w;'+DIM+'v=vec4(col,al*a);}';
 var FS_L='precision mediump float;varying vec4 v;void main(){gl_FragColor=vec4(v.rgb*v.a,v.a);}';
@@ -1221,7 +1233,7 @@ function draw(whole){
     gl.drawArrays(gl.POINTS,0,hl.n);}
 }
 // How bright one dot is: dimmer for big trees, whose dots pile up more, and brighter when zoomed in, which spreads them.
-// While a big tree is built, the depths laid out so far are drawn as they come (PV), in the colour of positions not
+// While a big tree is built, the depths laid out so far are drawn as they come (PV), in the color of positions not
 // settled yet; picking waits for the finished tree.
 var PV=null,bufPV=null,camMoved=false;
 function drawPreview(W,H,mv){
@@ -1269,7 +1281,7 @@ function frame(){
   if((dirty||stillDue&&!moving())&&onScreen&&!document.hidden)draw();
   requestAnimationFrame(frame);
 }
-// The space the colour key takes at the bottom (it wraps on narrow blocks), kept while the key is hidden.
+// The space the color key takes at the bottom (it wraps on narrow blocks), kept while the key is hidden.
 function keySpace(){var k=$('.at-key').offsetHeight;if(k)host.style.setProperty('--kb',(k+16)+'px');}
 function playSpace(){if(play&&play.on)host.style.setProperty('--pb',($('.at-play').offsetHeight+16)+'px');}
 function resize(){
@@ -1285,14 +1297,14 @@ function resize(){
 if(window.ResizeObserver)new ResizeObserver(resize).observe(host);else window.addEventListener('resize',resize);
 resize();requestAnimationFrame(frame);
 
-// ---------- colours ----------
+// ---------- colors ----------
 var GOLD=[255,208,60],WIN=[54,224,143],UNK=[95,118,180],WHITE=[255,255,255];
 var TURBO=[[48,18,59],[67,113,232],[38,188,225],[46,238,153],[164,252,60],[239,205,58],[251,126,33],[200,40,10]];
 function ramp(stops,t){t=Math.max(0,Math.min(1,t))*(stops.length-1);var i=Math.min(stops.length-2,Math.floor(t)),f=t-i,a=stops[i],b=stops[i+1];
   return [a[0]+(b[0]-a[0])*f|0,a[1]+(b[1]-a[1])*f|0,a[2]+(b[2]-a[2])*f|0];}
 var RED=[232,62,70],NOTK=[120,104,150];
 var BEST=[[255,160,40],[230,70,60],[170,40,140],[90,60,200],[50,90,170]];
-function colourOf(i,mode){
+function colorOf(i,mode){
   if(i===0)return WHITE;
   if(mode==='depth')return ramp(TURBO,G.depth[i]/Math.max(1,G.maxDepth));
   var s=G.status[i],b=G.best[i],x=exactAt(i);
@@ -1314,10 +1326,10 @@ function legend(mode){
   if(G.counts.unknown)h+=dot(rgb(UNK),'not known');
   return h;
 }
-function recolour(){
+function recolor(){
   if(!G)return;var n=G.n,mode=colorMode,c=new Uint8Array(4*n);
   // Wins weigh most and unsearched positions least, so the few winning lines stand out of the crowd.
-  for(var i=0;i<n;i++){var k=colourOf(i,mode),s=G.status[i],w=mode==='depth'?200:(i===0||s===1)?255:s===2?(G.complete?150:105):60;
+  for(var i=0;i<n;i++){var k=colorOf(i,mode),s=G.status[i],w=mode==='depth'?200:(i===0||s===1)?255:s===2?(G.complete?150:105):60;
     c[4*i]=k[0];c[4*i+1]=k[1];c[4*i+2]=k[2];c[4*i+3]=w;}
   gl.bindBuffer(gl.ARRAY_BUFFER,bufCol);gl.bufferData(gl.ARRAY_BUFFER,c,gl.STATIC_DRAW);sceneVer++;
   $('.at-legend').innerHTML=legend(mode);keySpace();drawChart();dirty=true;
@@ -1414,7 +1426,7 @@ canvas.addEventListener('wheel',function(e){
   if(!(document.body.classList.contains('standalone')||fullNow()||engaged||e.ctrlKey||e.metaKey)){hint('Click the tree first, or hold Ctrl, to zoom with the wheel');return;}
   e.preventDefault();zoomAt(Math.exp(e.deltaY*(e.deltaMode?0.05:0.0015)),e.clientX,e.clientY);},{passive:false});
 canvas.addEventListener('webglcontextlost',function(e){e.preventDefault();lost=true;message('The graphics were reset; they should come back by themselves, or after reloading the page.');},false);
-canvas.addEventListener('webglcontextrestored',function(){lost=false;initGL();message('');if(G){var s=G.sel;applyShape();recolour();rebuildEdges();if(play.on)updatePlay();if(s>=0)select(s);}dirty=true;},false);
+canvas.addEventListener('webglcontextrestored',function(){lost=false;initGL();message('');if(G){var s=G.sel;applyShape();recolor();rebuildEdges();if(play.on)updatePlay();if(s>=0)select(s);}dirty=true;},false);
 canvas.addEventListener('dblclick',function(){if(G&&G.sel>=0){var i=G.sel;cam.tx=G.pos[3*i];cam.ty=G.pos[3*i+1]*G.ys;cam.tz=G.pos[3*i+2];if(cam.ortho)cam.oh*=0.5;else cam.dist*=0.5;moveT=performance.now();dirty=true;}});
 function fitButtons(){host.querySelectorAll('[data-view]').forEach(function(b){b.classList.toggle('on',b.getAttribute('data-view')===view);});}
 function panBy(dx,dy){var v=camVectors(),w=worldPerPixel()*dpr;cam.tx+=(-dx*v.r[0]+dy*v.u[0])*w;cam.ty+=(-dx*v.r[1]+dy*v.u[1])*w;cam.tz+=(-dx*v.r[2]+dy*v.u[2])*w;moveT=performance.now();dirty=true;}
@@ -1461,16 +1473,95 @@ function moveText(i){var p=G.parent[i];if(p<0)return '';var m=G.pmove[i];
   return cardText(cardsOf(p)[m>>1])+' onto '+cardText(G.cov[i]);}
 function showStats(){
   var h='',s0=G.status[0];
-  if(G.complete){h+='The whole tree: <b>'+fmt(G.n)+'</b> positions. ';
+  if(G.complete){h+='The whole tree: <b>'+fmt(G.n)+'</b> position'+(G.n===1?'':'s')+'. ';
     if(s0===1){var wl=wlOf(0);h+=wl?'<b>'+big(wl[0])+'</b> of the '+big(wl[1])+' ways to play on win.':'It can be won.';}
     else h+='No way to win: the best leaves <b>'+G.best[0]+'</b> piles.';}
   else{h+='A sample of <b>'+fmt(G.n)+'</b> positions: all of them for the first few moves, then <b>'+fmt(G.dives)+'</b> short search'+(G.dives===1?'':'es')+' like the solver\'s; <b>'+fmt(G.divesWon)+'</b> found a win.';
     if(cur.total)h+=' The whole tree has '+fmt(cur.total)+' positions: choose a bigger size to see them all.';}
   if(edgeNote)h+='<br><span style="color:#7d869c">'+edgeNote+'</span>';
+  var ht=habitsText(G.root);if(ht)h+='<div>'+ht+'</div>';
   $('.at-stats').innerHTML=h;
 }
+// How the deal (or the position explored) goes for two simple rules and for random play, from its cards alone. Leaps
+// first plays the rightmost leap, else the rightmost slide; slides first the rightmost slide, else the rightmost leap.
+// (The rightmost do far better than the leftmost: over deals 0 to 4,999 they end on 5.6 and 8.5 piles on average, the
+// leftmost on 10.1 and 16.9.) Random play picks each move at random among those allowed, until stuck or won. On a whole
+// tree that can win, its chance is worked out exactly (chanceOf); elsewhere RG games are played, with a random
+// generator seeded by the cards, so a deal always gets the same figures. From a deal random play almost never wins
+// (about 1 game in 20,000 for seed 185, the easiest example, and 1 in 50,000 for seed 0), so 1 to 3 wins in 10,000
+// games are mostly luck and the piles left on average are always given too. The games are played while the tree is
+// built, in the page's idle time: 10,000 take 70 to 90 ms on a laptop. A deal's figures are kept for when its tree is
+// drawn again.
+var RG=10000,SAME=new Uint8Array(256),habits={job:null,done:{},xjob:null,exact:{}};
+for(var x1=0;x1<256;x1++)SAME[x1]=((x1&0xF0)===0||(x1&0x0F)===0)?1:0;
+// The piles left by a rule: d1 is 3 for leaps first, 1 for slides first.
+function byRule(root,d1){
+  var row=new Uint8Array(root),n=row.length,i,d,k;
+  for(;;){for(k=0,i=-1;k<2&&i<0;k++){d=k?4-d1:d1;for(i=n-1;i>=d&&!SAME[row[i]^row[i-d]];i--);if(i<d)i=-1;}
+    if(i<0)return n;row[i-d]=row[i];row.copyWithin(i,i+1,n);n--;}
+}
+// Plays count more random games of job j.
+function randomGames(j,count){
+  var row=j.row,mv=j.mv,root=j.root,r=j.r,n,i,k,c,m;
+  for(var g=0;g<count;g++){row.set(root);n=root.length;
+    for(;;){k=0;
+      for(i=1;i<n;i++){c=row[i];if(SAME[c^row[i-1]])mv[k++]=i<<1;if(i>2&&SAME[c^row[i-3]])mv[k++]=i<<1|1;}
+      if(!k)break;r^=r<<13;r^=r>>>17;r^=r<<5;m=mv[(r>>>0)*k/4294967296|0];i=m>>1;
+      row[i-((m&1)?3:1)]=row[i];row.copyWithin(i,i+1,n);n--;}
+    if(n===1)j.won++;j.sum+=n;if(n<j.lo)j.lo=n;if(n>j.hi)j.hi=n;}
+  j.r=r;j.g+=count;
+}
+// f(ms) is called when the page has ms to spare.
+var idle=window.requestIdleCallback?function(f){requestIdleCallback(function(dl){f(dl.didTimeout?5:dl.timeRemaining());},{timeout:1000});}:function(f){setTimeout(function(){f(8);},15);};
+// Starts the random games of a row of cards, unless they are known or on the way.
+function habitsStart(root){
+  var key=root.join(),j=habits.job;if(habits.done[key]||(j&&j.key===key))return;
+  var r=hashStr(key)||1;j=habits.job={key:key,root:new Uint8Array(root),row:new Uint8Array(52),mv:new Uint8Array(104),r:r,g:0,won:0,sum:0,lo:99,hi:0};
+  idle(function step(ms){
+    if(habits.job!==j)return;var t=performance.now()+ms-1;
+    do randomGames(j,Math.min(50,RG-j.g));while(j.g<RG&&performance.now()<t);
+    if(j.g<RG){idle(step);return;}
+    habits.job=null;habits.done[key]={won:j.won,avg:j.sum/RG,lo:j.lo,hi:j.hi};
+    if(G&&G.root.join()===key)showStats();});
+}
+// The exact chance that random play wins, on a whole tree that can win (every move is drawn there, and goes to a higher
+// number): from the last position up, each one's is the mean of its moves', 1 at one pile and 0 when stuck. On a
+// laptop that takes 6 ms for 231,552 positions and 9 ms for 594,057, so up to 250,000 it is done at once, and in idle
+// time above; over 4 million (32 MB) the random games stand in. It gives the chance, -1 while it is worked out, or null
+// if there is none.
+function chanceOf(key){
+  var g=G,j=habits.xjob;if(!g.complete||g.status[0]!==1||g.n>4000000)return null;
+  if(habits.exact[key]!=null)return habits.exact[key];
+  if(habits.job&&habits.job.key===key)habits.job=null; // its random games aren't needed
+  if(j&&j.g===g)return -1;
+  j=habits.xjob={g:g,P:new Float64Array(g.n),u:g.n-1};
+  if(g.n<=250000){while(j.u>=0)chanceBlock(j);habits.xjob=null;return habits.exact[key]=j.P[0];}
+  idle(function step(ms){
+    if(habits.xjob!==j)return;if(G!==g){habits.xjob=null;return;}var t=performance.now()+ms-1;
+    do chanceBlock(j);while(j.u>=0&&performance.now()<t);
+    if(j.u>=0){idle(step);return;}
+    habits.xjob=null;habits.exact[key]=j.P[0];showStats();});
+  return -1;
+}
+function chanceBlock(j){
+  var g=j.g,P=j.P,es=g.es,et=g.et,len=g.len,u=j.u,stop=Math.max(-1,u-8192),e,e1,s;
+  for(;u>stop;u--){e=es[u];e1=es[u+1];if(e===e1){P[u]=len[u]===1?1:0;continue;}
+    for(s=0;e<e1;e++)s+=P[et[e>>>22][e&4194303]];P[u]=s/(e1-es[u]);}
+  j.u=u;
+}
+// The sentence, or '' while it is worked out or when it would add nothing (no moves, or every game ends the same).
+function habitsText(root){
+  var key=root.join(),l=byRule(root,3),s=byRule(root,1),x,f,r,a;if(l===root.length)return '';
+  x=chanceOf(key);if(x===-1||x===1)return '';
+  if(x!=null)r='wins '+(x>=0.1?Math.min(99,Math.round(100*x))+'% of games':'1 game in '+big(1/x));
+  else{f=habits.done[key];if(!f){habitsStart(root);return '';}if(l===s&&f.lo===l&&f.hi===l)return '';
+    a=Math.round(f.avg);a=a+' pile'+(a===1?'':'s');
+    r=G.status[0]===2||(!cur.win&&(cur.total>0||cur.tryWhole))?'leaves '+a+' on average':'won '+(f.won?fmt(f.won):'none')+' of '+fmt(RG)+' games ('+a+' left on average)';}
+  function ends(p){return p===1?'wins':'ends on '+p+' piles';}
+  return 'Simple rules: '+(l===s?'leaps first and slides first both '+(l===1?'win':'end on '+l+' piles'):'leaps first '+ends(l)+', slides first '+(l>1&&s>1?'on '+s:ends(s)))+'; random play '+r+'.';
+}
 // The chart under the stats: a bar for the positions drawn after each move, from the deal to a win (log scale), in the
-// key's colours. Pointing at a bar, or tapping it, gives its counts; the selected position's bar is marked underneath.
+// key's colors. Pointing at a bar, or tapping it, gives its counts; the selected position's bar is marked underneath.
 // It needs only each depth's counts, which come with the tree.
 function chartParts(d){
   var L=G.layers[d];if(!d)return [[L[0],WHITE]];
@@ -1478,13 +1569,13 @@ function chartParts(d){
   if(colorMode==='best'){var B=bestLayers(),o=[];for(var k=0;k<17;k++)if(B[17*d+k])o.push([B[17*d+k],k===0?GOLD:k<16?ramp(BEST,(k-1)/14):NOTK]);return o;}
   return [[L[2],d===G.root.length-1?GOLD:WIN],[L[3],RED],[L[1],UNK]];
 }
-// With &color=best, each depth's positions by colour: can win, fewest piles 2 to 16 or more, not worked out.
+// With &color=best, each depth's positions by color: can win, fewest piles 2 to 16 or more, not worked out.
 function bestLayers(){
   if(G.bestLayers)return G.bestLayers;var B=new Int32Array(17*(G.maxDepth+1));
   for(var i=1;i<G.n;i++)B[17*G.depth[i]+(G.status[i]===1?0:exactAt(i)?1+Math.min(14,Math.max(0,G.best[i]-2)):16)]++;
   return (G.bestLayers=B);
 }
-// A bar's counts; in the depth and best colourings, where the bars' colours aren't these parts, only the total.
+// A bar's counts; in the depth and best colorings, where the bars' colors aren't these parts, only the total.
 function chartText(d){
   var L=G.layers[d]||[0,0,0,0],m=cur.base+d,p=[];
   if(colorMode==='outcome'){if(L[2])p.push(fmt(L[2])+(d===G.root.length-1?' won':' can still win'));if(L[3])p.push(fmt(L[3])+' lost');if(L[1])p.push(fmt(L[1])+' not known');}
@@ -1531,14 +1622,15 @@ function select(i){
   hl={n:n};
   var cs=cardsOf(i);
   $('.at-node-head').innerHTML='<b>'+(i===0&&!cur.base?'The deal':'After '+movesIn(i)+' move'+(movesIn(i)===1?'':'s'))+'</b>: '+G.len[i]+' pile'+(G.len[i]===1?'':'s')+'. '+outcome(i)+
-    (i?'<br>Last move: '+moveText(i)+'.':'')+(down.length?'<br><span style="color:#9aa3b5">The '+(win?'gold line shows a way to win from here':exactAt(i)?'red line shows the best play from here':'red line leads to the fewest piles drawn')+'.</span>':'');
+    (i?'<br>Last move: '+moveText(i)+'.':'')+(down.length?'<br><span style="color:#9aa3b5">The <button class="at-txt'+(win?' at-win':'')+'" title="Copy the deal and this line as text">'+(win?'gold':'red')+' line</button> '+
+    (win?'shows a way to win from here':exactAt(i)?'shows the best play from here':'leads to the fewest piles drawn')+'.</span>':'');
   $('.at-cards').innerHTML=cs.map(function(b){return '<div class="at-card'+(isRed(b)?' at-red':'')+'">'+RANKS[b&15].replace('T','10')+'<span>'+SYM[b>>4]+'</span></div>';}).join('');
   $('.at-explore').hidden=G.len[i]<=1||(i===0);
   showNode(true);endFirstHint();dirty=true;
 }
 
 // ---------- building ----------
-var worker=null,cur={cards:null,title:'',note:'',base:0,total:0,line:null,stack:[]};
+var worker=null,cur={cards:null,deal:null,from:[],title:'',note:'',base:0,total:0,line:null,stack:[]};
 function makeWorker(onPage){
   if(!onPage)try{var src='('+workerMain.toString()+')(self);',url=URL.createObjectURL(new Blob([src],{type:'text/javascript'}));var w=new Worker(url);
     setTimeout(function(){URL.revokeObjectURL(url);},60000);return w;}catch(err){}
@@ -1546,14 +1638,47 @@ function makeWorker(onPage){
   var fake={postMessage:function(m){setTimeout(function(){if(fake.listener)fake.listener({data:m});},0);}};workerMain(fake);
   return {postMessage:function(m){setTimeout(function(){fake.onmessage({data:m});},20);},terminate:function(){fake.listener=null;},set onmessage(f){fake.listener=f;}};
 }
-function parseLine(cards,text){
-  var tops=cards.slice(),out=[],ms=text.trim().split(/\s+/);
-  for(var s=0;s<ms.length;s++){var a=cardByte(ms[s].slice(0,2)),b=cardByte(ms[s].slice(3,5)),i=tops.indexOf(a),t=tops.indexOf(b);
-    if(i<0||t<0||(i-t!==1&&i-t!==3))return null;out.push(i<<1|(i-t===3?1:0));tops[t]=a;tops.splice(i,1);}
-  return out;
+// Cards and moves as text. A card is its rank (A, 2 to 9, T or 10, J, Q, K) and suit (C, D, H, S or its symbol), in
+// any case; a move is the card moved, > and the card it goes onto: "5S>AS JC>AC". Links write 5S-AS.JC-AC instead.
+var CARD='(?:10|[2-9TJQKA])[CDHS'+SYM.join('')+']',CARDS_RE=new RegExp(CARD,'gi'),MOVE_RE=new RegExp('^('+CARD+')[>-]('+CARD+')$','i');
+var SEED_RANGE='A seed is a whole number from 0 to 18,446,744,073,709,551,615';
+function cardOf(t){t=t.toUpperCase().replace('10','T');var u=SUITS.indexOf(t[1]);return (u<0?SYM.indexOf(t[1]):u)<<4|RANKS.indexOf(t[0]);}
+function cardName(b){return RANKS[b&15]+SUITS[b>>4];}
+function cardsText(cs,sep){return cs.map(cardName).join(sep);}
+function movesText(row,ms,a,sep){var t=[];for(var k=0;k<ms.length;k++){var i=ms[k]>>1;t.push(cardName(row[i])+a+cardName(row[i-((ms[k]&1)?3:1)]));row=applyMove(row,ms[k]);}return t.join(sep);}
+// The words of a text, split at spaces, commas, dots, semicolons and plus signs (> or - joins a move's two cards).
+function words(s){return String(s).replace(/\uFE0F/g,'').replace(/\s*([>-])\s*/g,'$1').split(/[\s,.;+]+/).filter(function(w){return w;});}
+function seedNum(s){var t=String(s).replace(/[\s,]/g,'');return /^\d{1,20}$/.test(t)&&BigInt(t)<=MASK?BigInt(t).toString():'';}
+// A deal as typed in the seed box: a seed or a row of cards, then moves (left as words, for playWords). err says what
+// can't be read; with skip, cards that can't be read are left out instead (a link loads what it can).
+function readDeal(s,skip){
+  var ws=words(s),r={seed:'',cards:[],moves:[],err:''},num='',k,w;
+  function bad(e){if(!r.err)r.err=e;return !skip;}
+  for(k=0;k<ws.length&&!MOVE_RE.test(ws[k]);k++){w=ws[k];
+    if(/^\d+$/.test(w)&&!r.cards.length){num+=w;continue;}
+    var got=w.match(CARDS_RE)||[],junk=w.replace(CARDS_RE,' ').trim().split(' ')[0];
+    if(num&&got.length){if(bad('A deal is a seed or a row of cards'))return r;continue;}
+    // A word with a digit and no card, before any card (#185, 1e12), is taken for a seed mistyped.
+    if(junk&&bad(!got.length&&!r.cards.length&&/\d/.test(w)?SEED_RANGE:junk+' isn\'t a card'))return r;
+    for(var j=0;j<got.length;j++){var b=cardOf(got[j]);if(r.cards.indexOf(b)<0)r.cards.push(b);else if(bad(cardName(b)+' is there twice'))return r;}
+  }
+  if(num&&!(r.seed=seedNum(num))&&bad(SEED_RANGE))return r;
+  r.moves=ws.slice(k);return r;
 }
+// Plays the moves written in ws on row, up to the first that can't be read or played, which err names (counting from
+// the deal: the first here is move n+1).
+function playWords(row,ws,n){
+  var r={moves:[],row:row,err:''};
+  for(var k=0;k<ws.length;k++){var m=MOVE_RE.exec(ws[k]),a=m?cardOf(m[1]):0,b=m?cardOf(m[2]):0,i=r.row.indexOf(a),t=r.row.indexOf(b);
+    var said='Move '+(n+k+1)+', '+(m?cardName(a)+'>'+cardName(b):ws[k])+', can\'t be ';
+    if(!m){r.err=said+'read';break;}
+    if(i<1||legal(r.row,i).indexOf(t)<0){r.err=said+'played';break;}
+    var mv=i<<1|(i-t===3?1:0);r.moves.push(mv);r.row=applyMove(r.row,mv);}
+  return r;
+}
+function parseLine(cards,text){var r=playWords(cards,words(text),0);return r.err?null:r.moves;}
 var onPage=false,layoutPW=0,pendingLoad=false;
-function failed(text){busy.hidden=true;endPreview();message(text);pendingLoad=false;want=null;seedShown();if(play.busy){play.busy=false;renderPlay();}}
+function failed(text){busy.hidden=true;endPreview();message(text);pendingLoad=false;want=null;seedShown();play.busy=false;if(play.on)renderPlay();}
 function run(opts){
   if(worker)worker.terminate();
   var budget=opts.forPlay?playSize():sizeNow();play.busy=!!opts.forPlay;
@@ -1582,7 +1707,7 @@ function run(opts){
   // drawn again from one too big for its size is a sample at once (fullTry 1), not first searched whole up to the size.
   var pm=play.on&&play.moves.length&&sameRow(play.rows[0],opts.cards)?play.moves.slice():null;opts.playSent=pm||[];pendingLoad=!opts.forPlay;
   var tf=opts.forPlay&&budget!==playCap()?0.15*playCap()/budget:0.15;
-  worker.postMessage({cmd:'build',cards:opts.cards,budget:budget,top:tf,endPiles:15,parentWeight:layoutPW,line:opts.line||null,play:pm,playWin:pm&&opts.playWin||null,preview:preview,fullTry:opts.forPlay&&G&&!G.complete&&G.budget>=budget?1:opts.tryWhole?budget:0,total:opts.total||(opts.win?1e18:0),bound:opts.bound||0,
+  worker.postMessage({cmd:'build',cards:opts.cards,budget:budget,top:tf,endPiles:15,parentWeight:layoutPW,line:opts.line||null,at:opts.at?opts.at.concat(opts.atLine||[]):null,play:pm,playWin:pm&&opts.playWin||null,preview:preview,fullTry:opts.forPlay&&G&&!G.complete&&G.budget>=budget?1:opts.tryWhole?budget:0,total:opts.total||(opts.win?1e18:0),bound:opts.bound||0,
     rng:(hashStr(opts.title)^budget)>>>0||1});
 }
 function dropGraph(){
@@ -1617,7 +1742,7 @@ function applyShape(){
 function setGraph(m,o){
   // A position picked in the tree a game's new tree replaces stays picked, if the new one has it.
   var picked=o.forPlay&&G&&G.sel>=0?movesTo(G.sel):null;if(!o.forPlay)play.big=null;
-  cur.seed=o.seed||'';cur.cards=o.cards;cur.title=o.title;cur.note=o.note||'';cur.base=o.base||0;cur.total=o.total||0;cur.bound=o.bound||0;cur.tryWhole=!!o.tryWhole;cur.win=!!o.win;cur.line=o.line||null;cur.ex=o.ex||'';
+  cur.seed=o.seed||'';cur.cards=o.cards;cur.title=o.title;cur.note=o.note||'';cur.base=o.base||0;cur.total=o.total||0;cur.bound=o.bound||0;cur.tryWhole=!!o.tryWhole;cur.win=!!o.win;cur.line=o.line||null;cur.ex=o.ex||'';cur.deal=o.deal||o.cards;cur.from=o.from||[];
   if(o.resetStack)cur.stack=[];if(o.push)cur.stack.push(o.push);if(o.pop)cur.stack.pop();exSel.value=cur.ex;if(exSel.selectedIndex<0)exSel.value='';
   if(!o.forPlay){want=null;seedShown();}
   G=m;G.sel=-1;hl=null;chartAt=-1;showNode(false);G.posR=m.posR||m.pos;G.boundsR=m.boundsR||m.bounds;G.posS=m.posS||null;G.boundsS=m.boundsS||null;
@@ -1625,10 +1750,13 @@ function setGraph(m,o){
   G.nExactLoss=ne;G.nInexactLoss=ni;G.nInexact=nx;
   // A game being played carries on in the new tree if it is the same deal, else it starts again from the new deal.
   pendingLoad=false;play.drawn=o.playSent||[];if(play.on){play.busy=false;if(sameRow(play.rows[0],G.root))resolvePlay();else resetPlay();rehint();}playMask();followGame();
-  applyShape();recolour();rebuildEdges();if(!o.keepView)fit(view);
+  applyShape();recolor();rebuildEdges();if(!o.keepView)fit(view);
   $('.at-title').textContent=cur.title;$('.at-note').innerHTML=cur.note||'';showStats();crumbs();renderPlay();
   if(firstHint===0&&!o.forPlay){firstHint=1;whenSeen(firstHintShow);}
   if(picked){var k=nodeBy(picked);if(k>=0)select(k);}
+  // A link's position is picked, and what of the link couldn't be read is said.
+  if(o.at){k=nodeBy(o.at);if(k>=0)select(k);}
+  if(o.say){hint(o.say,6000);o.say='';firstHint=3;}
   dirty=true;
 }
 function crumbs(){
@@ -1636,25 +1764,33 @@ function crumbs(){
   if(cur.stack.length){var b=document.createElement('button');b.textContent='\u2190 Back';b.title='Back to the tree you came from';b.onclick=back;c.appendChild(b);}
   resize();
 }
-function snapshot(){return {seed:cur.seed,cards:cur.cards,title:cur.title,note:cur.note,base:cur.base,total:cur.total,bound:cur.bound,tryWhole:cur.tryWhole,win:cur.win,line:cur.line,ex:cur.ex};}
+// deal: the deal's cards, from: the moves from it to the position explored from (the tree's root, cards).
+function snapshot(){return {seed:cur.seed,deal:cur.deal,from:cur.from,cards:cur.cards,title:cur.title,note:cur.note,base:cur.base,total:cur.total,bound:cur.bound,tryWhole:cur.tryWhole,win:cur.win,line:cur.line,ex:cur.ex};}
 // want: the deal asked for and still being built (a size change builds it rather than the tree on the screen).
 var want=null,pendingSeed=null;
-function loadDeal(o){select(-1);want=o;pendingSeed=o.seed||null;run(o);}
-// The seed box shows the deal on the screen (unless the reader is typing in it).
-function seedShown(){pendingSeed=null;if(cur.seed)seedIn.setAttribute('data-seed',cur.seed);if(document.activeElement!==seedIn)seedIn.value=cur.seed||seedIn.value;}
-function loadSeed(seedText,ex){
-  var t=String(seedText).replace(/[\s,]/g,'');if(!/^\d{1,20}$/.test(t)||BigInt(t)>MASK){hint('A seed is a whole number from 0 to 18,446,744,073,709,551,615',4000);return false;}
-  t=BigInt(t).toString();
+function loadDeal(o){select(-1);want=o;pendingSeed=dealKey(o);run(o);habitsStart(o.cards);}
+// The seed box shows the deal on the screen, by its seed or cards (unless the reader is typing in it).
+function dealKey(o){return o.seed||cardsText(o.deal||o.cards,' ');}
+function seedShown(){pendingSeed=null;var k=cur.cards?dealKey(cur):'';if(k)seedIn.setAttribute('data-seed',k);if(document.activeElement!==seedIn)seedIn.value=k||seedIn.value;}
+// A deal's tree: from a seed (with its example's note and line, if it is one) or from a row of cards typed in. A row
+// may be any deal, so like a seed past the first trillion it is tried whole (up to the size, or 4 million).
+function seedDeal(t,ex){
   var cards=dealFromSeed(t),e=ex||EXAMPLES.filter(function(x){return x.seed===t;})[0],lostN=lostTotal(t);
-  seedIn.value=t;
-  loadDeal({seed:t,cards:cards,title:'Deal '+BigInt(t).toLocaleString('en-US'),
+  return {seed:t,cards:cards,title:'Deal '+BigInt(t).toLocaleString('en-US'),
     note:e&&e.note?e.note:lostN?'One of the 721 deals of the first trillion that cannot be won.':BigInt(t)<RUN_END?'Like every deal of the first trillion but 721, it can be won.':'',
-    total:(e&&e.total)||lostN,win:!lostN&&BigInt(t)<RUN_END,line:e&&e.line?parseLine(cards,e.line):null,ex:e?e.k:'',resetStack:true});
-  return true;
+    total:(e&&e.total)||lostN,win:!lostN&&BigInt(t)<RUN_END,line:e&&e.line?parseLine(cards,e.line):null,ex:e?e.k:'',resetStack:true};
+}
+function rowDeal(cs){var n=cs.length;return {seed:'',cards:cs,title:n<52?'Typed deal of '+n+' card'+(n===1?'':'s'):'Typed deal',note:'',total:0,win:false,line:null,ex:'',resetStack:true};}
+function loadSeed(s,ex){var t=seedNum(s);if(!t){hint(SEED_RANGE,4000);return false;}seedIn.value=t;loadDeal(seedDeal(t,ex));return true;}
+// The tree explored from the position after moves ms of deal o (from a link), with Back to the deal's.
+function explored(o,ms){
+  var row=o.cards,n=ms.length;ms.forEach(function(m){row=applyMove(row,m);});
+  return {seed:o.seed,deal:o.cards,from:ms,cards:row,title:o.title+', after '+n+' move'+(n===1?'':'s'),note:'',base:n,total:0,bound:(!o.win&&o.total)||0,
+    tryWhole:!o.win&&o.total>0,line:null,ex:'',resetStack:true,push:o};
 }
 function exploreFrom(i){
   if(!G||i<0)return;
-  loadDeal({seed:cur.seed,cards:cardsOf(i),title:(cur.stack.length?cur.stack[0].title:cur.title)+', after '+movesIn(i)+' move'+(movesIn(i)===1?'':'s'),note:'',base:movesIn(i),total:0,
+  loadDeal({seed:cur.seed,deal:cur.deal,from:cur.from.concat(movesTo(i)),cards:cardsOf(i),title:(cur.stack.length?cur.stack[0].title:cur.title)+', after '+movesIn(i)+' move'+(movesIn(i)===1?'':'s'),note:'',base:movesIn(i),total:0,
     bound:G.complete?G.n:(cur.bound||(!cur.win&&cur.total)||0),tryWhole:G.status[i]===2||cur.tryWhole||(!cur.win&&cur.total>0),line:null,ex:'',push:keepForBack()});
 }
 // Back to the tree explored from is instant: the last one (up to 4 million positions) is kept, if the size is the same.
@@ -1662,6 +1798,56 @@ function keepForBack(){var sn=snapshot(),g=play.big?play.big.graph:G;cur.stack.f
 function back(){var s=cur.stack[cur.stack.length-1];if(!s)return;var o={};for(var k in s)if(k!=='graph'&&k!=='size')o[k]=s[k];o.pop=true;
   if(s.graph&&s.size===sizeNow()){select(-1);if(worker){worker.terminate();worker=null;}endPreview();busy.hidden=true;message('');setGraph(s.graph,o);return;}
   loadDeal(o);}
+// A link (or host.accTree.load): the deal (seed, ex, or deal: its cards), from (the moves to the position explored
+// from), at (the moves from there to a position, which is picked), moves (a game, which opens Play there) and line (the
+// line drawn from the position, or from the game's end: it goes in the tree too, so that the position shows the same
+// line at any size; with no at or moves, it is the top's). It loads what it can, and says what it couldn't once the
+// tree is drawn; once from fails, the rest is left out.
+function openLink(q){
+  var e=q.ex&&EXAMPLES.filter(function(x){return x.k===q.ex;})[0],o=null,err='',r,row,n=0;
+  if(q.deal){r=readDeal(q.deal,true);err=r.err;if(r.cards.length)o=rowDeal(r.cards);else if(r.seed)o=seedDeal(r.seed);}
+  else if(e)o=seedDeal(e.seed,e);
+  else if(q.seed!=null&&q.seed!==''){var t=seedNum(q.seed);if(t)o=seedDeal(t);else err=SEED_RANGE;}
+  // A deal that can't be read at all: the first example, without the moves.
+  if(!o){if(!err)return false;o=seedDeal(EXAMPLES[0].seed,EXAMPLES[0]);q={};}
+  // The moves written in w, played on row (k moves from the deal).
+  function moves(w,r0,k){var p=playWords(r0,words(w),k);err=err||p.err;return p;}
+  row=o.cards;started=true;
+  if(q.from){r=moves(q.from,row,0);if(r.moves.length){o=explored(o,r.moves);row=r.row;n=r.moves.length;}if(r.err)q={};}
+  var g=q.moves!=null?moves(q.moves,row,n):null,a=q.at!=null||q.line!=null&&!g?moves(q.at||'',row,n):null,end=a||g;
+  var l=end&&q.line&&!end.err?moves(q.line,end.row,n+end.moves.length).moves:null;
+  if(a&&(a.moves.length||l&&l.length)){o.at=a.moves;o.atLine=l;}
+  if(g){gameOn(row,g.moves);if(!a)o.playWin=l;}
+  o.say=err;seedIn.value=dealKey(o);loadDeal(o);renderPlay();return true;
+}
+// The link to what is shown: the deal (and the position explored from), with the moves from there to a position (at)
+// or a game, the line drawn from its end, and the size and ways of drawing if they aren't the usual ones. d is the
+// tree's details (cur or want).
+function linkTo(d,at,game,line){
+  var p=[d.seed?'seed='+d.seed:'deal='+cardsText(d.deal||d.cards,'')],s=sizeNow(),row=d.cards;
+  function put(k,ms){p.push(k+'='+movesText(row,ms,'-','.'));ms.forEach(function(m){row=applyMove(row,m);});}
+  if(d.from&&d.from.length)p.push('from='+movesText(d.deal,d.from,'-','.'));
+  if(at&&at.length)put('at',at);else if(game)put('moves',game);
+  if(line&&line.length)put('line',line);
+  if(s!==SIZE0)p.push('size='+(s%1e6?s%1e3?s:s/1e3+'k':s/1e6+'m'));
+  if(colorMode!=='outcome')p.push('color='+colorMode);if(edgeMode!=='tree')p.push('edges='+edgeMode);if(shapeMode!=='rings')p.push('shape='+shapeMode);
+  return location.href.split(/[?#]/)[0]+'?'+p.join('&');
+}
+// The moves along the line drawn down from position i (gold to a win, else red).
+function downMoves(i){var ms=[],row=cardsOf(i);for(var c=G.down[i];c>=0;c=G.down[c]){var w=cardsOf(c),m=moveTo(row,w);if(m<0)break;ms.push(m);row=w;}return ms;}
+// The links to the picked position and to the game (from the tree it is played on, or the one being drawn for it).
+function posLink(){return linkTo(cur,movesTo(G.sel),null,downMoves(G.sel));}
+function gameLink(){
+  var d=[want,cur].filter(function(x){return x&&x.cards&&sameRow(x.cards,play.rows[0]);})[0];
+  return d?linkTo(d,null,play.moves,play.moves.length&&G&&play.node>=0&&sameRow(G.root,play.rows[0])?downMoves(play.node):null):'';
+}
+// Copies s to the clipboard and says so; where the page may not, the old way, and failing that a box to copy it from.
+function copy(s,said){
+  function old(){var t=document.createElement('textarea'),f=document.activeElement,ok=false;t.value=s;t.setAttribute('readonly','');
+    t.style.cssText='position:fixed;left:0;top:0;width:1px;height:1px;opacity:0';host.appendChild(t);t.focus({preventScroll:true});t.select();
+    try{ok=document.execCommand('copy');}catch(err){}t.remove();if(f&&f.focus)f.focus({preventScroll:true});if(ok)hint(said);else window.prompt('Copy:',s);}
+  if(navigator.clipboard&&navigator.clipboard.writeText)navigator.clipboard.writeText(s).then(function(){hint(said);},old);else old();
+}
 
 // ---------- playing ----------
 // The game: its moves, the rows of cards after each, and the drawn position each reached (-1 once it leaves the drawn
@@ -1713,7 +1899,7 @@ function playText(){
   for(var i=1;i<row.length&&!any;i++)if(legal(row,i).length)any=true;
   if(row.length===1)return h+'You won!';
   if(!any)return h+'No moves left.';
-  if(u<0||!G)return h+(play.busy||play.timer?'Drawing the tree from here...':'This position is not in the drawn tree.');
+  if(u<0||!G)return h+(play.busy||play.timer||pendingLoad?'Drawing the tree from here...':'This position is not in the drawn tree.');
   return h+outcome(u);
 }
 function renderPlay(){
@@ -1799,15 +1985,23 @@ function rehint(){
   if(!h){play.sel=-1;play.targets=[];}else if(h.i!==o.i||h.t!==o.t){play.sel=h.i;play.targets=[h.t];hint(moveName(h));}
 }
 function playBest(){var h=hintChoice();if(!h)return;var s=moveName(h);doMove(h.i<<1|(h.i-h.t===3?1:0));hint(s);}
-function startPlay(){if(!G)return;endFirstHint();play.on=true;resetPlay();select(-1);updatePlay();
-  // A narrow block has no room for the rule under the cards, so it shows for a while instead.
-  if(host.classList.contains('at-narrow'))hint((tapWord()==='tap'?'Tap':'Click')+' a card to move it onto the card 1 or 3 to its left with the same suit or rank',6000);}
+// A game from a link or the seed box, set up before its tree is built (which is then drawn with it), or on the tree
+// shown (playOn).
+function gameOn(row,ms){
+  endFirstHint();firstHint=3;clearTimeout(play.timer);play.timer=0;play.on=true;play.moves=ms.slice();play.rows=[row];play.path=[-1];play.node=-1;play.sel=-1;play.targets=[];play.hinted=null;
+  for(var k=0;k<ms.length;k++){play.rows.push(applyMove(play.rows[k],ms[k]));play.path.push(-1);}
+  ruleHint();
+}
+function playOn(ms){gameOn(G.root,ms);resolvePlay();select(-1);moved();updatePlay();}
+function startPlay(){if(!G)return;endFirstHint();play.on=true;resetPlay();select(-1);updatePlay();ruleHint();}
+// A narrow block has no room for the rule under the cards, so it shows for a while instead.
+function ruleHint(){if(host.classList.contains('at-narrow'))hint((tapWord()==='tap'?'Tap':'Click')+' a card to move it onto the card 1 or 3 to its left with the same suit or rank',6000);}
 // Closing the game stops a tree being drawn for it and brings back the tree from before it (with the position picked).
 function stopPlay(){
   play.on=false;play.refocus=null;clearTimeout(play.timer);play.timer=0;if(play.busy){play.busy=false;if(worker){worker.terminate();worker=null;}}
   var b=play.big;play.big=null;play.mask=null;hl=null;
   if(b&&b.graph!==G){var ms=G&&G.sel>=0?movesTo(G.sel):null;b.o.keepView=true;setGraph(b.graph,b.o);if(ms){var k=nodeBy(ms);if(k>=0)select(k);}}
-  else{if(G){recolour();rebuildOverlay();}if(G&&G.sel>=0)select(G.sel);}
+  else{if(G){recolor();rebuildOverlay();}if(G&&G.sel>=0)select(G.sel);}
   renderPlay();dirty=true;
 }
 $('.at-pcards').addEventListener('click',function(e){
@@ -1828,15 +2022,22 @@ $('.at-pbest').onclick=playBest;
 
 // ---------- controls ----------
 exSel.onchange=function(){var e=EXAMPLES.filter(function(x){return x.k===exSel.value;})[0];if(e)loadSeed(e.seed,e);};
-// A seed is drawn when Enter is pressed or the box is left, unless its whole tree is on the screen or being built
-// already. An emptied box gets the deal shown back.
+// A seed or a row of cards is drawn when Enter is pressed or the box is left, unless its whole tree is on the screen or
+// being built already. Moves after it (or alone, for the deal shown) open Play at their end: on the tree shown if it is
+// the deal's, else on its tree drawn with them. An emptied box gets the deal shown back; a mistake is said and kept.
 function seedGo(){
-  var t=seedIn.value.replace(/[\s,]/g,''),shown=seedIn.getAttribute('data-seed')||'';
-  if(!t){seedIn.value=shown;return;}
-  if(/^\d{1,20}$/.test(t)&&BigInt(t)<=MASK)t=BigInt(t).toString();
-  if(t===pendingSeed)return;
-  if(t===shown&&!cur.stack.length&&!want){seedIn.value=t;return;}
-  loadSeed(t);
+  var v=seedIn.value.trim(),shown=seedIn.getAttribute('data-seed')||'';
+  if(!v){seedIn.value=shown;return;}
+  // Moves alone are for the deal being drawn, else the one shown; that deal's cards (which a copied line starts with)
+  // are taken as its seed.
+  var d=readDeal(v),w=want||cur,s=[want,cur].filter(function(x){return x&&x.seed&&sameRow(x.deal||x.cards,d.cards);})[0];
+  var o=d.seed?seedDeal(d.seed):s?seedDeal(s.seed):d.cards.length?rowDeal(d.cards):w.cards?(w.seed?seedDeal(w.seed):rowDeal(w.deal||w.cards)):null;
+  if(!d.err&&!o)d.err='Type a seed or cards first';
+  var p=d.err?null:playWords(o.cards,d.moves,0),err=d.err||p.err;if(err){hint(err,4000);return;}
+  var key=dealKey(o),same=key===shown&&!cur.stack.length&&!want&&G;seedIn.value=key;
+  if(!d.moves.length){if(key!==pendingSeed&&!same)loadDeal(o);return;}
+  if(same){playOn(p.moves);return;}
+  gameOn(o.cards,p.moves);loadDeal(o);renderPlay();
 }
 seedIn.addEventListener('change',seedGo);
 seedIn.addEventListener('keydown',function(e){if(e.key==='Enter'){seedGo();seedIn.blur();}});
@@ -1858,6 +2059,12 @@ $('.at-help').onclick=function(){$('.at-helpbox').hidden=!$('.at-helpbox').hidde
 $('.at-helpclose').onclick=function(){$('.at-helpbox').hidden=true;};
 $('.at-close').onclick=function(){select(-1);};
 $('.at-explore').onclick=function(){if(G)exploreFrom(G.sel);};
+$('.at-node>.at-link').onclick=function(){if(G&&G.sel>=0)copy(posLink(),'Link copied');};
+$('.at-play>.at-link').onclick=function(){var s=gameLink();if(s)copy(s,'Link copied');};
+// The words "gold line" or "red line": the deal's cards, then the moves from the deal along the line (the way in, then
+// the line on), which the seed box reads back.
+nodeBox.addEventListener('click',function(e){if(!e.target.closest('.at-txt')||!G||G.sel<0)return;var ms=cur.from.concat(movesTo(G.sel),downMoves(G.sel));
+  copy(cardsText(cur.deal,' ')+' '+movesText(cur.deal,ms,'>',' '),'The deal and '+ms.length+' move'+(ms.length===1?'':'s')+' copied');});
 $('.at-title').onclick=function(){side.classList.toggle('at-folded');side.setAttribute('data-touched','1');};
 function fullChange(){var now=fullNow();if(now||wasFull)setTimeout(function(){resize();fit(view);},50);wasFull=now;}
 document.addEventListener('fullscreenchange',fullChange);document.addEventListener('webkitfullscreenchange',fullChange);
@@ -1884,20 +2091,21 @@ function setModes(o){
   if(['rings','spindle'].indexOf(o.shape)>=0)shapeMode=o.shape;
 }
 // For testing and for pictures: host.accTree.
-host.accTree={load:function(o){if(o.size)setSize(parseSize(o.size));setModes(o);if(o.view)view=o.view;
-    var e=o.ex&&EXAMPLES.filter(function(x){return x.k===o.ex;})[0];if(e){started=true;loadSeed(e.seed,e);}else if(o.seed!=null){started=true;loadSeed(String(o.seed));}},
-  save:savePicture,fit:fit,select:select,explore:exploreFrom,pick:pick,recolour:recolour,rebuildEdges:rebuildEdges,
+host.accTree={load:function(o){if(o.size)setSize(parseSize(o.size));setModes(o);if(o.view)view=o.view;openLink(o);},link:function(){return G&&(play.on?gameLink():G.sel>=0?posLink():linkTo(cur));},
+  save:savePicture,fit:fit,select:select,explore:exploreFrom,pick:pick,recolor:recolor,rebuildEdges:rebuildEdges,
   set parentWeight(v){layoutPW=v;},get graph(){return G;},get camera(){return cam;},set glowLevel(v){glowLevel=Math.max(-2,Math.min(2,+v||0));dirty=true;},examples:EXAMPLES,dealFromSeed:dealFromSeed,
   play:{start:startPlay,stop:stopPlay,move:doMove,undo:undoMove,hint:hintMove,best:playBest,legal:legal,get state(){return play;}}};
 
-// Start: from the address (?ex=, ?seed=, &size=, &view=, &shape=, &color=, &edges=), else the easy example. In a page the
-// first tree is built only when the block comes near the screen.
-var qs={},started=false;try{location.search.slice(1).split('&').forEach(function(p){var kv=p.split('=');if(kv[0])qs[decodeURIComponent(kv[0])]=decodeURIComponent(kv[1]||'');});}catch(err){}
+// Start: from the address (?ex=, ?seed= or ?deal=, &from=, &at=, &moves=, &line=, &size=, &view=, &shape=, &color=,
+// &edges=; other keys, such as Blogger's m=1, are left alone), else the easy example. In a page the first tree is built
+// only when the block comes near the screen.
+var qs={},started=false;location.search.slice(1).split('&').forEach(function(p){var i=p.indexOf('='),k=i<0?p:p.slice(0,i),v=i<0?'':p.slice(i+1);
+  try{k=decodeURIComponent(k);v=decodeURIComponent(v.replace(/\+/g,' '));}catch(err){return;}if(k)qs[k]=v;});
 // A big size in the address of a blog page applies only on a computer with the memory for it.
 if(qs.size){var qv=parseSize(qs.size);if(qv>4000000&&!document.body.classList.contains('standalone')&&(small||mem<8))qv=Math.min(qv,1000000);setSize(qv);}
 setModes(qs);if(qs.view)view=qs.view;
 function start(){if(started)return;started=true;
-  if(!(qs.seed&&loadSeed(qs.seed))){var ex0=EXAMPLES.filter(function(x){return x.k===(qs.ex||'e185');})[0]||EXAMPLES[0];loadSeed(ex0.seed,ex0);}}
+  if(!openLink(qs)){var ex0=EXAMPLES.filter(function(x){return x.k===(qs.ex||'e185');})[0]||EXAMPLES[0];loadSeed(ex0.seed,ex0);}}
 if(document.body.classList.contains('standalone')||!window.IntersectionObserver)start();
 else{var io=new IntersectionObserver(function(es){if(es[es.length-1].isIntersecting){io.disconnect();start();}},{rootMargin:'400px 0px'});io.observe(host);}
 })();
