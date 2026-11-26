@@ -22,7 +22,7 @@ body.standalone #acc-tree{position:fixed;left:0;top:0;right:0;bottom:0;width:aut
 body.standalone #acc-tree canvas.at-gl,#acc-tree:fullscreen canvas.at-gl,#acc-tree:-webkit-full-screen canvas.at-gl{touch-action:none}
 #acc-tree canvas.at-gl.at-dragging{cursor:grabbing}
 #acc-tree button,#acc-tree select,#acc-tree input{font:inherit;color:#e8eaf0;background:#161a26;border:1px solid #2c3346;border-radius:6px;padding:4px 8px;margin:0}
-#acc-tree button{cursor:pointer}
+#acc-tree button{cursor:pointer;touch-action:manipulation}
 #acc-tree button:hover,#acc-tree select:hover{background:#1f2536}
 #acc-tree button.on{background:#2c3a63;border-color:#4d64a8}
 #acc-tree input.at-seed{width:9em}
@@ -50,6 +50,11 @@ body.standalone #acc-tree canvas.at-gl,#acc-tree:fullscreen canvas.at-gl,#acc-tr
 #acc-tree .at-note:empty{display:none}
 #acc-tree .at-stats{margin:4px 0}
 #acc-tree .at-stats b{color:#fff;font-weight:600}
+#acc-tree .at-chartbox{position:relative;margin:8px 0 3px}
+#acc-tree canvas.at-chart{width:100%;height:60px;display:block}
+#acc-tree .at-chartval{position:absolute;left:0;right:0;bottom:100%;margin-bottom:3px;background:#0a0c14;border:1px solid #2c3346;border-radius:6px;
+  padding:3px 6px;font-size:11px;pointer-events:none}
+#acc-tree .at-chartcap{color:#7d869c;font-size:11px}
 #acc-tree .at-key{position:absolute;left:8px;bottom:8px;max-width:calc(100% - 16px);display:flex;flex-wrap:wrap;gap:3px 12px;font-size:12px;color:#b9bfcd;padding:5px 9px;pointer-events:none}
 #acc-tree .at-key .at-what{color:#8d96aa}
 #acc-tree .at-key .at-legend{display:contents}
@@ -556,6 +561,7 @@ function workerMain(self){
   // A move's hashes come from its row's (dh), and a row is written out only for a position that is searched below.
   // RC holds the positions the search met last, by their first hash: nearly every position it meets again is one of
   // them, and this small table stays in the processor's cache where the big one does not.
+  var PLAYB=0.25,PLAYF=3;
   var CONN=new Uint8Array(1024),PAIR=[0,1,0,2,0,3,1,2,1,3,2,3];
   (function(){var p=new Int32Array(4);function f(a){while(p[a]!==a)a=p[a];return a;}
     for(var x=0;x<1024;x++){var z=x&15,s,r=-1,ok=1;for(s=0;s<4;s++)p[s]=s;
@@ -610,15 +616,16 @@ function workerMain(self){
     if(!unknown){flag[u]|=2;return 2;}
     return 0;
   }
-  // Groups of such searches: the first from the deal (or, every other group, from the position played to), the rest
-  // from random positions the group has reached.
+  // Groups of such searches: the first from the deal (or from the position played to, while the groups from there have
+  // added at most PLAYF times what those from the deal have, until 50 in a row add nothing), the rest from random
+  // positions the group has reached.
   function searchOut(cap,runs,branches,focus){
-    var g0=N,before=N,won=0,tried=0,first=focus>=0&&len[focus]>1&&!(flag[focus]&2)&&(runs.groups++&1)?focus:0;
+    var g0=N,before=N,won=0,tried=0,f=focus>=0&&len[focus]>1&&!(flag[focus]&2)&&runs.fi<50&&runs.fa<=PLAYF*runs.da,first=f?focus:0;
     for(var b=0;b<=branches&&N<budget;b++){
       var s=b?g0+((rand()*(N-g0))|0):first;if(b&&N<=g0)break;if(len[s]<=1||(flag[s]&2))continue;
       dfsLeft=Math.min(cap,budget-N);tried++;if(dfs(s,rowOf(s,RB),0)===1)won++;progress(false);
     }
-    runs.tried+=tried;runs.won+=won;
+    runs.tried+=tried;runs.won+=won;if(f){runs.fa+=N-before;runs.fi=N>before?0:runs.fi+1;}else runs.da+=N-before;
     return {added:N-before};
   }
   function playLine(line){
@@ -687,17 +694,18 @@ function workerMain(self){
     // A sample's depths sent to be shown are shown before the searches below (and the helper's angles let go).
     function rest(){
       if(HS&&LH&&!shown&&!(u>=N&&rec)){shown=true;laidOut(rest);return;}
-    var complete=u>=N,dives=0,linePath=null,playPath=null,focus=-1,runs={tried:0,won:0,groups:0};QB=null;if(complete&&rec)fewer();
+    var complete=u>=N,dives=0,linePath=null,playPath=null,focus=-1,runs={tried:0,won:0,fa:0,da:0,fi:0};QB=null;if(complete&&rec)fewer();
     if(!complete){
       ES=null;ET=[];NE=0;rec=false;
       if(N>top)truncate(top);
       wholeTable();
       if(q.line){setPhase('Adding the known winning line');linePath=playLine(q.line);
         if(linePath){for(var s=0;s<linePath.length;s++)if(len[linePath[s]]===E+3){exhaust(linePath[s],Math.floor(budget*0.15));break;}}}
-      // A game being played: its moves, every position a few moves below where it has got to, and half of the searches
-      // from there.
-      if(q.play&&q.play.length){setPhase('Adding the moves played');playPath=playLine(q.play);
-        if(playPath){var pe=playPath[playPath.length-1];if(len[pe]>1&&N<budget){exhaust(pe,Math.min(budget-N,Math.floor(budget*0.2)));focus=pe;}}}
+      // A game being played: its moves (and the winning line the last tree showed from there, so that a win drawn stays
+      // drawn), every position a few moves below where it has got to (PLAYB of the size), and most of the searches from
+      // there.
+      if(q.play&&q.play.length){setPhase('Adding the moves played');playPath=playLine(q.play);if(playPath&&q.playWin)playLine(q.play.concat(q.playWin));
+        if(playPath){var pe=playPath[playPath.length-1];if(len[pe]>1&&N<budget){exhaust(pe,Math.min(budget-N,Math.floor(budget*PLAYB)));focus=pe;}}}
       setPhase('Short searches like the solver\'s');RC.fill(0);
       // A tree known to be bigger than the size will fill it: the table, when it has to grow, grows at once to the size
       // it will end at, since each time it grows every position is moved again.
@@ -919,18 +927,19 @@ function workerMain(self){
 
 // ---------- examples ----------
 var EXAMPLES=[
-  {g:'Easy to win',k:'e185',seed:'185',t:'Easy deal',note:'The easiest of the first 300 deals: about 9 in 10 of its short searches win.'},
-  {g:'Easy to win',k:'e0',seed:'0',menu:false,note:'The first deal of the run.'},
-  {g:'Hard to win',k:'h3',seed:'3',t:'Hard deal',note:'The hardest of the first 300 deals: about 1 in 5 of its short searches win.'},
-  {g:'Hard to win',k:'h56669828180',seed:'56669828180',t:'Very hard deal',note:'9,983 of the solver\'s tries failed, and only a full search found a win. That winning line is drawn in.',
+  {g:'Can be won',k:'e185',seed:'185',t:'Easy deal',note:'The easiest of the first 300 deals: its short searches win most often.'},
+  {g:'Can be won',k:'e0',seed:'0',t:'First deal',note:'The first deal of the run, and one of the easiest.'},
+  {g:'Can be won',k:'m81',seed:'81',t:'Medium deal',note:'Of the first 300 deals, about half are easier and half harder.'},
+  {g:'Can be won',k:'h3',seed:'3',t:'Hard deal',note:'One of the hardest of the first 300 deals: few of its short searches win.'},
+  {g:'Can be won',k:'h56669828180',seed:'56669828180',t:'Very hard deal',note:'9,983 of the solver\'s tries failed, and only a full search found a win. That winning line is drawn in.',
    line:'5S>AS JC>AC 6S>QS JC>7C 6D>4D 6H>6D 7D>JD 4H>3H QC>9C 5C>2C 6H>JH AH>6H 8S>2S 9D>KD 9S>9D 8S>8H 9S>8S 7S>9S 7S>4S 7S>7D KC>6C 3S>7S 3S>TS 3S>3D 3S>JS QC>4C QC>5C AH>9H QC>QH KC>QC KC>KS AH>7H AD>AH TD>AD TD>QD TD>TC TD>8D 5D>TD 5H>5D 2H>5H 2H>TH 2H>2D 2H>4H KH>2H 6S>5S JC>8C 3S>6S 3C>3S 3C>JC KC>3C KC>KH'},
-  {g:'Hard to win',k:'h125657715076',seed:'125657715076',menu:false,note:'9,983 of the solver\'s tries failed, and only a full search found a win. That winning line is drawn in.',
+  {g:'Can be won',k:'h125657715076',seed:'125657715076',menu:false,note:'9,983 of the solver\'s tries failed, and only a full search found a win. That winning line is drawn in.',
    line:'JC>5C 5H>5D 4S>4H 4D>AD JH>TH 6D>2D 7D>7H 4S>6S JC>JH 7C>JC 6C>7C 6C>8C 6H>6C 6H>2H KS>3S QH>6H KD>KS KD>TD 9D>KD 9D>9S QD>9D QD>QC 4C>TC QD>8D QH>KH QH>QD QH>3H 4S>5S AH>QH AH>AC AH>9H AS>AH 4S>AS 4C>4S 3D>JD 4C>KC 4C>4D 2C>4C 2C>2S 2C>9C 7S>TS 3C>2C 8S>QS 3D>3C 3D>6D 7D>3D 8H>5H 8S>8H 7S>8S 7S>7D JS>7S'},
-  {g:'Hard to win',k:'h352038064755',seed:'352038064755',menu:false,note:'9,983 of the solver\'s tries failed, and only a full search found a win. That winning line is drawn in.',
+  {g:'Can be won',k:'h352038064755',seed:'352038064755',menu:false,note:'9,983 of the solver\'s tries failed, and only a full search found a win. That winning line is drawn in.',
    line:'TC>7C 2S>8S JS>6S 6D>AD 4S>2S 8C>KC 8C>TC JH>7H AH>3H 9C>QC QD>6D JS>JD 3D>5D 3S>4S JC>2C QH>AH 8H>8C 9S>9H AC>6C QD>3D JH>2H 3S>AS TS>5S QD>TD 3S>3C 7D>QD 9S>3S 7S>7D JS>7S JC>JS JC>5C JH>JC KH>JH KH>6H KH>KS 9S>QS 9C>9S 9C>9D TH>KH 4C>9C 4C>4H TH>5H TH>TS TH>QH 8H>TH 8D>KD 8D>8H 4C>AC 2D>8D 4D>2D 4C>4D'},
-  {g:'Hard to win',k:'h409397665371',seed:'409397665371',menu:false,note:'9,983 of the solver\'s tries failed, and only a full search found a win. That winning line is drawn in.',
+  {g:'Can be won',k:'h409397665371',seed:'409397665371',menu:false,note:'9,983 of the solver\'s tries failed, and only a full search found a win. That winning line is drawn in.',
    line:'7C>4C QS>9S QC>QS JS>3S 7H>6H TS>2S 2D>2C TC>7C 6S>7S 8C>6C KH>TH KH>5H 6S>AS 7D>2D 7D>9D 7H>7D QH>7H QH>AH TS>JS QC>QH QC>9C TS>5S TC>QC TD>TS TD>6D 8H>4H TC>TD 5C>TC 5C>KC JD>3D JC>JD 5C>JC 8H>3H 8H>8C KS>6S 8H>2H KS>KD KS>4S AD>QD 5C>3C KS>KH 5C>AC 5D>5C 8H>JH 8S>KS 8H>8S 5D>4D AD>5D 8D>AD 8H>8D 9H>8H'},
-  {g:'Hard to win',k:'h855019547215',seed:'855019547215',menu:false,note:'9,983 of the solver\'s tries failed, and only a full search found a win. That winning line is drawn in.',
+  {g:'Can be won',k:'h855019547215',seed:'855019547215',menu:false,note:'9,983 of the solver\'s tries failed, and only a full search found a win. That winning line is drawn in.',
    line:'8H>2H 3S>4S 4H>TH QC>2C QS>8S JS>7S TC>TS KH>5H TC>4C QH>4H 9C>TC 2S>2D AS>KS AS>AC 2S>AS 6H>JH 9C>3C JD>QD JS>2S JD>JS JD>5D 6H>6S KH>6H KH>KC 9H>KH 8D>TD JD>8D 9H>7H 9C>9H 9C>8C 9C>9S 9C>7C 3S>3H JD>7D QC>9C 3S>5S JD>KD JD>9D JD>JC 3D>4D 3D>JD AH>8H QC>5C QC>6C QC>QS QH>QC AD>6D AH>QH AD>AH 3D>AD 3S>3D'},
   {g:'Cannot be won',k:'l124280819596',seed:'124280819596',total:2,menu:false,t:'Lost: 2 positions',note:'One move, then stuck with 51 piles.'},
   {g:'Cannot be won',k:'l89126101473',seed:'89126101473',total:6,menu:false},
@@ -938,7 +947,7 @@ var EXAMPLES=[
   {g:'Cannot be won',k:'l587527261691',seed:'587527261691',total:1512,t:'Lost: 1,512 positions'},
   {g:'Cannot be won',k:'l841286473413',seed:'841286473413',total:15059,menu:false},
   {g:'Cannot be won',k:'l73795501709',seed:'73795501709',total:72198,menu:false,note:'The middle-sized lost deal: half of the 721 have fewer positions.'},
-  {g:'Cannot be won',k:'l202346720',seed:'202346720',total:74970,menu:false,t:'Lost: 74,970 positions',note:'The second lost deal found, and the first proved lost.'},
+  {g:'Cannot be won',k:'l202346720',seed:'202346720',total:74970,t:'Lost: 74,970 positions',note:'The second lost deal found, and the first proved lost.'},
   {g:'Cannot be won',k:'l146087618593',seed:'146087618593',total:642264,menu:false},
   {g:'Cannot be won',k:'l106032171823',seed:'106032171823',total:3997296,t:'Lost: 4 million positions'},
   {g:'Cannot be won',k:'l112249515',seed:'112249515',total:19386305,menu:false,t:'Lost: 19 million positions',note:'The first lost deal found.'},
@@ -962,11 +971,12 @@ host.innerHTML=
  '<div class="at-tools"><div class="at-seg"><button data-view="3d" title="Tilted view (click again to reset it)">3D</button><button data-view="top" title="Seen from above">Top</button></div>'+
  '<button class="at-full" title="Full screen" aria-label="Full screen"><svg viewBox="0 0 14 14" aria-hidden="true"><path d="M1 5V1h4M9 1h4v4M13 9v4H9M5 13H1V9" stroke="currentColor" fill="none" stroke-width="1.6"/></svg></button>'+
  '<button class="at-help">About</button></div></div>'+
- '<div class="at-side at-panel"><div class="at-hd"><div class="at-crumbs"></div><div class="at-title"></div></div><div class="at-body"><div class="at-note"></div><div class="at-stats"></div></div></div>'+
+ '<div class="at-side at-panel"><div class="at-hd"><div class="at-crumbs"></div><div class="at-title"></div></div><div class="at-body"><div class="at-note"></div><div class="at-stats"></div>'+
+ '<div class="at-chartbox"><canvas class="at-chart"></canvas><div class="at-chartval" hidden></div></div><div class="at-chartcap">Positions after each move (log scale)</div></div></div>'+
  '<div class="at-key at-panel"><span class="at-what">Dot: a position. Line: a move.</span><span class="at-legend"></span></div>'+
  '<div class="at-play at-panel" hidden><div class="at-phead"></div><div class="at-pcards"></div>'+
  '<div class="at-pnote">Click a card to move it onto the card 1 or 3 places to its left, if they share a suit or rank. The tree from your position stays lit; the white line is your game.</div>'+
- '<div class="at-node-btns"><button class="at-undo">Undo</button><button class="at-restart">Restart</button><button class="at-phint">Hint</button><button class="at-padd" hidden>Draw more from here</button><button class="at-pback" hidden>\u2190 Back</button><button class="at-pclose">Close</button></div></div>'+
+ '<div class="at-node-btns"><button class="at-undo">Undo</button><button class="at-restart">Restart</button><button class="at-phint">Hint</button><button class="at-pbest">Play best move</button><button class="at-pback" hidden>\u2190 Back</button><button class="at-pclose">Close</button></div></div>'+
  '<div class="at-node at-panel" hidden><div class="at-node-head"></div><div class="at-cards"></div>'+
  '<div class="at-node-btns"><button class="at-explore">Explore from here</button><button class="at-close">Close</button></div></div>'+
  '<div class="at-busy at-panel" hidden><div class="at-bar"><i></i></div><span></span></div>'+
@@ -978,7 +988,7 @@ host.innerHTML=
  '<p class="at-by">Developed by Filip Jander <a href="https://filipjander.com" target="_blank" rel="noopener">filipjander.com</a></p></div>'+
  '<div class="at-msg at-panel" hidden></div><div class="at-hint at-panel" hidden></div>';
 function $(s){return host.querySelector(s);}
-var canvas=$('.at-gl'),tip=$('.at-tip'),busy=$('.at-busy'),nodeBox=$('.at-node'),side=$('.at-side');
+var canvas=$('.at-gl'),tip=$('.at-tip'),busy=$('.at-busy'),nodeBox=$('.at-node'),side=$('.at-side'),chart=$('.at-chart'),chartAt=-1;
 var exSel=$('.at-ex'),seedIn=$('.at-seed'),sizeSel=$('.at-size'),customIn=$('.at-custom');
 // How the tree is drawn; the page has no controls for these, but the address and host.accTree can set them.
 var colorMode='outcome',edgeMode='tree',shapeMode='rings',glowLevel=0;
@@ -1268,7 +1278,7 @@ function resize(){
   var tb=$('.at-top'),tl=$('.at-tools');host.style.setProperty('--tb',(tb.offsetTop+tb.offsetHeight+8)+'px');
   host.style.setProperty('--tt',(narrow?tb.offsetTop+tl.offsetTop+tl.offsetHeight+8:tb.offsetTop+tb.offsetHeight+8)+'px');keySpace();playSpace();
   if(narrow&&!side.getAttribute('data-touched'))side.classList.add('at-folded');
-  dpr=Math.min(window.devicePixelRatio||1,2);
+  var d0=dpr;dpr=Math.min(window.devicePixelRatio||1,2);if(dpr!==d0)drawChart();
   var w=Math.max(1,Math.round(host.clientWidth*dpr)),h=Math.max(1,Math.round(host.clientHeight*dpr));
   if(canvas.width!==w||canvas.height!==h){canvas.width=w;canvas.height=h;dirty=true;}
 }
@@ -1310,7 +1320,7 @@ function recolour(){
   for(var i=0;i<n;i++){var k=colourOf(i,mode),s=G.status[i],w=mode==='depth'?200:(i===0||s===1)?255:s===2?(G.complete?150:105):60;
     c[4*i]=k[0];c[4*i+1]=k[1];c[4*i+2]=k[2];c[4*i+3]=w;}
   gl.bindBuffer(gl.ARRAY_BUFFER,bufCol);gl.bufferData(gl.ARRAY_BUFFER,c,gl.STATIC_DRAW);sceneVer++;
-  $('.at-legend').innerHTML=legend(mode);keySpace();dirty=true;
+  $('.at-legend').innerHTML=legend(mode);keySpace();drawChart();dirty=true;
 }
 var EDGE_CAP=6000000;
 // Move e of the tree (its moves are kept in chunks of 4 million).
@@ -1459,10 +1469,56 @@ function showStats(){
   if(edgeNote)h+='<br><span style="color:#7d869c">'+edgeNote+'</span>';
   $('.at-stats').innerHTML=h;
 }
+// The chart under the stats: a bar for the positions drawn after each move, from the deal to a win (log scale), in the
+// key's colours. Pointing at a bar, or tapping it, gives its counts; the selected position's bar is marked underneath.
+// It needs only each depth's counts, which come with the tree.
+function chartParts(d){
+  var L=G.layers[d];if(!d)return [[L[0],WHITE]];
+  if(colorMode==='depth')return [[L[0],ramp(TURBO,d/Math.max(1,G.maxDepth))]];
+  if(colorMode==='best'){var B=bestLayers(),o=[];for(var k=0;k<17;k++)if(B[17*d+k])o.push([B[17*d+k],k===0?GOLD:k<16?ramp(BEST,(k-1)/14):NOTK]);return o;}
+  return [[L[2],d===G.root.length-1?GOLD:WIN],[L[3],RED],[L[1],UNK]];
+}
+// With &color=best, each depth's positions by colour: can win, fewest piles 2 to 16 or more, not worked out.
+function bestLayers(){
+  if(G.bestLayers)return G.bestLayers;var B=new Int32Array(17*(G.maxDepth+1));
+  for(var i=1;i<G.n;i++)B[17*G.depth[i]+(G.status[i]===1?0:exactAt(i)?1+Math.min(14,Math.max(0,G.best[i]-2)):16)]++;
+  return (G.bestLayers=B);
+}
+// A bar's counts; in the depth and best colourings, where the bars' colours aren't these parts, only the total.
+function chartText(d){
+  var L=G.layers[d]||[0,0,0,0],m=cur.base+d,p=[];
+  if(colorMode==='outcome'){if(L[2])p.push(fmt(L[2])+(d===G.root.length-1?' won':' can still win'));if(L[3])p.push(fmt(L[3])+' lost');if(L[1])p.push(fmt(L[1])+' not known');}
+  return (d||cur.base?'After '+m+' move'+(m===1?'':'s'):'The deal')+': '+fmt(L[0])+' position'+(L[0]===1?'':'s')+(p.length?' ('+p.join(', ')+')':'')+'.';
+}
+function drawChart(){
+  var w=Math.round(chart.clientWidth*dpr),h=Math.round(chart.clientHeight*dpr);if(!w||!h)return; // folded or hidden: drawn when it shows
+  chart.width=w;chart.height=h;var c=chart.getContext('2d'),val=$('.at-chartval');
+  if(!G){val.hidden=true;return;}
+  var L=G.layers,n=G.root.length,mx=1,i,k;if(chartAt>=n)chartAt=-1;
+  for(i=0;i<L.length;i++)if(L[i][0]>mx)mx=L[i][0];
+  var one=Math.max(1,Math.round(dpr)),mh=4*one,top=h-mh,bw=w/n,gap=Math.min(one,bw*0.2),lg=Math.log(mx+1);
+  function col(d){var x=Math.round(d*bw);return [x,Math.max(1,Math.round((d+1)*bw-gap)-x)];}
+  function rgb(cc,f){return 'rgb('+cc.map(function(v){return Math.round(v+(255-v)*f);}).join(',')+')';} // f: how much lighter
+  if(chartAt>=0){var a=col(chartAt);c.fillStyle='rgba(255,255,255,0.13)';c.fillRect(a[0],0,a[1],top);}
+  // A dim line under every move up to a win, gold under the win, so a lost tree is seen to stop short.
+  c.fillStyle='#3a4258';c.fillRect(0,top,col(n-1)[0],one);c.fillStyle=rgb(GOLD,0);c.fillRect(col(n-1)[0],top,col(n-1)[1],one);
+  for(i=0;i<L.length;i++){var t=L[i][0];if(!t)continue;var x=col(i),y=top,bh=Math.max(one,top*Math.log(t+1)/lg),parts=chartParts(i);
+    for(k=0;k<parts.length;k++){if(!parts[k][0])continue;var y1=y-Math.max(one,bh*parts[k][0]/t);
+      c.fillStyle=rgb(parts[k][1],i===chartAt?0.45:0);c.fillRect(x[0],Math.round(y1),x[1],Math.round(y)-Math.round(y1));y=y1;}}
+  if(G.sel>=0){var s=col(G.depth[G.sel]);c.fillStyle='#fff';c.fillRect(s[0],h-3*one,s[1],3*one);}
+  val.hidden=chartAt<0;if(chartAt>=0)val.textContent=chartText(chartAt);
+}
+function chartDepth(e){var r=chart.getBoundingClientRect();return G&&r.width?Math.floor((e.clientX-r.left)/r.width*G.root.length):-1;}
+function chartShow(d){if(!G||d>=G.root.length)d=-1;if(d!==chartAt){chartAt=Math.max(-1,d);drawChart();}}
+chart.addEventListener('pointermove',function(e){if(e.pointerType!=='touch')chartShow(chartDepth(e));});
+chart.addEventListener('pointerleave',function(e){if(e.pointerType!=='touch')chartShow(-1);});
+chart.addEventListener('pointerdown',function(e){if(e.pointerType==='touch'){var d=chartDepth(e);chartShow(d===chartAt?-1:d);}});
+// The chart is drawn again when its size changes: the panel folded or opened, hidden for a game, or narrower.
+if(window.ResizeObserver)new ResizeObserver(function(){drawChart();}).observe(chart);
 
 // ---------- selecting a position ----------
 function select(i){
-  if(!G)return;G.sel=i;hl=null;
+  if(!G)return;G.sel=i;hl=null;drawChart();
   if(i<0){showNode(false);if(play.on)showPlayPath();dirty=true;return;}
   var up=[],v=i;while(v>=0){up.push(v);v=G.parent[v];}up.reverse();
   // Down: from a winnable position the way to a win; otherwise towards the fewest piles drawn, unsettled positions first
@@ -1500,29 +1556,33 @@ var onPage=false,layoutPW=0,pendingLoad=false;
 function failed(text){busy.hidden=true;endPreview();message(text);pendingLoad=false;want=null;seedShown();if(play.busy){play.busy=false;renderPlay();}}
 function run(opts){
   if(worker)worker.terminate();
-  var budget=sizeNow();
-  // A big tree isn't kept on the screen while another big one is built: both at once can run out of memory.
-  if(budget>4000000&&G&&G.n>4000000)dropGraph();
+  var budget=opts.forPlay?playSize():sizeNow();play.busy=!!opts.forPlay;
+  // The tree kept for after a game is let go once another is asked for (a new deal, size or position). A big tree isn't
+  // kept on the screen while another big one is built: both at once can run out of memory.
+  if(!opts.forPlay)play.big=null;if(budget>4000000&&G&&G.n>4000000)dropGraph();
   endPreview();camMoved=false;
   // Big trees are shown depth by depth while they are built (not when redrawn for a game, which keeps the view).
   var preview=budget>1000000&&shapeMode==='rings'&&!opts.keepView;
   worker=makeWorker(onPage);
   var heard=false,me=worker;
-  busy.hidden=false;$('.at-busy span').textContent='Starting...';$('.at-busy i').style.width='0';message('');
+  // A tree drawn again for a game comes without a progress bar: the old one stays until it arrives.
+  busy.hidden=!!opts.forPlay;$('.at-busy span').textContent='Starting...';$('.at-busy i').style.width='0';message('');
   worker.onmessage=function(ev){
     var m=ev.data;heard=true;if(me!==worker)return;
     if(m.type==='layer'){addLayer(m);return;}
     if(m.type==='progress'){var f=m.frac!=null?m.frac:m.nodes/m.budget;$('.at-busy i').style.width=Math.min(100,100*f).toFixed(1)+'%';
       $('.at-busy span').textContent=m.phase+(m.frac!=null?'':': '+fmt(m.nodes)+' positions');}
-    else if(m.type==='graph'){busy.hidden=true;if(PV&&camMoved)opts.keepView=true;endPreview();setGraph(m,opts);if(host.onbuilt)host.onbuilt(m);}
+    else if(m.type==='graph'){busy.hidden=true;if(PV&&camMoved)opts.keepView=true;endPreview();m.budget=budget;setGraph(m,opts);if(host.onbuilt)host.onbuilt(m);}
     else if(m.type==='error')failed('Could not build this tree: '+m.message+'. A smaller size may work.');
   };
   worker.onerror=function(e){if(me!==worker)return;
     if(!heard&&!onPage){onPage=true;run(opts);return;} // the worker never started: build on the page instead
     failed('Could not build this tree ('+(e.message||'out of memory?')+'). A smaller size may work.');};
-  // total: the tree's size if known; a deal known to be winnable has far too many positions to draw whole.
+  // total: the tree's size if known; a deal known to be winnable has far too many positions to draw whole. A game's tree
+  // drawn again from one too big for its size is a sample at once (fullTry 1), not first searched whole up to the size.
   var pm=play.on&&play.moves.length&&sameRow(play.rows[0],opts.cards)?play.moves.slice():null;opts.playSent=pm||[];pendingLoad=!opts.forPlay;
-  worker.postMessage({cmd:'build',cards:opts.cards,budget:budget,top:0.15,endPiles:15,parentWeight:layoutPW,line:opts.line||null,play:pm,preview:preview,fullTry:opts.tryWhole?budget:0,total:opts.total||(opts.win?1e18:0),bound:opts.bound||0,
+  var tf=opts.forPlay&&budget!==playCap()?0.15*playCap()/budget:0.15;
+  worker.postMessage({cmd:'build',cards:opts.cards,budget:budget,top:tf,endPiles:15,parentWeight:layoutPW,line:opts.line||null,play:pm,playWin:pm&&opts.playWin||null,preview:preview,fullTry:opts.forPlay&&G&&!G.complete&&G.budget>=budget?1:opts.tryWhole?budget:0,total:opts.total||(opts.win?1e18:0),bound:opts.bound||0,
     rng:(hashStr(opts.title)^budget)>>>0||1});
 }
 function dropGraph(){
@@ -1555,18 +1615,20 @@ function applyShape(){
 // The deal's details (cur) change only when its tree arrives, so a slow or failed build leaves the page describing the
 // tree on the screen.
 function setGraph(m,o){
+  // A position picked in the tree a game's new tree replaces stays picked, if the new one has it.
+  var picked=o.forPlay&&G&&G.sel>=0?movesTo(G.sel):null;if(!o.forPlay)play.big=null;
   cur.seed=o.seed||'';cur.cards=o.cards;cur.title=o.title;cur.note=o.note||'';cur.base=o.base||0;cur.total=o.total||0;cur.bound=o.bound||0;cur.tryWhole=!!o.tryWhole;cur.win=!!o.win;cur.line=o.line||null;cur.ex=o.ex||'';
   if(o.resetStack)cur.stack=[];if(o.push)cur.stack.push(o.push);if(o.pop)cur.stack.pop();exSel.value=cur.ex;if(exSel.selectedIndex<0)exSel.value='';
   if(!o.forPlay){want=null;seedShown();}
-  G=m;G.sel=-1;hl=null;showNode(false);G.posR=m.posR||m.pos;G.boundsR=m.boundsR||m.bounds;G.posS=m.posS||null;G.boundsS=m.boundsS||null;
+  G=m;G.sel=-1;hl=null;chartAt=-1;showNode(false);G.posR=m.posR||m.pos;G.boundsR=m.boundsR||m.bounds;G.posS=m.posS||null;G.boundsS=m.boundsS||null;
   var ne=0,ni=0,nx=0;for(var i=0;i<G.n;i++){var x=G.expanded[i]&8;if(G.status[i]===2){if(x)ne++;else ni++;}if(!x&&G.status[i]!==1)nx++;}
   G.nExactLoss=ne;G.nInexactLoss=ni;G.nInexact=nx;
   // A game being played carries on in the new tree if it is the same deal, else it starts again from the new deal.
-  pendingLoad=false;if(play.on){play.busy=false;if(sameRow(play.rows[0],G.root))resolvePlay();else resetPlay();}playMask();
+  pendingLoad=false;play.drawn=o.playSent||[];if(play.on){play.busy=false;if(sameRow(play.rows[0],G.root))resolvePlay();else resetPlay();rehint();}playMask();followGame();
   applyShape();recolour();rebuildEdges();if(!o.keepView)fit(view);
   $('.at-title').textContent=cur.title;$('.at-note').innerHTML=cur.note||'';showStats();crumbs();renderPlay();
   if(firstHint===0&&!o.forPlay){firstHint=1;whenSeen(firstHintShow);}
-  if(play.on&&!sameRow(play.moves,o.playSent||[])&&needsMore()&&sizeNow()<=4000000)rebuildForPlay();
+  if(picked){var k=nodeBy(picked);if(k>=0)select(k);}
   dirty=true;
 }
 function crumbs(){
@@ -1596,15 +1658,17 @@ function exploreFrom(i){
     bound:G.complete?G.n:(cur.bound||(!cur.win&&cur.total)||0),tryWhole:G.status[i]===2||cur.tryWhole||(!cur.win&&cur.total>0),line:null,ex:'',push:keepForBack()});
 }
 // Back to the tree explored from is instant: the last one (up to 4 million positions) is kept, if the size is the same.
-function keepForBack(){var sn=snapshot();cur.stack.forEach(function(x){x.graph=null;});if(G&&G.n<=4000000){sn.graph=G;sn.size=sizeNow();}return sn;}
+function keepForBack(){var sn=snapshot(),g=play.big?play.big.graph:G;cur.stack.forEach(function(x){x.graph=null;});if(g&&g.n<=4000000){sn.graph=g;sn.size=sizeNow();}return sn;}
 function back(){var s=cur.stack[cur.stack.length-1];if(!s)return;var o={};for(var k in s)if(k!=='graph'&&k!=='size')o[k]=s[k];o.pop=true;
   if(s.graph&&s.size===sizeNow()){select(-1);if(worker){worker.terminate();worker=null;}endPreview();busy.hidden=true;message('');setGraph(s.graph,o);return;}
   loadDeal(o);}
 
 // ---------- playing ----------
 // The game: its moves, the rows of cards after each, and the drawn position each reached (-1 once it leaves the drawn
-// tree). After each move the tree from the position reached stays lit (mask) and the rest is dimmed.
-var play={on:false,moves:[],rows:[],path:[],node:0,sel:-1,targets:[],busy:false,mask:null,maskBuf:null,count:0};
+// tree). After each move the tree from the position reached stays lit (mask) and the rest is dimmed. drawn: the moves
+// the tree on the screen was drawn with; busy: a tree is being drawn for the game; big: the tree from before the game;
+// hinted: the move Hint shows.
+var play={on:false,moves:[],rows:[],path:[],node:0,sel:-1,targets:[],busy:false,mask:null,maskBuf:null,count:0,drawn:[],timer:0,last:0,first:0,big:null,refocus:null,hinted:null};
 function rowNow(){return play.rows[play.rows.length-1];}
 function sameRow(a,b){if(!a||!b||a.length!==b.length)return false;for(var k=0;k<a.length;k++)if(a[k]!==b[k])return false;return true;}
 // Where the card at i can go: the card 1 or 3 to its left, if they share a suit or rank.
@@ -1616,6 +1680,10 @@ function childBy(u,m,row){
   for(e=G.es[u];e<G.es[u+1];e++){c=edgeAt(e);if(sameRow(cardsOf(c),row))return c;}
   return -1;
 }
+// The moves from the deal to drawn position i (those that first reached each position on the way), and the drawn
+// position some moves from the deal lead to, or -1.
+function movesTo(i){var ms=[];while(i>0){ms.push(G.pmove[i]);i=G.parent[i];}return ms.reverse();}
+function nodeBy(ms){var u=0,row=G.root.slice();for(var k=0;k<ms.length&&u>=0;k++){row=applyMove(row,ms[k]);u=childBy(u,ms[k],row);}return u;}
 function resetPlay(){play.moves=[];play.rows=[(G?G.root:play.rows[0]).slice()];play.path=[0];play.node=0;play.sel=-1;play.targets=[];}
 function resolvePlay(){var u=0;play.path=[0];for(var k=0;k<play.moves.length;k++){u=u>=0?childBy(u,play.moves[k],play.rows[k+1]):-1;play.path.push(u);}play.node=u;}
 // The tree from the position played to: it and every drawn position below it (moves only go to higher numbers).
@@ -1645,9 +1713,7 @@ function playText(){
   for(var i=1;i<row.length&&!any;i++)if(legal(row,i).length)any=true;
   if(row.length===1)return h+'You won!';
   if(!any)return h+'No moves left.';
-  if(play.busy)return h+'Drawing the tree from here...';
-  if(u<0||!G)return h+'This position is not in the drawn tree.';
-  if(needsMore())return h+outcome(u)+' Little is drawn below it.';
+  if(u<0||!G)return h+(play.busy||play.timer?'Drawing the tree from here...':'This position is not in the drawn tree.');
   return h+outcome(u);
 }
 function renderPlay(){
@@ -1662,41 +1728,88 @@ function renderPlay(){
   $('.at-pcards').innerHTML=h;
   // Keys keep their place: the focus goes back to the card at the same place, or to the place a card can go.
   if(fi>=0){var cs=$('.at-pcards').children,ti=play.targets.length?play.targets[0]:Math.min(fi,cs.length-1);if(cs[ti])cs[ti].focus();}
-  $('.at-undo').disabled=$('.at-restart').disabled=!play.moves.length;$('.at-phint').disabled=!(G&&play.node>=0&&G.down[play.node]>=0);
-  $('.at-padd').hidden=!needsMore();$('.at-pback').hidden=!cur.stack.length;playSpace();
+  var fb=ae&&ae.parentNode===$('.at-play>.at-node-btns')?ae:null;
+  $('.at-undo').disabled=$('.at-restart').disabled=!play.moves.length;$('.at-phint').disabled=$('.at-pbest').disabled=!hintChoice();
+  // A button turned off while it has the focus (Play best move at the end of the line drawn) gets it back when it is on
+  // again, unless something else has it by then.
+  if(fb&&fb.disabled)play.refocus=fb;
+  var rf=play.refocus;if(rf&&!rf.disabled){play.refocus=null;var a2=document.activeElement;if(!a2||a2===document.body||a2===host)rf.focus({preventScroll:true});}
+  $('.at-pback').hidden=!cur.stack.length;playSpace();
 }
-// A sample shows too little of the game's position when it isn't drawn, or almost nothing is drawn below it while
-// it is neither finished nor shown lost.
-function needsMore(){
-  if(!play.on||!G||G.complete||play.busy||pendingLoad)return false;var row=rowNow(),u=play.node,any=false;
+// The tree is drawn again with the game's moves in when it shows too little of where the game has got to: the position
+// isn't drawn, or less than a third of the tree is lit below it while it has moves and isn't exact (everything below it
+// drawn). A game's tree has at most PLAY_MAX positions, so that it comes in about a second: every position a
+// few moves below the game's, then most of the short searches from there (see "Adding the moves played"). Where few
+// short searches win (under 1 in 10 in the tree from before the game) a position costs about half as much again, so
+// at most PLAY_HARD. The top is the same either way (15% of playCap), so that it stays put.
+var PLAY_MAX=1000000,PLAY_HARD=700000,PAUSE=100,MAXWAIT=300;
+function playCap(){return Math.min(sizeNow(),PLAY_MAX);}
+function playSize(){var g=play.big?play.big.graph:G;return g&&!g.complete&&g.divesWon*10<g.dives?Math.min(playCap(),PLAY_HARD):playCap();}
+function thin(){
+  if(!play.on||!G||G.complete)return false;var row=rowNow(),u=play.node,any=false;
   for(var i=1;i<row.length&&!any;i++)if(legal(row,i).length)any=true;
-  // An exact position (everything below it drawn) has all there is.
-  return any&&(u<0||(G.status[u]!==2&&!(G.expanded[u]&8)&&play.count<Math.max(500,sizeNow()*0.002)));
+  return any&&(u<0||(!(G.expanded[u]&8)&&play.count<G.n/3));
 }
-function updatePlay(){playMask();if(G){rebuildOverlay();if(G.sel<0)showPlayPath();}renderPlay();}
+// One tree is drawn for the game at a time, never twice for the same moves, once the moves pause for PAUSE ms (or MAXWAIT
+// after the first move not yet drawn for); the old tree stays meanwhile, and when the new one comes this is asked again.
+function due(){return !play.busy&&!pendingLoad&&thin()&&!sameRow(play.moves,play.drawn);}
+function followGame(){
+  clearTimeout(play.timer);play.timer=0;
+  if(!due()){if(!play.busy&&!pendingLoad)play.first=0;return;}
+  var at=play.last+PAUSE;if(play.first)at=Math.min(at,play.first+MAXWAIT);
+  play.timer=setTimeout(function(){play.timer=0;if(due())rebuildForPlay();},Math.max(0,at-performance.now()));
+}
+function rebuildForPlay(){
+  // The tree from before the game is kept for when the game is closed.
+  if(!play.big&&G)play.big={graph:G,o:snapshot()};
+  var o=snapshot();o.keepView=true;o.forPlay=true;o.playWin=winLine();play.busy=true;play.first=0;run(o);renderPlay();
+}
+function moved(){var t=performance.now();play.last=t;if(!play.first)play.first=t;}
+function updatePlay(){playMask();followGame();if(G){rebuildOverlay();if(G.sel<0)showPlayPath();}renderPlay();}
 function doMove(m){
   var row=applyMove(rowNow(),m),u=play.path[play.path.length-1],c=G&&u>=0?childBy(u,m,row):-1;
   play.moves.push(m);play.rows.push(row);play.path.push(c);play.node=c;play.sel=-1;play.targets=[];
-  updatePlay();
-  // Too little of a sample around it: draw the tree again with the game's moves in and half of the searches from where
-  // it has got to (by hand past 4 million positions, which takes long).
-  if(needsMore()&&sizeNow()<=4000000)rebuildForPlay();
+  moved();updatePlay();
 }
-function rebuildForPlay(){var o=snapshot();o.keepView=true;o.forPlay=true;play.busy=true;run(o);renderPlay();}
-function undoMove(){if(!play.moves.length)return;play.moves.pop();play.rows.pop();play.path.pop();play.node=play.path[play.path.length-1];play.sel=-1;play.targets=[];updatePlay();}
-// A hint: the next move of the line shown down from here (to a win if there is one).
-function hintMove(){
-  var u=play.node;if(!G||u<0)return;var c=G.down[u];if(c<0)return;
+function undoMove(){if(!play.moves.length)return;play.moves.pop();play.rows.pop();play.path.pop();play.node=play.path[play.path.length-1];play.sel=-1;play.targets=[];moved();updatePlay();}
+// The move from row to the row want, or -1.
+function moveTo(row,want){
+  for(var i=1;i<row.length;i++){var ts=legal(row,i);for(var k=0;k<ts.length;k++){var m=i<<1|(i-ts[k]===3?1:0);if(sameRow(applyMove(row,m),want))return m;}}
+  return -1;
+}
+// The move Hint shows: the next move of the line shown down from here (to a win if there is one), as the card at i
+// onto the one at t; null if there is none.
+function hintChoice(){
+  var u=play.node;if(!G||u<0)return null;var c=G.down[u];if(c<0)return null;
   // From an unsettled position, an unsettled move (which may still win) before one shown lost.
   if(G.status[u]===0&&G.status[c]===2){var bb=99;for(var e=G.es[u];e<G.es[u+1];e++){var x=edgeAt(e);if(G.status[x]===0&&G.best[x]<bb){bb=G.best[x];c=x;}}}
-  var want=cardsOf(c),row=rowNow();
-  for(var i=1;i<row.length;i++){var ts=legal(row,i);for(var k=0;k<ts.length;k++)if(sameRow(applyMove(row,i<<1|(i-ts[k]===3?1:0)),want)){
-    play.sel=i;play.targets=[ts[k]];hint(cardText(row[i])+' onto '+cardText(row[ts[k]]));renderPlay();return;}}
+  var m=moveTo(rowNow(),cardsOf(c));return m<0?null:{i:m>>1,t:(m>>1)-((m&1)?3:1)};
 }
+// The moves of the winning line shown down from the game's position, if it can win, for the next tree to keep.
+function winLine(){
+  var u=play.node,row=rowNow(),ms=[];if(!G||u<0||G.status[u]!==1)return null;
+  for(var c=G.down[u];c>=0;u=c,c=G.down[u]){var want=cardsOf(c),m=moveTo(row,want);if(m<0)return null;ms.push(m);row=want;}
+  return ms;
+}
+function moveName(h){var row=rowNow();return cardText(row[h.i])+' onto '+cardText(row[h.t]);}
+function hintMove(){var h=hintChoice();if(!h)return;play.hinted=h;play.sel=h.i;play.targets=[h.t];hint(moveName(h));renderPlay();}
+// A hint still shown when a new tree comes becomes the new tree's, so that Play best move plays the move shown.
+function rehint(){
+  var o=play.hinted;if(!o||play.sel!==o.i||play.targets.length!==1||play.targets[0]!==o.t)return;var h=hintChoice();play.hinted=h;
+  if(!h){play.sel=-1;play.targets=[];}else if(h.i!==o.i||h.t!==o.t){play.sel=h.i;play.targets=[h.t];hint(moveName(h));}
+}
+function playBest(){var h=hintChoice();if(!h)return;var s=moveName(h);doMove(h.i<<1|(h.i-h.t===3?1:0));hint(s);}
 function startPlay(){if(!G)return;endFirstHint();play.on=true;resetPlay();select(-1);updatePlay();
   // A narrow block has no room for the rule under the cards, so it shows for a while instead.
   if(host.classList.contains('at-narrow'))hint((tapWord()==='tap'?'Tap':'Click')+' a card to move it onto the card 1 or 3 to its left with the same suit or rank',6000);}
-function stopPlay(){play.on=false;play.busy=false;play.mask=null;hl=null;if(G){recolour();rebuildOverlay();}if(G&&G.sel>=0)select(G.sel);renderPlay();dirty=true;}
+// Closing the game stops a tree being drawn for it and brings back the tree from before it (with the position picked).
+function stopPlay(){
+  play.on=false;play.refocus=null;clearTimeout(play.timer);play.timer=0;if(play.busy){play.busy=false;if(worker){worker.terminate();worker=null;}}
+  var b=play.big;play.big=null;play.mask=null;hl=null;
+  if(b&&b.graph!==G){var ms=G&&G.sel>=0?movesTo(G.sel):null;b.o.keepView=true;setGraph(b.graph,b.o);if(ms){var k=nodeBy(ms);if(k>=0)select(k);}}
+  else{if(G){recolour();rebuildOverlay();}if(G&&G.sel>=0)select(G.sel);}
+  renderPlay();dirty=true;
+}
 $('.at-pcards').addEventListener('click',function(e){
   var b=e.target.closest('.at-pcard');if(!b)return;var i=+b.getAttribute('data-i'),row=rowNow();
   if(play.sel>=0&&play.targets.indexOf(i)>=0){doMove(play.sel<<1|(play.sel-i===3?1:0));return;}
@@ -1709,9 +1822,9 @@ $('.at-playbtn').onclick=function(){if(play.on)stopPlay();else startPlay();};
 $('.at-pclose').onclick=stopPlay;
 $('.at-pback').onclick=back;
 $('.at-undo').onclick=undoMove;
-$('.at-restart').onclick=function(){resetPlay();updatePlay();};
+$('.at-restart').onclick=function(){resetPlay();moved();updatePlay();};
 $('.at-phint').onclick=hintMove;
-$('.at-padd').onclick=function(){if(G&&!play.busy)rebuildForPlay();};
+$('.at-pbest').onclick=playBest;
 
 // ---------- controls ----------
 exSel.onchange=function(){var e=EXAMPLES.filter(function(x){return x.k===exSel.value;})[0];if(e)loadSeed(e.seed,e);};
@@ -1775,7 +1888,7 @@ host.accTree={load:function(o){if(o.size)setSize(parseSize(o.size));setModes(o);
     var e=o.ex&&EXAMPLES.filter(function(x){return x.k===o.ex;})[0];if(e){started=true;loadSeed(e.seed,e);}else if(o.seed!=null){started=true;loadSeed(String(o.seed));}},
   save:savePicture,fit:fit,select:select,explore:exploreFrom,pick:pick,recolour:recolour,rebuildEdges:rebuildEdges,
   set parentWeight(v){layoutPW=v;},get graph(){return G;},get camera(){return cam;},set glowLevel(v){glowLevel=Math.max(-2,Math.min(2,+v||0));dirty=true;},examples:EXAMPLES,dealFromSeed:dealFromSeed,
-  play:{start:startPlay,stop:stopPlay,move:doMove,undo:undoMove,hint:hintMove,legal:legal,get state(){return play;}}};
+  play:{start:startPlay,stop:stopPlay,move:doMove,undo:undoMove,hint:hintMove,best:playBest,legal:legal,get state(){return play;}}};
 
 // Start: from the address (?ex=, ?seed=, &size=, &view=, &shape=, &color=, &edges=), else the easy example. In a page the
 // first tree is built only when the block comes near the screen.

@@ -18,7 +18,7 @@ and open `http://127.0.0.1:8781/game-tree.html`. The server listens on this comp
 to `/save/<name>.png` into `screenshots/full/`, which is how the pictures here were made.
 
 The page keeps its controls few: examples, a seed box (Enter draws it), Random deal, the size, Play, 3D or Top, full
-screen and About. The address can choose more: `?ex=l202346720` (an example, by the key in the page's list, including
+screen and About. The address can choose more: `?ex=l268817008782` (an example, by the key in the page's list, including
 those left out of the menu), or `?seed=123`, with `&size=1000000` (any number of positions from 1,000 to 40 million,
 such as `2.5m`), `&view=top` (`3d`, `top`, `side`), and three ways of drawing that have no control on the page:
 `&shape=spindle`, `&color=best` (`outcome`, `best`, `depth`) and `&edges=all` (`tree`, `all`, `none`).
@@ -29,6 +29,9 @@ such as `2.5m`), `&view=top` (`3d`, `top`, `side`), and three ways of drawing th
   ones are lost and blue-grey ones aren't settled either way. The positions that can win, and the moves between them,
   are drawn again on top so that the few winning lines in a hard deal stand out. With `&color=best`, positions are
   coloured by the fewest piles they can get down to instead.
+- **Chart**: under the deal's numbers, the positions drawn after each move (log scale, in the key's colours), with a
+  place for every move up to a win, so a lost tree is seen to stop short. Point at or tap a bar for its counts; the
+  selected position's move is marked under it.
 - **Rings**: the deal is at the centre (the top, in 3D) and each move one ring further out, each position near the
   positions it comes from and never more than 2 units along its ring from the one whose move is drawn, so a winning
   line runs on without big jumps sideways. With `&shape=spindle` in the address, each position is placed by which cards are covered
@@ -66,25 +69,28 @@ such as `2.5m`), `&view=top` (`3d`, `top`, `side`), and three ways of drawing th
   4,974,472 of the 1,198,856,684 ways to play on win.
 - **Play** opens the deal (or the position explored) as a game: click a card to put it on the card 1 or 3 places to its
   left with the same suit or rank. After each move the tree from your position on stays lit and the rest is dimmed, and
-  your game is drawn as a white line; Hint shows the next move of the best line drawn. When a sample shows too little
-  of where you are (the position isn't drawn, or almost nothing below it is), the tree is drawn again with your moves in,
-  every position a few moves below where you have got to, and half of the short searches starting there (by hand, with
-  a button, above 4 million positions). A complete tree has every position already.
+  your game is drawn as a white line; Hint shows the next move of the best line drawn, and Play best move plays it.
+  When less than a third of a sample is lit below where you are (or your position isn't drawn), the tree is drawn again
+  with your moves in, once your moves pause: a quarter of it is every position a few moves below where you have got to,
+  three quarters of the short searches start there, and a winning line the last tree showed from there is kept. The top
+  of the tree stays the same. A game's trees have at most 1 million positions (700,000 where few short searches win),
+  so a new one comes about a second after your last move at any size, and Close brings back the tree from before the
+  game. A complete tree has every position already.
 - **In a blog post** the first tree is drawn when the block comes near the screen. One finger scrolls the page up and
   down, two fingers turn and zoom the tree, and the wheel scrolls the page until the tree is clicked (or with Ctrl held).
   On its own page, or full screen, every touch and the wheel drive the tree.
 
 ## The examples
 
-The menu has five: an easy deal (185), a hard one (3), a very hard one (56669828180) and two lost ones, of 1,512 and
-3,997,296 positions. The others below load from the address with `?ex=`.
+The menu has eight: an easy deal (185), the first deal (0), a medium one (81), a hard one (3), a very hard one
+(56669828180) and three lost ones, of 1,512, 74,970 and 3,997,296 positions. The others below load from the address
+with `?ex=`.
 
-- **Easy to win**: seed 185, the one of the first 300 deals whose short searches win most often (about 9 in 10 at 1
-  million positions), and seed 0, the first deal.
-- **Hard to win**: seed 3, the one of the first 300 whose short searches win least often (about 1 in 5 at 1 million
-  positions), and the five deals of the
-  trillion run that only the exhaustive search won (after 9,983 failed tries each), with their known winning lines drawn
-  in.
+- **Can be won**: of the first 300 deals, measured by how many of a 1 million sample's short searches win: seed 185
+  wins most often (521 of 592), seed 0 is 14th (293 of 388), seed 81 is in the middle (118 of 229) and seed 3 is
+  298th (38 of 173). At 100,000 positions fewer win, but the order is about the same. Then the five deals of the
+  trillion run that only the exhaustive search won (after 9,983 failed tries each), with their known winning lines
+  drawn in.
 - **Lost**: eleven of the 721 proven losses, from the one with a single legal move (2 positions) to the one with the most
   positions (22,066,800, drawn whole at the 40 million size).
 
